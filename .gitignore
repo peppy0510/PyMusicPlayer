@@ -1,0 +1,5 @@
+*/__pycache__
+*/__test__
+*.txt
+*.pyc
+*.pyo
