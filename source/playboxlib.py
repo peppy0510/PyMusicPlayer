@@ -326,6 +326,7 @@ class PlayBoxControl():
         self.reInitWave = True
 
     def IsAutoGainOn(self):
+        return True
         return self.cue.autogain_on
 
     def SetAutoGainOn(self):

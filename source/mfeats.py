@@ -55,6 +55,7 @@ import mutagen
 import threading
 import multiprocessing
 from copy import deepcopy
+from audio import fir_filter
 from audio import get_channel
 from audio import init_bass_decode
 from macroboxlib import PREFERENCE_DB
@@ -75,7 +76,7 @@ from utilities import PipeMessenger
 
 # import multiprocessing.forking
 # from audio import get_fs
-# from audio import fir_filter
+
 # from audio import get_duration
 # from utilities import open_shelve
 # from utilities import SocketMessenger
@@ -275,39 +276,39 @@ def mfeats_single(path, queue=None):
     # autogain analysis in highlight period
 
     autogain = 0.4
-    # if duration > 60:
-    # 	autogain_analysis_length = highlight[1]
-    # 	if duration-highlight[0] < autogain_analysis_length:
-    # 		autogain_analysis_length = duration-highlight[0]
-    # 	frame_length = fs*channel*autogain_analysis_length
-    # 	byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, highlight[0])
-    # 	pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
-    # 	frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
-    # 	pybass.BASS_ChannelGetData(hstream, frame_raw.ctypes\
-    # 		.data_as(ctypes.POINTER(ctypes.c_short)), int(frame_length*2))
-    #
-    # 	mono_frame = frame_raw[::channel]/32768.0
-    # 	mono_frame = fir_filter(mono_frame,\
-    # 		lowcut=500, highcut=fs/2, fs=fs, order=15)
-    # 	mono_frame = fir_filter(mono_frame,\
-    # 		lowcut=1000, highcut=fs/2, fs=fs, order=7)
-    # 	mono_frame = fir_filter(mono_frame,\
-    # 		lowcut=1000, highcut=fs/2, fs=fs, order=5)
-    # 	mono_frame = fir_filter(mono_frame,\
-    # 		lowcut=5000, highcut=fs/2, fs=fs, order=5)
-    # 	if fs/2 > 21000:
-    # 		mono_frame = fir_filter(mono_frame,\
-    # 			lowcut=0, highcut=20000, fs=fs, order=45)
-    # 		mono_frame += fir_filter(mono_frame,\
-    # 			lowcut=15000, highcut=fs/2, fs=fs, order=5)*0.5
-    # 	rms = numpy.mean(mono_frame**2)**0.5*3
-    #
-    # 	# spectrum = numpy.fft.fft(mono_frame, fs)
-    # 	# spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
-    # 	# pylab.plot(spectrum); pylab.show()
-    #
-    # 	autogain = 0.14/rms
-    # else: autogain = 0.4
+
+    if duration > 60:
+
+        autogain_analysis_length = highlight[1]
+        if duration - highlight[0] < autogain_analysis_length:
+            autogain_analysis_length = duration - highlight[0]
+        frame_length = fs * channel * autogain_analysis_length
+        byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, highlight[0])
+        pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+        frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
+
+        pybass.BASS_ChannelGetData(
+            hstream,
+            frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)),
+            int(frame_length * 2))
+
+        mono_frame = frame_raw[::channel] / 32768.0
+        mono_frame = fir_filter(mono_frame, lowcut=500, highcut=fs / 2, fs=fs, order=15)
+        mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=7)
+        mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=5)
+        mono_frame = fir_filter(mono_frame, lowcut=5000, highcut=fs / 2, fs=fs, order=5)
+        if fs / 2 > 21000:
+            mono_frame = fir_filter(mono_frame, lowcut=0, highcut=20000, fs=fs, order=45)
+            mono_frame += fir_filter(mono_frame, lowcut=15000, highcut=fs / 2, fs=fs, order=5) * 0.5
+        rms = numpy.mean(mono_frame**2)**0.5 * 3
+
+        # spectrum = numpy.fft.fft(mono_frame, fs)
+        # spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
+        # pylab.plot(spectrum); pylab.show()
+
+        autogain = 0.14 / rms
+    else:
+        autogain = 0.4
 
     # key analysis in highlight period
 
