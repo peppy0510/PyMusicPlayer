@@ -1,39 +1,45 @@
 # encoding: utf-8
 
+
 # author: Taehong Kim
 # email: peppy0510@hotmail.com
 
 
-import wx
 import os
 import sys
+
+packages = os.path.join(os.path.split(os.path.split(os.path.abspath(__file__))[0])[0], 'venv', 'Lib', 'site-packages')
+sys.path.insert(0, packages)
+
+import wx
 import mfeats
 import multiprocessing
-from packages import pybass
-from utilities import Struct
-from utilities import set_master_path
-from utilities import kill_self_process
-from utilities import set_process_priority
-# from utilities import is_ghost_runnung
-from playbox import PlayBox
-from listbox import StatusBox
-from listbox import ListBoxSearch
+
+from dialogbox import AutoCheckUpdate
 from listbox import ListBox
+from listbox import ListBoxSearch
 from listbox import ListBoxTab
+from listbox import StatusBox
+from macroboxlib import BorderBoxH
+from macroboxlib import EVENT_Scheduler
+from macroboxlib import EventDistributor
+from macroboxlib import MFEATS_Network_Scheduler
+from macroboxlib import MFEATS_Scheduler
+from macroboxlib import PopupMenuEventCatcher
+from macroboxlib import RectRect
+from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import TITLE
 from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
-from dialogbox import AutoCheckUpdate
+from packages import pybass
+from playbox import PlayBox
+from utilities import Struct
+from utilities import kill_self_process
+from utilities import set_master_path
+from utilities import set_process_priority
+# from utilities import is_ghost_runnung
 # from dialogbox import ProductLogRequest
-from macroboxlib import TITLE
-from macroboxlib import RectRect
-from macroboxlib import BorderBoxH
-from macroboxlib import EventDistributor
-from macroboxlib import PopupMenuEventCatcher
-from macroboxlib import EVENT_Scheduler
-from macroboxlib import MFEATS_Scheduler
-from macroboxlib import MFEATS_Network_Scheduler
-from macroboxlib import SUPPORTED_AUDIO_TYPE
 # from macroboxlib import FileExecutionMonitor
 
 
@@ -287,6 +293,7 @@ def main(initfile=None):
         app = MtunesApp(initfile=initfile, filename=filename, redirect=True)
         app.SetCallFilterEvent(True)
     app.MainLoop()
+
 
 if __name__ == '__main__':
 
