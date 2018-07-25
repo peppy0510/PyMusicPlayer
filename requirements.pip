@@ -1,3 +1,11 @@
+scipy
+numpy
 psutil
+pillow
+pywin32
 mutagen
-pypiwin32
+wxpython
+objectlistview
+git+ssh://gogs@east-control.com/pockestra/python-mstr.git
+git+ssh://gogs@east-control.com/pockestra/python-mpath.git
+git+ssh://gogs@east-control.com/pockestra/python-dtruct.git

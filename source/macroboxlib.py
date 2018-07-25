@@ -5,6 +5,12 @@
 # email: peppy0510@hotmail.com
 
 
+import os
+import sys
+
+from utilities import get_user_docapp_path
+
+
 PRODUCT_PLATFORM = 'Windows'
 # PRODUCT_NAME = 'QTRAKCS'
 PRODUCT_NAME = 'MACROBOX'
@@ -22,12 +28,6 @@ PRODUCT_ONLINE_HELP_URL = MUTEKLAB_WEB_URL + 'macrobox/help/'
 PRODUCT_LOG_REQUEST_URL = MUTEKLAB_WEB_URL + 'product/log/req/'
 PRODUCT_UPDATE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/update/check/req/'
 PRODUCT_LICENSE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/license/check/req/'
-
-
-import os
-import sys
-from utilities import get_user_docapp_path
-
 
 TITLE = '%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer.db'])
@@ -82,31 +82,32 @@ sys.path.insert(0, packages)
 # for font in fonts: gdi32.AddFontResourceA(os.path.join(packages, font))
 
 
-import wx
-import wx.lib.newevent
-import gc
-import random
-import mutagen
-import mutagen.mp3
-import mutagen.id3
-import time
-import stat
-import glob
 import audio
+import gc
+import glob
 import mfeats
-import threading
 import multiprocessing
+import mutagen
+import mutagen.id3
+import mutagen.mp3
+import random
+import stat
+import threading
+import time
 import urllib
 import win32file
 import win32pipe
-from utilities import Struct
-from utilities import save_shelve
-from utilities import open_shelve
-from utilities import save_shelves
-from utilities import open_shelves
+import wx
+import wx.lib.newevent
+
 from utilities import PipeMessenger
+from utilities import Struct
 from utilities import compress_object
 from utilities import decompress_object
+from utilities import open_shelve
+from utilities import open_shelves
+from utilities import save_shelve
+from utilities import save_shelves
 # from utilities import get_hostname
 # from utilities import get_external_ip
 # from utilities import get_macaddress
@@ -301,7 +302,7 @@ def MakeMusicFileItem(path, order, columns):
         return None
     try:
         stats = os.stat(path)  # noqa
-    except:
+    except Exception:
         return None
     size = "%.2f MB" % (stats[stat.ST_SIZE] / 1024.0**2)  # noqa
     file = os.path.basename(path)  # noqa
@@ -312,7 +313,7 @@ def MakeMusicFileItem(path, order, columns):
     if ext in MUTAGEN_SUPPORTED_TYPE:
         try:
             mutagen_mp3 = mutagen.mp3.MP3(path)
-        except:
+        except Exception:
             return None
         duration = mutagen_mp3.info.length
         bitrate = mutagen_mp3.info.bitrate  # noqa
@@ -333,7 +334,7 @@ def MakeMusicFileItem(path, order, columns):
             exec(u'''%s = audio_id3[u"%s"]''' % (v.key, v.id3))
         try:
             tempo = '%03.5f' % (tempo)  # noqa
-        except:
+        except Exception:
             tempo = ''
     mdx = audio.makemdx(path)
     resp = mfeats.getby_key_value('mdx', mdx)
@@ -345,7 +346,7 @@ def MakeMusicFileItem(path, order, columns):
         duration = resp.duration
         try:
             tempo = '%05.1f' % (0.1 * round(tempo * 10))
-        except:
+        except Exception:
             tempo = ''
         key = resp.key  # noqa
         status = 'analyzed'  # noqa
@@ -355,7 +356,7 @@ def MakeMusicFileItem(path, order, columns):
     for i, v in enumerate(columns):
         try:
             item[i] = eval(v.key)
-        except:
+        except Exception:
             item[i] = ''
     return item
 
@@ -519,7 +520,7 @@ class PopupMenuEventCatcher():
             for item in self.pending_item_drag.paths:
                 try:
                     os.remove(item)
-                except:
+                except Exception:
                     pass
 
         self.pending_item_drag = None
@@ -701,7 +702,7 @@ class MFEATS_Scheduler(wx.Timer):
         duration = '%02d:%02d' % (duration / 60, duration % 60)
         try:
             tempo = '%05.1f' % (0.1 * round(tempo * 10))
-        except:
+        except Exception:
             tempo = ''
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
             ('mdx', mdx), ('status', 'analyzed'))
@@ -943,7 +944,7 @@ class MFEATS_Network_Scheduler(wx.Timer):
         duration = '%02d:%02d' % (duration / 60, duration % 60)
         try:
             tempo = '%05.1f' % (0.1 * round(tempo * 10))
-        except:
+        except Exception:
             tempo = ''
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
             ('mdx', mdx), ('status', 'analyzed'))
@@ -1642,7 +1643,7 @@ class ItemTextEdit(wx.TextCtrl):
             try:
                 newValue = float(newValue)
                 newValue = u'%05.1f' % (0.1 * round(newValue * 10))
-            except:
+            except Exception:
                 newValue = ''
         self.parent.parent.SetItemValueByColumnIdx(
             self.itemIdx, self.columnIdx, newValue)
@@ -1782,7 +1783,7 @@ def DiscogsCrawler(path, queue):
     artist = discogs.Artist(keywords)
     try:
         keys = artist.data.keys()
-    except:
+    except Exception:
         queue.put(None)
         return
     if u'id' in keys:
@@ -1813,7 +1814,7 @@ def DiscogsCrawler(path, queue):
                 artwork = urllib.urlopen(uri).read()
                 info.images.append(artwork)
             queue.put(info)
-        except:
+        except Exception:
             pass
     gc.collect()
 
@@ -1837,7 +1838,7 @@ def EchonestCrawler(path, queue):
     echonest_config.ECHO_NEST_API_KEY = '3NUCRNQMMTWBDJCSL'
     try:
         bk = echonest_artist.Artist(keywords)
-    except:
+    except Exception:
         queue.put(None)
         return
     info = Struct()
@@ -1876,7 +1877,7 @@ def MetaCrawler(path, queue):
         info.echonest.similar = list()
         for v in bk.similar:
             info.echonest.similar.append(v.name)
-    except:
+    except Exception:
         pass
     queue.put(info)
 
@@ -1896,7 +1897,7 @@ def MetaCrawler(path, queue):
             info.discogs.realname = artist.data[u'realname']
         if u'members' in keys:
             info.discogs.members = artist.data[u'members']
-    except:
+    except Exception:
         pass
     queue.put(info)
     # info.discogs.images = list()
@@ -1915,7 +1916,7 @@ def MetaCrawler(path, queue):
             # 	artwork = urllib.urlopen(uri).read()
             # 	info.discogs.images.append(artwork)
             queue.put(info)
-    except:
+    except Exception:
         pass
     queue.put(info)
     gc.collect()
@@ -1942,7 +1943,7 @@ class CRAWLER_Scheduler():
         self.crawler_timer = self.cache.timestamp
         try:
             self.info = self.queue.get(False)
-        except:
+        except Exception:
             return self.info
         return self.info
 
@@ -2488,7 +2489,7 @@ class ScriptControl():
             for v in scriptvars:
                 exec(command % (v[1], v[0]))
             thisItem.COUNT = count + 1
-            syspath = sys.path
+            # syspath = sys.path
             import rename
             self.preview_result += [rename.rename(
                 thisItem, script, [self.GetScriptPath()])]
@@ -2555,7 +2556,7 @@ class ScriptControl():
                         try:
                             new = float(new)
                             new = u'%05.1f' % (0.1 * round(new * 10))
-                        except:
+                        except Exception:
                             new = ''
                     tag_resp = self.parent.MainPanel\
                         .ListBox.RenameID3TAGByColumnItemIdx(
