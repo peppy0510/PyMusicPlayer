@@ -4,3 +4,9 @@
 *.pyc
 *.pyo
 /venv
+/dist
+/build
+/scipy
+source/dist
+source/build
+source/scipy

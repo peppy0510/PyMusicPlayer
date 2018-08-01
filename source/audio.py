@@ -4,32 +4,34 @@
 # author: Taehong Kim
 # email: peppy0510@hotmail.com
 
+
 import os
 import sys
 
 
 try:
     packages = os.path.join(sys._MEIPASS, 'packages')
-except:
+except Exception:
     packages = os.path.join('packages')
 
 sys.path.insert(0, packages)
 
 
-import ctypes
-import pybass
-import packctrl
-import math
-import numpy
-import struct
 import codecs
+import ctypes
+import math
 import mutagen
 import mutagen.id3
 import mutagen.mp3
+import numpy
+import packctrl
+import pybass
+import struct
+
 from PIL import Image
-from scipy import where
-from scipy import signal
 from copy import deepcopy
+from scipy import signal
+from scipy import where
 from utilities import makemdx  # noqa
 
 

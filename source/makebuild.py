@@ -1,19 +1,22 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
 import os
 import shutil
 import subprocess
-# import re
-# import sys
-# import psutil
+import sys
 
 
 BUILD_MFEATS = False
+
+path = os.environ['PATH']
+os.environ['PATH'] = ';'.join([path, os.path.join(path.split(';')[0], 'Scripts')])
 
 
 # PIL License: Python (MIT style)
@@ -23,41 +26,109 @@ BUILD_MFEATS = False
 # linspace # arange # mean # arange # abs # concatenate # int8 # int16 # int32
 # array # delete # hamming # interp # round # convolve # pi # sin # cos # power
 
+class Build():
 
-def main():
+    @classmethod
+    def run(self):
+        self.remove()
+        self.makebuild_macrobox()
+        # self.makebuild_mfeats()
+        # self.runtest()
+        self.makeinstaller()
 
-    remove_paths = [r'build', r'dist\macrobox', r'dist\mfeats']
-    for path in remove_paths:
-        path = os.path.abspath(path)
-        print('removing %s' % (path))
-        try:
-            shutil.rmtree(path)
-        except:
-            pass
+    @classmethod
+    def remove(self):
+        remove_paths = ['build', 'dist\\macrobox', 'dist\\mfeats']
+        for path in remove_paths:
+            path = os.path.abspath(path)
+            if os.path.isdir(path):
+                try:
+                    shutil.rmtree(path)
+                    # print('removing %s' % (path))
+                except Exception:
+                    print('removing failed %s' % (path))
 
-    builder_path = r'''C:\Program Files (x86)\Python27\Lib'''
-    builder_path += r'''\site-packages\pyinstaller\pyinstaller.py'''
-    commands = ['python -O "%s" "macrobox.spec"' % (builder_path)]
-    if BUILD_MFEATS:
-        commands += ['python -O "%s" "mfeats.spec"' % (builder_path)]
-    for command in commands:
-        proc = subprocess.Popen(command, shell=True)
-        resp = proc.communicate()[0]
-        proc.terminate()
-
-    if BUILD_MFEATS:
-        src = os.path.abspath(r'dist\mfeats\mfeats.exe')
-        dst = os.path.abspath(r'dist\macrobox')
+    @classmethod
+    def makebuild_mfeats(self):
+        # proc = subprocess.Popen('pyinstaller --uac-admin makebuild.spec', shell=True)
+        proc = subprocess.Popen('pyinstaller mfeats.spec', shell=True)
+        proc.communicate()
+        src = os.path.abspath('dist\\mfeats\\mfeats.exe')
+        dst = os.path.abspath('dist\\macrobox')
         shutil.copy(src, dst)
-    src = os.path.abspath(r'dist\packages')
-    dst = os.path.abspath(r'dist\macrobox\packages')
-    shutil.copytree(src, dst)
+        # os.mkdir(os.path.join('dist', 'assets'))
+        # shutil.copyfile(os.path.join('assets', 'icon.ico'),
+        #                 os.path.join('dist', 'assets', 'icon.ico'))
 
-    issc = r'''"C:\Program Files (x86)\Inno Setup 5\ISCC.exe"'''
-    command = '''%s "macrobox.iss"''' % (issc)
-    proc = subprocess.Popen(command, shell=True)
-    resp = proc.communicate()[0]
-    proc.terminate()
+    @classmethod
+    def makebuild_macrobox(self):
+        # proc = subprocess.Popen('pyinstaller --uac-admin makebuild.spec', shell=True)
+        proc = subprocess.Popen('pyinstaller macrobox.spec', shell=True)
+        proc.communicate()
+
+        src = os.path.abspath('packages')
+        dst = os.path.abspath('dist\\macrobox\\packages')
+        shutil.copytree(src, dst)
+
+        src = 'C:\\Program Files\\Python36\\Lib\\site-packages\\scipy'
+        dst = os.path.abspath('dist\\macrobox\\scipy')
+        shutil.copytree(src, dst)
+
+    @classmethod
+    def makeinstaller(self):
+
+        # for name in os.listdir('dist'):
+        #     if os.path.splitext(name)[0][-1].isdigit():
+        #         os.remove(os.path.join('dist', name))
+
+        issc = r'''"C:\\Program Files (x86)\\Inno Setup 5\\ISCC.exe"'''
+        command = '''%s "macrobox.iss"''' % (issc)
+        proc = subprocess.Popen(command, shell=True)
+        proc.communicate()
+
+    @classmethod
+    def runtest(self):
+        command = os.path.join('dist', 'macrobox' 'macrobox.exe')
+        proc = subprocess.Popen(command, shell=True)
+        proc.communicate()
+
+
+# def main():
+
+#     remove_paths = ['build', 'dist\\macrobox', 'dist\\mfeats']
+#     for path in remove_paths:
+#         path = os.path.abspath(path)
+#         print('removing %s' % (path))
+#         try:
+#             shutil.rmtree(path)
+#         except Exception:
+#             pass
+
+#     # --uac-admin
+#     commands = ['pyinstaller macrobox.spec']
+#     if BUILD_MFEATS:
+#         commands += ['pyinstaller mfeats.spec']
+#     for command in commands:
+#         proc = subprocess.Popen(command, shell=True)
+#         resp = proc.communicate()[0]
+#         proc.terminate()
+
+#     if BUILD_MFEATS:
+#         src = os.path.abspath('dist\\mfeats\\mfeats.exe')
+#         dst = os.path.abspath('dist\\macrobox')
+#         shutil.copy(src, dst)
+
+#     # src = os.path.abspath(os.path.join('dist', 'packages'))
+#     src = os.path.abspath('packages')
+#     dst = os.path.abspath('dist\\macrobox\\packages')
+#     shutil.copytree(src, dst)
+
+#     issc = 'C:\\Program Files (x86)\\Inno Setup 5\\ISCC.exe'
+#     command = '''"%s" "macrobox.iss"''' % (issc)
+#     proc = subprocess.Popen(command, shell=True)
+#     proc.communicate()
+#     # resp = proc.communicate()[0]
+#     proc.terminate()
 
     # https://www.comodossl.co.kr/certificate/code-signing-products.aspx
     # https://products.verisign.com/orders/enrollment/winqualOrder.do?change_lang=10
@@ -101,4 +172,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from io import TextIOWrapper
+    sys.stdout = TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    Build.run()
