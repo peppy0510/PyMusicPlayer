@@ -550,14 +550,14 @@ def get_id3(filename, field_keys):
     # filename = filename.encode(sys.getfilesystemencoding())
     try:
         mutagen_id3 = mutagen.id3.ID3(filename)
-    except:
+    except Exception:
         return None
     audio_id3 = dict()
     for field_key in field_keys:
         # field_key = field_key.encode(sys.getfilesystemencoding())
         try:
             value = mutagen_id3.get(field_key)
-        except:
+        except Exception:
             value = None
         if value is None:
             audio_id3[field_key] = u''

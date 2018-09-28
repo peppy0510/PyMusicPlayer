@@ -37,10 +37,10 @@ class PlayBox(RectBox, PlayBoxControl):
         self.st = parent.parent.st.PLAYBOX
 
         self.wave_x = 220
+        self.wave_height = 40
         self.show_apic = True
         self.apic_size = 150
         self.wave_max = True
-        self.wave_height = 40
         self.button_size = 17
         self.cursor_stroke = 4
         self.cache.timestamp = time.time()
@@ -874,10 +874,10 @@ class PlayBoxSpectrum(RectBox):
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
-        self.resolution = 1
-        self.saturation = 0.1
         self.width = 320
         self.height = 39
+        self.resolution = 1
+        self.saturation = 0.1
 
         fps = GetPreference('spectrum_fps')
         if fps is None:

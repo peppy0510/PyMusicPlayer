@@ -174,7 +174,8 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.DialogBox = None
         self.SetTransparent(255)
         self.SetMinSize((600, 450))
-        self.SetMaxSize((800, -1))
+        self.SetMaxSize((-1, -1))
+        # self.SetMaxSize((800, -1))
         # self.toolbar = self.CreateToolBar()
 
         self.MainPanel = MainPanel(self)

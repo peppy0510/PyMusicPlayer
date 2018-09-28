@@ -25,7 +25,7 @@ SERVER_ADDRESS = ('127.0.0.1', 12703)
 WORKING_PATH = os.path.abspath(os.path.dirname(__file__))
 try:
     packages = os.path.join(sys._MEIPASS, 'packages')
-except:
+except Exception:
     packages = os.path.join(WORKING_PATH, 'packages')
 sys.path.insert(0, packages)
 
@@ -141,8 +141,12 @@ def mfeats_single(path, queue=None):
     # waveform_length = 2000
     # waveform_oversampling = 20
     # key_analysis_fs = 6000
-    waveform_length = 2500
+    # waveform_length = 2500
+    # waveform_oversampling = 20
+    waveform_length = 10000
     waveform_oversampling = 20
+    best_highlight_duration_beat = 32 * 2
+    # best_highlight_duration_beat = 16 * 2
     version = MFEATS_VERSION
 
     init_bass_decode()
@@ -239,7 +243,7 @@ def mfeats_single(path, queue=None):
     if xtempo == 0:
         until_duration = duration
     else:
-        until_duration = 60.0 / xtempo * 32 * 2
+        until_duration = 60.0 / xtempo * best_highlight_duration_beat
 
     # highlight analysis with highlight_raw_points
 
@@ -783,7 +787,7 @@ def drop_table(table_name='mfeats', db_name=None):
         c.execute(query)
         conn.commit()
         conn.close()
-    except:
+    except Exception:
         pass
     finally:
         if conn:
@@ -801,7 +805,7 @@ def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
         c.execute(query)
         conn.commit()
         conn.close()
-    except:
+    except Exception:
         pass
     finally:
         if conn:
