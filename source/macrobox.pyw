@@ -11,9 +11,11 @@ import sys
 # packages = os.path.join(os.path.split(os.path.split(os.path.abspath(__file__))[0])[0], 'venv', 'Lib', 'site-packages')
 # sys.path.insert(0, packages)
 
-import wx
 import mfeats
+import modpybass as pybass
 import multiprocessing
+# pybass = pybass.load()
+import wx
 
 from dialogbox import AutoCheckUpdate
 from listbox import ListBox
@@ -32,7 +34,7 @@ from macroboxlib import TITLE
 from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
-from packages import pybass
+# from packages import pybass
 from playbox import PlayBox
 from utilities import Struct
 from utilities import kill_self_process

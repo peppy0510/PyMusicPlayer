@@ -15,7 +15,7 @@ def findPath(module_name, paths):
         trialpath = ''
         try:
             trialpath = os.path.join(sys._MEIPASS, path, module_name)
-        except:
+        except Exception:
             trialpath = os.path.join(path, module_name)
         if os.path.exists(trialpath) is True:
             return trialpath
@@ -27,7 +27,7 @@ def trialPaths(module_name, paths):
     for path in paths:
         try:
             trialpaths.append(os.path.join(sys._MEIPASS, path, module_name))
-        except:
+        except Exception:
             pass
         trialpaths.append(os.path.join(path, module_name))
     return trialpaths
