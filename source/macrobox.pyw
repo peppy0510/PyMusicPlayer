@@ -11,9 +11,9 @@ import sys
 # packages = os.path.join(os.path.split(os.path.split(os.path.abspath(__file__))[0])[0], 'venv', 'Lib', 'site-packages')
 # sys.path.insert(0, packages)
 
-import wx
 import mfeats
 import multiprocessing
+import wx
 
 from dialogbox import AutoCheckUpdate
 from listbox import ListBox

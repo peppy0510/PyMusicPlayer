@@ -5,34 +5,35 @@
 # email: peppy0510@hotmail.com
 
 
-import os
-import wx
 import audio
 import images
-import webbrowser
 import macroboxstyle
-from operator import itemgetter
-from utilities import Struct
+import os
+import webbrowser
+import wx
+
+from dialogbox import AboutBox
+from dialogbox import CheckItemsConsistencyConfirmBox
+from dialogbox import DialogBox
+from dialogbox import DialogPanel
+from dialogbox import LicenseBox
+from dialogbox import UpdateBox
 from listbox import FileOpenDialog
 from listbox import FileSaveDialog
-from dialogbox import AboutBox
-from dialogbox import DialogBox
-from dialogbox import UpdateBox
-from dialogbox import LicenseBox
-from dialogbox import DialogPanel
-from dialogbox import CheckItemsConsistencyConfirmBox
 from macroboxlib import Button
-from macroboxlib import TextCtrl
-from macroboxlib import SpinCtrl
-from macroboxlib import ComboBox
 from macroboxlib import CheckBox
-from macroboxlib import StaticText
-from macroboxlib import GetPreference
-from macroboxlib import SetPreference
-from macroboxlib import GetPreferences
-from macroboxlib import SetPreferences
+from macroboxlib import ComboBox
 from macroboxlib import FONT_ITEM
+from macroboxlib import GetPreference
+from macroboxlib import GetPreferences
 from macroboxlib import PRODUCT_ONLINE_HELP_URL
+from macroboxlib import SetPreference
+from macroboxlib import SetPreferences
+from macroboxlib import SpinCtrl
+from macroboxlib import StaticText
+from macroboxlib import TextCtrl
+from operator import itemgetter
+from utilities import Struct
 # from macroboxlib import *
 # from scripteditor import *
 # from dialogbox import *
@@ -40,8 +41,8 @@ from macroboxlib import PRODUCT_ONLINE_HELP_URL
 
 
 # class wxHTML(wx.html.HtmlWindow):
-# 	 def OnLinkClicked(self, link):
-# 		 webbrowser.open(link.GetHref())
+#    def OnLinkClicked(self, link):
+#        webbrowser.open(link.GetHref())
 
 
 # WebLinkEditorPanel
@@ -618,7 +619,7 @@ class MacroBoxPreference():
         if auto_check_update is None or auto_check_update:
             self.OnAutoCheckUpdate(None)
         # if GetPreference('tutotial_show'):
-        # 	self.OnTutorial(None)
+        #   self.OnTutorial(None)
         self.PlayBoxTitleFormat = PlayBoxTitleFormat(self)
         self.WebLinkPreset = WebLinkPreset()
 
@@ -736,7 +737,6 @@ class AppearancePanel(wx.Panel):
         self.TracklistLineSpace.SetValue(value)
 
         offset += 30
-
         label = u'Scrollbar Size'
         text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
         text.SetRect((pad + 20, offset + 3, 180, -1))
@@ -905,65 +905,65 @@ class AppearancePanel(wx.Panel):
 #
 # class FileAssociation(wx.Frame):
 #
-# 	def __init__(self):
-# 		command = ['assoc']
-# 		proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-# 		resp = proc.communicate()[0]
-# 		proc.terminate()
-# 		resp = resp.split(os.linesep)
-# 		sfes = [v.lower() for v in SUPPORTED_AUDIO_TYPE]
-# 		sfes = [v for v in resp if v.split('=')[0][1:].lower() in sfes]
-# 		# for v in sfes: print v
-# 		#-----------------------------------------------------------------------
-# 		# command = ['assoc']
-# 		command = ['ftype']
-# 		proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-# 		resp = proc.communicate()[0]
-# 		proc.terminate()
-# 		resp = resp.split(os.linesep)
-# 		# for v in resp: print v
-# 		sfts = [v.split('=')[-1] for v in sfes]
-# 		# print '-'*100
-# 		# for v in sfts: print v
-# 		sfts = [v for v in resp if v.split('=')[0].lower() in sfts]
-# 		# print '-'*100
-# 		# for v in sfts: print v
+#   def __init__(self):
+#       command = ['assoc']
+#       proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
+#       resp = proc.communicate()[0]
+#       proc.terminate()
+#       resp = resp.split(os.linesep)
+#       sfes = [v.lower() for v in SUPPORTED_AUDIO_TYPE]
+#       sfes = [v for v in resp if v.split('=')[0][1:].lower() in sfes]
+#       # for v in sfes: print v
+#       #-----------------------------------------------------------------------
+#       # command = ['assoc']
+#       command = ['ftype']
+#       proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
+#       resp = proc.communicate()[0]
+#       proc.terminate()
+#       resp = resp.split(os.linesep)
+#       # for v in resp: print v
+#       sfts = [v.split('=')[-1] for v in sfes]
+#       # print '-'*100
+#       # for v in sfts: print v
+#       sfts = [v for v in resp if v.split('=')[0].lower() in sfts]
+#       # print '-'*100
+#       # for v in sfts: print v
 #
-# 	def SetAssociate(self, associate=True):
-# 		#-----------------------------------------------------------------------
-# 		if associate:
-# 			# commands = [('assoc', '.mp3=KMPlayer.mp3')]
-# 			commands = [('assoc', '.mp3=macrobox')]
-# 			# commands = [('assoc', '.mp3=macrobox.mp3')]
-# 			# commands += [('assoc', '.bmp=macrobox')]
-# 			# commands += [('assoc', '.png=macrobox')]
-# 			# commands += [('assoc', '.jpg=macrobox')]
-# 			# commands += [('assoc', '.jpeg=macrobox')]
-# 		else:
-# 			commands = [('assoc', '.mp3=giffile')]
-# 			# commands += [('assoc', '.bmp=pngfile')]
-# 			# commands += [('assoc', '.png=pngfile')]
-# 			# commands += [('assoc', '.jpg=jpegfile')]
-# 			# commands += [('assoc', '.jpeg=jpegfile')]
-# 		for command in commands:
-# 			proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-# 			resp = proc.communicate()[0]
-# 		#-----------------------------------------------------------------------
-# 		# print selfname
-# 		# command = ['ftype', 'uniview=python.exe', 'D:\XRESEARCHX\uniview\uniview.py', '%1']
-# 		if is_packaged():
-# 			selfname = r'D:\XRESEARCHX\macroboxpro\dist\macrobox\macrobox.exe'
-# 			command = ['ftype', 'macrobox=%s' % (selfname), '%1']
-# 		else:
-# 			command = ['ftype', 'macrobox=python.exe', __file__, '%1']
+#   def SetAssociate(self, associate=True):
+#       #-----------------------------------------------------------------------
+#       if associate:
+#           # commands = [('assoc', '.mp3=KMPlayer.mp3')]
+#           commands = [('assoc', '.mp3=macrobox')]
+#           # commands = [('assoc', '.mp3=macrobox.mp3')]
+#           # commands += [('assoc', '.bmp=macrobox')]
+#           # commands += [('assoc', '.png=macrobox')]
+#           # commands += [('assoc', '.jpg=macrobox')]
+#           # commands += [('assoc', '.jpeg=macrobox')]
+#       else:
+#           commands = [('assoc', '.mp3=giffile')]
+#           # commands += [('assoc', '.bmp=pngfile')]
+#           # commands += [('assoc', '.png=pngfile')]
+#           # commands += [('assoc', '.jpg=jpegfile')]
+#           # commands += [('assoc', '.jpeg=jpegfile')]
+#       for command in commands:
+#           proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
+#           resp = proc.communicate()[0]
+#       #-----------------------------------------------------------------------
+#       # print selfname
+#       # command = ['ftype', 'uniview=python.exe', 'D:\XRESEARCHX\uniview\uniview.py', '%1']
+#       if is_packaged():
+#           selfname = r'D:\XRESEARCHX\macroboxpro\dist\macrobox\macrobox.exe'
+#           command = ['ftype', 'macrobox=%s' % (selfname), '%1']
+#       else:
+#           command = ['ftype', 'macrobox=python.exe', __file__, '%1']
 
-# 		selfname = r'D:\XRESEARCHX\macroboxpro\dist\macrobox\macrobox.exe'
-# 		selfname = r'C:\Program Files (x86)\MACROBOX Professional\macrobox.exe'
-# 		command = ['ftype', 'macrobox=%s' % (selfname), '%1']
+#       selfname = r'D:\XRESEARCHX\macroboxpro\dist\macrobox\macrobox.exe'
+#       selfname = r'C:\Program Files (x86)\MACROBOX Professional\macrobox.exe'
+#       command = ['ftype', 'macrobox=%s' % (selfname), '%1']
 
-# 		proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-# 		resp = proc.communicate()[0]
-# 		return
+#       proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
+#       resp = proc.communicate()[0]
+#       return
 #
 #
 
@@ -1032,22 +1032,22 @@ class PreferenceMFEATSPanel(DialogPanel):
             self.KeyFormat.SetValue(self.key_choices[key_format_type])
         self.KeyFormat.Bind(wx.EVT_COMBOBOX, self.OnKeyFormat)
 
-        # offset += 30+10
+        # offset += 30 + 10
         # label = u'AGC(Auto Gain Control) Headroom (%)'
         # text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
-        # text.SetRect((20, offset+3, 200, -1))
+        # text.SetRect((20, offset + 3, 200, -1))
         # self.AgcHeadroomSpin = SpinCtrl(self, value='0')
         # # self.AgcHeadroomSpin.SetPosition((220+15, offset-1))
-        # self.AgcHeadroomSpin.SetRect((220+15, offset, 60, 22))
+        # self.AgcHeadroomSpin.SetRect((220 + 15, offset, 60, 22))
         # self.AgcHeadroomSpin.SetRange(75, 200)
-        # value = self.parent.parent.parent.MainPanel.PlayBox.cue.agc_headroom*100
+        # value = self.parent.parent.parent.MainPanel.PlayBox.cue.agc_headroom * 100
         # self.AgcHeadroomSpin.SetValue(value)
         # self.AgcHeadroomSpin.Bind(wx.EVT_SPINCTRL, self.OnAgcHeadroomSpin)
         # tooltip = u'Note that MacroBox does not compress sound for AGC control.'
         # tooltip += u'\nDefault headrooom is set to -12db covers wide range of dynamics.'
         # self.AgcHeadroomSpin.SetToolTip(wx.ToolTip(tooltip))
         # self.AgcSpinDefaultButton = Button(self, label=u'Default')
-        # self.AgcSpinDefaultButton.SetRect((220+20+60-5, offset-1, 52, 24))
+        # self.AgcSpinDefaultButton.SetRect((220 + 20 + 60 - 5, offset - 1, 52, 24))
         # self.AgcSpinDefaultButton.Bind(wx.EVT_BUTTON, self.OnAgcSpinDefaultButton)
         # self.AgcSpinDefaultButton.SetToolTip(wx.ToolTip(tooltip))
 
@@ -1128,7 +1128,7 @@ class PreferenceMFEATSPanel(DialogPanel):
                 aKey = winreg.OpenKey(aReg, address % (extention))
                 value = winreg.QueryValueEx(aKey, 'ProgId')[0]
                 winreg.CloseKey(aKey)
-            except:
+            except Exception:
                 return False
             if 'macrobox.exe' not in value:
                 return False
@@ -1167,7 +1167,7 @@ class PreferenceMFEATSPanel(DialogPanel):
             winreg.SetValueEx(aKey, r'', 0, winreg.REG_SZ, value)
             winreg.SetValueEx(aKey, r'@', 0, winreg.REG_SZ, value)
             winreg.CloseKey(aKey)
-        except:
+        except Exception:
             pass
 
         mst_address = 'Software\\Classes'
@@ -1193,7 +1193,7 @@ class PreferenceMFEATSPanel(DialogPanel):
                 aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
                 winreg.DeleteKey(aKey, r'UserChoice')
                 winreg.CloseKey(aKey)
-            except:
+            except Exception:
                 pass
 
             aReg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
@@ -1291,8 +1291,8 @@ class PreferenceMFEATSPanel(DialogPanel):
         SetPreferences(((('spectrum_fps', spectrum_fps),
                          ('vectorscope_fps', vectorscope_fps))))
         # SetPreferences(((('agc_headroom', agc_headroom),\
-        # 	('spectrum_fps', spectrum_fps),
-        # 	('vectorscope_fps', vectorscope_fps))))
+        #   ('spectrum_fps', spectrum_fps),
+        #   ('vectorscope_fps', vectorscope_fps))))
         self.Destroy()
 
 
@@ -1485,7 +1485,7 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
         # self.Bind(wx.EVT_MENU, self.OnScriptEditor, self.MenuBar.itemScriptEditor)
-        self.Bind(wx.EVT_MENU, self.OnHelp, self.MenuBar.itemHelp)
+        # self.Bind(wx.EVT_MENU, self.OnHelp, self.MenuBar.itemHelp)
         self.Bind(wx.EVT_MENU, self.OnUpdate, self.MenuBar.itemUpdate)
         # self.Bind(wx.EVT_MENU, self.OnLicense, self.MenuBar.itemLicense)
         self.Bind(wx.EVT_MENU, self.OnAbout, self.MenuBar.itemAbout)
@@ -1533,11 +1533,10 @@ class MacroBoxMenuBar():
         self.DialogBox = None
         selectedList = self.MainPanel.ListBox.selectedList
         pathIdx = self.MainPanel.ListBox.GetColumnKeyToIdx('path', selectedList)
-        paths = map(itemgetter(pathIdx),
-                    self.MainPanel.ListBox.innerList[selectedList].items)
+        paths = map(itemgetter(pathIdx), self.MainPanel.ListBox.innerList[selectedList].items)
         try:
             audio.generate_m3u(savepath, paths)
-        except:
+        except Exception:
             pass
         self.MainPanel.ListBox.reInitBuffer = True
 
@@ -1735,7 +1734,7 @@ class MenuBar(wx.MenuBar):
         self.itemExit = wx.MenuItem(self.menuFile, wx.ID_ANY, u'Quit', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuFile.Append(self.itemExit)
 
-        self.Append(self.menuFile, u"File")
+        self.Append(self.menuFile, u'File')
 
     def InitMenuView(self):
         self.menuView = wx.Menu()
@@ -1753,7 +1752,7 @@ class MenuBar(wx.MenuBar):
         # self.menuView.AppendSeparator()
 
         # self.itemScriptEditor = wx.MenuItem(self.menuView,\
-        # 	wx.ID_ANY, u'Script Editor', wx.EmptyString, wx.ITEM_NORMAL)
+        #   wx.ID_ANY, u'Script Editor', wx.EmptyString, wx.ITEM_NORMAL)
         # self.menuView.Append(self.itemScriptEditor)
 
         self.Append(self.menuView, u"View")
@@ -1762,7 +1761,7 @@ class MenuBar(wx.MenuBar):
         self.menuOption = wx.Menu()
 
         self.itemAlwaysOnTop = wx.MenuItem(
-            self.menuOption, wx.ID_ANY, u"Always On Top\tCtrl+T", wx.EmptyString, wx.ITEM_CHECK)
+            self.menuOption, wx.ID_ANY, u'Always On Top\tCtrl+T', wx.EmptyString, wx.ITEM_CHECK)
         self.menuOption.Append(self.itemAlwaysOnTop)
 
         self.menuOption.AppendSeparator()
@@ -1779,7 +1778,7 @@ class MenuBar(wx.MenuBar):
         self.menuOption.Append(wx.ID_ANY, u'Highlight Duration', self.itemHighlightDurationMenu)
         self.menuOption.AppendSeparator()
 
-        self.itemAutoAnalyze = wx.MenuItem(self.menuOption, wx.ID_ANY, u"Auto Analyze", wx.EmptyString, wx.ITEM_CHECK)
+        self.itemAutoAnalyze = wx.MenuItem(self.menuOption, wx.ID_ANY, u'Auto Analyze', wx.EmptyString, wx.ITEM_CHECK)
         self.menuOption.Append(self.itemAutoAnalyze)
         if self.parent.MainPanel.MFEATS.IsAutoAnalyzerOn():
             self.itemAutoAnalyze.Check()
@@ -1798,13 +1797,13 @@ class MenuBar(wx.MenuBar):
     def InitMenuHelp(self):
         self.menuHelp = wx.Menu()
 
-        self.itemHelp = wx.MenuItem(self.menuHelp, wx.ID_ANY, u'Help', wx.EmptyString, wx.ITEM_NORMAL)
-        self.menuHelp.Append(self.itemHelp)
+        # self.itemHelp = wx.MenuItem(self.menuHelp, wx.ID_ANY, u'Help', wx.EmptyString, wx.ITEM_NORMAL)
+        # self.menuHelp.Append(self.itemHelp)
 
         # self.menuHelp.AppendSeparator()
 
         # self.itemLicense = wx.MenuItem(self.menuHelp,\
-        # 	wx.ID_ANY, u'License', wx.EmptyString, wx.ITEM_NORMAL)
+        #   wx.ID_ANY, u'License', wx.EmptyString, wx.ITEM_NORMAL)
         # self.menuHelp.Append(self.itemLicense)
 
         self.itemUpdate = wx.MenuItem(self.menuHelp, wx.ID_ANY, u'Check for Update', wx.EmptyString, wx.ITEM_NORMAL)

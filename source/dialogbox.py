@@ -5,45 +5,46 @@
 # email: peppy0510@hotmail.com
 
 
-import wx
 import gc
-import json
-import time
 import images
+import json
 import socket
-import urllib
 import threading
+import time
+import urllib
 import webbrowser
+import wx
+
+from license import generate_code
 from macroboxlib import Button
 from macroboxlib import CheckBox
 from macroboxlib import DialogBox
-from macroboxlib import TextCtrl
-from macroboxlib import StaticText
 from macroboxlib import DialogPanel
+from macroboxlib import FONT_ITEM
 from macroboxlib import FancyButton
 from macroboxlib import FancyDialogBox
 from macroboxlib import FancyDialogBoxGlobalEvent
 from macroboxlib import GetPreference
-from macroboxlib import SetPreference
-from macroboxlib import FONT_ITEM
-from macroboxlib import PRODUCT_NAME
+from macroboxlib import MACROBOX_BUY_URL
+from macroboxlib import MACROBOX_DOWNLOAD_URL
+from macroboxlib import MUTEKLAB_WEB_URL
 from macroboxlib import PRODUCT_BUILD
 from macroboxlib import PRODUCT_EDITION
-from macroboxlib import PRODUCT_VERSION
-from macroboxlib import MUTEKLAB_WEB_URL
-from macroboxlib import PRODUCT_UPDATE_CHECK_URL
-from macroboxlib import PRODUCT_PLATFORM
-from macroboxlib import MACROBOX_DOWNLOAD_URL
-from macroboxlib import PRODUCT_LOG_REQUEST_URL
 from macroboxlib import PRODUCT_LICENSE_CHECK_URL
-from macroboxlib import MACROBOX_BUY_URL
+from macroboxlib import PRODUCT_LOG_REQUEST_URL
+from macroboxlib import PRODUCT_NAME
+from macroboxlib import PRODUCT_PLATFORM
+from macroboxlib import PRODUCT_UPDATE_CHECK_URL
+from macroboxlib import PRODUCT_VERSION
+from macroboxlib import SetPreference
+from macroboxlib import StaticText
+from macroboxlib import TextCtrl
 from utilities import Struct
-from utilities import struct_to_dict
-from utilities import get_hostname
-from utilities import get_macaddress
 from utilities import compress_object
 from utilities import decompress_object
-from license import generate_code
+from utilities import get_hostname
+from utilities import get_macaddress
+from utilities import struct_to_dict
 # from macroboxlib import *
 # from scripteditor import *
 # from listbox import FileOpenDialog
@@ -145,8 +146,8 @@ class AboutBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
         self.SetTransparent(220)
         self.SetBackgroundColour((0, 0, 0))
         self.AboutPanel = AboutPanel(self)
-        self.VisitButton = FancyButton(self, label='MUTEKLAB')
-        self.VisitButton.Bind(wx.EVT_BUTTON, self.OnVisit)
+        # self.VisitButton = FancyButton(self, label='MUTEKLAB')
+        # self.VisitButton.Bind(wx.EVT_BUTTON, self.OnVisit)
         self.CloseButton = FancyButton(self, label='Close')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
         self.OnSize(None)
@@ -162,13 +163,13 @@ class AboutBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
     def OnSize(self, event):
         if 'CloseButton' not in dir(self):
             return
-        if 'VisitButton' not in dir(self):
-            return
+        # if 'VisitButton' not in dir(self):
+        #     return
         width, height = self.GetClientSize()
         height -= self.CloseButton.GetSize().height + 20 + 3
-        self.VisitButton.SetSize((75, 26))
+        # self.VisitButton.SetSize((75, 26))
         self.CloseButton.SetSize((75, 26))
-        self.VisitButton.SetPosition((width - 95 - 80 - 3, height))
+        # self.VisitButton.SetPosition((width - 95 - 80 - 3, height))
         self.CloseButton.SetPosition((width - 95 - 3, height))
 
     def OnVisit(self, event):
@@ -360,7 +361,7 @@ class UpdateCheckThread(threading.Thread):
             self.step = 4
             result = json.loads(result)
             self.step = 5
-        except:
+        except Exception:
             result = None
         self.result = result
         self.step = 6
@@ -1015,7 +1016,7 @@ class LicenseNotifyBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
         if self.DialogBox is None:
             self.HandleGlobalEvent()
         # if self.BGColorInverseRule():
-        # 	r, g, b = self.DecColor(self.bgcolor)
+        #   r, g, b = self.DecColor(self.bgcolor)
         # else: r, g, b = self.IncColor(self.bgcolor)
         # self.bgcolor = (r, g, b)
         # self.SetBackgroundColour((r, g, b))
@@ -1183,7 +1184,7 @@ class DiscogsThread(threading.Thread):
         artist = discogs.Artist(artist)
         try:
             keys = artist.data.keys()
-        except:
+        except Exception:
             # queue.put(None)
             return
         if u'id' in keys:
@@ -1210,12 +1211,12 @@ class DiscogsThread(threading.Thread):
                 self.info.releases.append(data)
                 # print(i)
                 # if 'images' in release.data.keys():
-                # 	# uri = release.data['images'][0]['uri']
-                # 	uri = release.data['images'][0]['uri150']
-                # 	artwork = urllib.urlopen(uri).read()
-                # 	info.images.append(artwork)
+                #   # uri = release.data['images'][0]['uri']
+                #   uri = release.data['images'][0]['uri150']
+                #   artwork = urllib.urlopen(uri).read()
+                #   info.images.append(artwork)
                 # queue.put(info)
-            except:
+            except Exception:
                 pass
         gc.collect()
 
@@ -1257,12 +1258,12 @@ class DiscogsBox(wx.Dialog, wx.Timer):
                                      label='Close', pos=(width - 95, height - 68), size=(75, -1))
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
         # self.DownloadButton = wx.Button(self,\
-        # 	label='Download', pos=(width-95-80, height-68), size=(75, -1))
+        #   label='Download', pos=(width-95-80, height-68), size=(75, -1))
         # self.DownloadButton.Bind(wx.EVT_BUTTON, self.OnDownload)
         # self.DownloadButton.Disable()
 
         # self.AutoCheckUpdate = wx.CheckBox(self,\
-        # 	label='  Auto check update on startup', pos=(20, height-63))
+        #   label='  Auto check update on startup', pos=(20, height-63))
         # self.AutoCheckUpdate.Bind(wx.EVT_CHECKBOX, self.OnAutoCheckUpdate)
         # preference = GetPreference('auto_check_update')
         # if preference is None or preference: self.AutoCheckUpdate.SetValue(1)
@@ -1282,9 +1283,9 @@ class DiscogsBox(wx.Dialog, wx.Timer):
         if hasattr(self, 'Thread') is False:
             return
         # if hasattr(self.ProgressPanel, 'ProgressBar') is False:
-        # 	width, height = self.GetSize()
+        #   width, height = self.GetSize()
         # label = 'Check avaliable update. (Step %d/%d)'\
-        # 	% (self.Thread.step, self.Thread.max_step)
+        #   % (self.Thread.step, self.Thread.max_step)
         if len(self.Thread.info.releases) == 0:
             return
 
@@ -1295,13 +1296,13 @@ class DiscogsBox(wx.Dialog, wx.Timer):
         # self.stop = True
         # result = self.Thread.result
         # if result is None:
-        # 	label = 'Please try later. (Server connection error)'
-        # 	self.ProgressPanel.TextMessage.SetLabelText(label)
-        # 	return
+        #   label = 'Please try later. (Server connection error)'
+        #   self.ProgressPanel.TextMessage.SetLabelText(label)
+        #   return
         # if result['result'] is False:
-        # 	label = 'No update available. (Current version is the latest)'
-        # 	self.ProgressPanel.TextMessage.SetLabelText(label)
-        # 	return
+        #   label = 'No update available. (Current version is the latest)'
+        #   self.ProgressPanel.TextMessage.SetLabelText(label)
+        #   return
         # self.DownloadButton.Enable()
         # self.ProgressPanel.Destroy()
         # self.UpdatePanel = UpdatePanel(self)
@@ -1312,17 +1313,17 @@ class DiscogsBox(wx.Dialog, wx.Timer):
         # self.DownloadButton.SetPosition((width-95-80, height-68))
         # self.AutoCheckUpdate.SetPosition((20, height-63))
         # label = 'New update are available. (Version %s Build %s)'\
-        # 	% (str(result['version']), str(result['build']))
+        #   % (str(result['version']), str(result['build']))
         # self.UpdatePanel.TextMessage.SetLabelText(label)
         self.Refresh()
 
     # def OnDownload(self, event):
-    # 	webbrowser.open(MACROBOX_DOWNLOAD_URL)
+    #   webbrowser.open(MACROBOX_DOWNLOAD_URL)
     #
     # def OnAutoCheckUpdate(self, event):
-    # 	if event.IsChecked():
-    # 		SetPreference('auto_check_update', True)
-    # 	else: SetPreference('auto_check_update', False)
+    #   if event.IsChecked():
+    #       SetPreference('auto_check_update', True)
+    #   else: SetPreference('auto_check_update', False)
 
     def OnClose(self, event):
         self.stop = True

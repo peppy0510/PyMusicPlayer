@@ -108,7 +108,7 @@ def encode_wave(audiodata):
 
 def decode_wave(raw_data):
     nframes = len(raw_data) / 2
-    # 8bit:"%iB":unsigned chars	# 16bit:"%ih":signed 2 byte shorts
+    # 8bit:"%iB":unsigned chars # 16bit:"%ih":signed 2 byte shorts
     for fmt in ('%ih' % nframes, '%iB' % nframes):
         try:
             return struct.unpack(fmt, raw_data)
@@ -485,8 +485,8 @@ def get_stream_spectrum_vectorscope_repl(hstream, vs_size=90, channel=2, autogai
     xys = zip(numpy.int16(-xdts + 0.5 * vs_size), numpy.int16(ydts + 0.5 * vs_size))
     # xys = zip(numpy.int16(-xdts+0.5*vs_size), numpy.int16(ydts+0.5*vs_size+1.5))
     # if data_max < 9921:
-    # 	xys = ()
-    # 	log_spcetrum = log_spcetrum/2
+    #   xys = ()
+    #   log_spcetrum = log_spcetrum/2
     # print data_max
     return log_spcetrum, list(set(xys))
 
@@ -611,9 +611,9 @@ def second2time(duration, format=0):
 # notefreq = numpy.arange(1, maxnote, 1)
 # noterang = numpy.arange(1, maxnote+1, 1)
 # for cnt in range(1, maxnote):
-# 	notefreq[cnt-1] = noteC0*numpy.power(noteratio, cnt)
+#   notefreq[cnt-1] = noteC0*numpy.power(noteratio, cnt)
 # for cnt in range(1, maxnote+1):
-# 	noterang[cnt-1] = noteC0*numpy.power(noteratio, cnt-0.5)
+#   noterang[cnt-1] = noteC0*numpy.power(noteratio, cnt-0.5)
 
 
 def get_note_freq():

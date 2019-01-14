@@ -29,10 +29,11 @@ except Exception:
     packages = os.path.join(WORKING_PATH, 'packages')
 sys.path.insert(0, packages)
 
-if os.path.isfile('python27.dll') or os.path.isfile('python35.dll'):
-    PACKAGED = True
-else:
-    PACKAGED = False
+PACKAGED = False
+for v in ('27', '35', '36', '37', '38'):
+    if os.path.isfile('python%s.dll' % (v)):
+        PACKAGED = True
+        break
 
 if sys.platform.startswith('win'):
     if PACKAGED:
