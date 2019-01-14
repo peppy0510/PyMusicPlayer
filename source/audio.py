@@ -503,17 +503,19 @@ def get_stream_spectrum_vectorscope_repl(hstream, vs_size=90, channel=2, autogai
     return log_spcetrum, list(set(xys))
 
 
-def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1):
+def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, spectrum_scale=1):
     if hstream == 0:
         return 0
     amplify = 1.25
+    # amplify = 1.25 * pow(spectrum_scale, 0.5) * 0.75
     # amplify = 0.99
     fftrex = 1
     fs = get_fs(hstream)
     if fs == 0:
         return None, None
     freqmax = int(round(fs / fftrex))
-    frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
+    # frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
+    frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel) * pow(spectrum_scale, 0.75)))
     fftpnt = int(round(freqmax * fftrex * 0.1))
     data = numpy.arange(frame_length, dtype=ctypes.c_short)
     pybass.BASS_ChannelGetData(hstream, data.ctypes.
@@ -529,16 +531,24 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1):
     spectrum = spectrum[1:int(len(spectrum) / 2)]
     spectrum = abs(spectrum) / fftpnt / 8192
     low_pad = [2, 3, 4, 5, 6, 7]
+    # low_pad = []
+    # for i in range(len(note_freq_range) - 1, 0, -1):
+    #     x = (note_freq_range[i] - note_freq_range[i - 1]) / spectrum_scale
+    #     for ii in range(spectrum_scale - 1, 0, -1):
+    #         note_freq_range.insert(i, note_freq_range[i - 1] + x * ii)
+
     note_freq_range = list(get_note_freq_range())
-    scale = 2
-    for i in range(len(note_freq_range) - 1, 0, -1):
-        x = (note_freq_range[i] - note_freq_range[i - 1]) / scale
-        for ii in range(1, scale):
-            note_freq_range.insert(i, note_freq_range[i - 1] + x * ii)
 
     freqbin = [freq for freq in note_freq_range
                if freq > 8 and freq < len(spectrum) + len(low_pad) + 1]
+    # freqbin = low_pad + freqbin + [len(spectrum)]
     freqbin = low_pad + freqbin + [len(spectrum)]
+
+    for i in range(len(freqbin) - 1, 0, -1):
+        x = (freqbin[i] - freqbin[i - 1]) / spectrum_scale
+        for ii in range(spectrum_scale - 1, 0, -1):
+            freqbin.insert(i, freqbin[i - 1] + x * ii)
+
     # print(freqbin)
     log_spcetrum = numpy.zeros(len(freqbin) - 1)
     for i, v in enumerate(freqbin[:-1]):

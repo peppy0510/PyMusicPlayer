@@ -854,15 +854,25 @@ class PlayBoxApic(RectBox):
         if self.parent.Spectrum.IsShown():
             size = 119
             self.margin = 2
+            size = 45
         else:
             size = 59
             self.margin = 1
+            size = 0
         # rect = self.parent.Title.GetRect()
+
         if self.left:
             x = 14
         else:
             x = self.parent.GetClientSize().width - size - 1 - 10
-        self.SetRect((x, 68, size, size))
+        y = 68
+
+        y = 78
+        # Spectrum
+        # print(self.parent.Spectrum.GetPosition())
+        x = self.parent.Spectrum.GetPosition().x - size - 12
+
+        self.SetRect((x, y, size, size))
         if size != self.last_size:
             self.HandleApicChange(forced=True)
         else:
@@ -877,7 +887,8 @@ class PlayBoxSpectrum(RectBox):
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
-        self.width = 320 * 2
+        self.scale = 1
+        self.width = 320 * self.scale
         self.height = 39
         self.resolution = 1
         self.saturation = 0.1
@@ -895,7 +906,7 @@ class PlayBoxSpectrum(RectBox):
 
     def InitGround(self):
         w, h = (self.width, self.height)
-        len_spectrum = 103 * 2
+        len_spectrum = 103 * self.scale
         spLength = len_spectrum - 1
         sw = int(1.0 * w / spLength)
         offset = (w - sw * spLength) * 0.5
@@ -916,7 +927,7 @@ class PlayBoxSpectrum(RectBox):
             return None, None
         return audio.get_stream_spectrum_vectorscope(
             self.parent.cue.hStream, self.parent.VectorScope.size,
-            self.parent.cue.channel, self.parent.cue.autogain)
+            self.parent.cue.channel, self.parent.cue.autogain, spectrum_scale=self.scale)
 
     def SetRectDraw(self, dc):
         spectrum, vectorscope = self.GetSpectrumVectorScope()
@@ -952,13 +963,22 @@ class PlayBoxSpectrum(RectBox):
         self.Show()
         _, y, _, _ = self.parent.Wave.GetRect()
         w, _ = self.parent.GetSize()
+
+        scale = int((w - 200) / 320)
+        scale = 1 if scale < 1 else scale
+        scale = 3 if scale > 3 else scale
+        if self.scale != scale:
+            self.scale = scale
+            self.width = 320 * self.scale
+            self.InitGround()
+
         wr = self.parent.Wave.GetRect()
-        x = wr.x + 0.5 * (wr.width + 12 - self.width) - 33
+        x = wr.x + 0.5 * (wr.width + 12 - self.width) - 33 + 33
         y = y - self.height - 20
         self.SetRect((x, y, self.width, self.height))
 
         w, h = self.GetSize()
-        len_spectrum = 103
+        len_spectrum = 103 * self.scale
         spLength = len_spectrum - 1
         sw = int(1.0 * w / spLength)
         offset = (w - sw * spLength) * 0.5
@@ -1055,6 +1075,7 @@ class PlayBoxWave(RectBox):
                 apic_pad = 59 + 13
         else:
             apic_pad = 0
+        apic_pad = 0
         _, cy, _, ch = self.parent.ControlButton.GetRect()
         w, h = self.parent.GetSize()
         # vol_align = 12
@@ -1065,6 +1086,9 @@ class PlayBoxWave(RectBox):
             leftPad = 8
         elif isSideShowOn and isTopShowOn:
             leftPad = 13
+
+        leftPad = 13
+
         x, y = (leftPad, h - self.height - 15 + 1 - 3)
         # x, y = (leftPad, cy-self.height-15)
         if self.parent.Apic.left:
