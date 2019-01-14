@@ -12,6 +12,7 @@ import sys
 # sys.path.insert(0, packages)
 
 import mfeats
+import modpybass as pybass
 import multiprocessing
 import wx
 
@@ -32,7 +33,7 @@ from macroboxlib import TITLE
 from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
-from packages import pybass
+# from packages import pybass
 from playbox import PlayBox
 from utilities import Struct
 from utilities import kill_self_process

@@ -5,27 +5,28 @@
 # email: peppy0510@hotmail.com
 
 
-import os
-import sys
-import re
+import _pickle as cPickle
+import base64
 import ctypes
-import psutil
-import socket
+import hashlib
 import itertools
 import operator
-import threading
-import subprocess
-import hashlib
-import zlib
-import base64
-import time
+import os
+import psutil
+import re
+import shelve
+import socket
 import stat
 import struct
-import shelve
+import subprocess
+import sys
+import threading
+import time
 import urllib
 import win32file
 import win32pipe
-import _pickle as cPickle
+import zlib
+
 from operator import itemgetter
 
 
@@ -35,7 +36,7 @@ def get_hostname():
 
 def get_external_ip():
     site = urllib.urlopen('http://checkip.dyndns.org/').read()
-    grab = re.findall('\d{2,3}.\d{2,3}.\d{2,3}.\d{2,3}', site)
+    grab = re.findall(r'\d{2,3}.\d{2,3}.\d{2,3}.\d{2,3}', site)
     return grab[0]
 
 
@@ -57,7 +58,7 @@ def get_macaddress(host='localhost'):
     # Check for api availability
     try:
         SendARP = ctypes.windll.Iphlpapi.SendARP
-    except:
+    except Exception:
         raise NotImplementedError('Usage only on Windows 2000 and above')
     # Doesn't work with loopbacks, but let's try and help.
     if host == '127.0.0.1' or host.lower() == 'localhost':
@@ -67,7 +68,7 @@ def get_macaddress(host='localhost'):
         inetaddr = ctypes.windll.wsock32.inet_addr(host)
         if inetaddr in (0, -1):
             raise Exception
-    except:
+    except Exception:
         hostip = socket.gethostbyname(host)
         inetaddr = ctypes.windll.wsock32.inet_addr(hostip)
     buffer = ctypes.c_buffer(6)
@@ -121,7 +122,7 @@ def rgb2clr(rgba):
     try:
         r, g, b, alpha = rgba
         return [c / 255.0 for c in tuple((r, g, b, alpha))]
-    except:
+    except Exception:
         pass
     r, g, b = rgba
     return [c / 255.0 for c in tuple((r, g, b))]
@@ -131,7 +132,7 @@ def clr2rgb(clra):
     try:
         c, l, r, alpha = clra
         return [f * 255.0 for f in tuple((c, l, r, alpha))]
-    except:
+    except Exception:
         pass
     c, l, r = clra
     return [f * 255.0 for f in tuple((c, l, r))]
@@ -207,7 +208,7 @@ def makemdx(path, created_time=None):
     if created_time is None:
         try:
             stats = os.stat(path)
-        except:
+        except Exception:
             return None
         created_time = stats[stat.ST_CTIME]
     # path = os.path.abspath(path).encode(sys.getfilesystemencoding())
@@ -345,7 +346,7 @@ def kill_process_by_pid(pid):
         cmd = ['kill', '-9', '%s' % (pid)]
         try:
             run_hidden_subprocess(cmd)
-        except:
+        except Exception:
             pass
 
 
@@ -370,11 +371,11 @@ def is_ghost_runnung(ghost_name):
     return True
 
 # def is_ghost_runnung(ghost_name):
-# 	selfpid = os.getpid()
-# 	ghost_name = """%s""" % (ghost_name)
-# 	ps = filter(lambda p: ghost_name in str(p.name), psutil.process_iter())
-# 	if ps == 1: return False
-# 	return True
+#   selfpid = os.getpid()
+#   ghost_name = """%s""" % (ghost_name)
+#   ps = filter(lambda p: ghost_name in str(p.name), psutil.process_iter())
+#   if ps == 1: return False
+#   return True
 
 
 def get_active_processes():
@@ -523,7 +524,7 @@ def send_socket_message(message, address):
     try:
         sender.connect(address)
         resp = sender.send(compress_object(message))
-    except:
+    except Exception:
         resp = 0
     sender.close()
     return resp
@@ -546,7 +547,7 @@ class SocketReceiver(threading.Thread):
                 data = connection.recv(8192)
                 received = decompress_object(data)
                 self.received += [(received, address)]
-            except:
+            except Exception:
                 pass
             connection.close()
 
@@ -639,7 +640,7 @@ class SocketMessenger(threading.Thread):
         self.Receiver._Thread__stop()
 
     # def __del__(self):
-    # 	self.terminate()
+    #   self.terminate()
 
     def __exit__(self, type, value, traceback):
         self.terminate()
@@ -683,7 +684,7 @@ class PipeReceiver(SocketReceiver):
                     # print path
                     self.received += [(received, self.address)]
                 win32file.CloseHandle(fileHandle)
-            except:
+            except Exception:
                 pass
         win32file.CloseHandle(fileHandle)
 

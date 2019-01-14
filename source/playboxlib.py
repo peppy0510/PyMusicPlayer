@@ -5,22 +5,24 @@
 # email: peppy0510@hotmail.com
 
 
-import wx
-import os
-import gc
-import sys
-import time
 import audio
-import numpy
+import gc
 import mfeats
+import modpybass as pybass
+import numpy
+import os
+import sys
 import threading
-from packages import pybass
-from utilities import Struct
+import time
+import wx
+
 from macroboxlib import GetPreference
-from macroboxlib import SetPreference
 from macroboxlib import ListBoxColumn
 from macroboxlib import MakeMusicFileItem
 from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import SetPreference
+# from packages import pybass
+from utilities import Struct
 # from macroboxlib import *
 
 
@@ -122,6 +124,32 @@ class AudioControl(threading.Thread):
         audio.set_volume(self.hStream, target_volume * ratio)
 
     def InitAudio(self):
+        ######
+        # import ctypes
+        # from packages.pybassex import pybassex
+        # ex = pybassex()
+        # path = 'C:\\Users\\tkmix\\Desktop\\WORK\\macrobox-player\\source\\packages\\bass_vst.dll'
+        # bass_module = ctypes.WinDLL(path)
+        # func_type = ctypes.WINFUNCTYPE
+        # QWORD = ctypes.c_int64
+        # HSTREAM = ctypes.c_ulong
+        # BASS_VST_ChannelSetDSP = func_type(
+        #     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_int64, ctypes.c_ulong)(('BASS_VST_ChannelSetDSP', bass_module))
+        # BASS_VST_GetParam = func_type(
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64)(('BASS_VST_GetParam', bass_module))
+        # # BASS_VST_SetParam = func_type(
+        # #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float)(('BASS_VST_SetParam', bass_module))
+        # BASS_VST_SetParam = func_type(
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float)(('BASS_VST_SetParam', bass_module))
+
+        # BASS_VST_EmbedEditor = func_type(
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64)(('BASS_VST_EmbedEditor', bass_module))
+        # BASS_VST_SetScope = func_type(
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64)(('BASS_VST_SetScope', bass_module))
+        # BASS_VST_GetInfo = func_type(
+        #     HSTREAM, ctypes.c_ulong)(('BASS_VST_GetInfo', bass_module))
+        ######
+
         self.parent.parent.ListBox.List.pending.SkipStopIcon = True
         if self.path == self.parent.cue.path:
             is_position_set = True
@@ -135,7 +163,44 @@ class AudioControl(threading.Thread):
         elif sys.platform.startswith('darwin'):
             flags = pybass.BASS_STREAM_PRESCAN
             self.path = self.path.encode(sys.getfilesystemencoding())
+
         self.hStream = pybass.BASS_StreamCreateFile(False, self.path, 0, 0, flags)
+
+        ######
+        # print(dir(pybass))
+        # from pybass import pybass_vst
+        vst_plugin_name = 'LoudMax64.dll'
+        vst_plugin_name = 'LoudMaxLite64.dll'
+        vst_plugin_path = os.path.join(os.path.dirname(__file__), 'packages', vst_plugin_name)
+        # BASS_VST_KEEP_CHANS = 0x00000001
+        flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
+        self.vstHandle = pybass.BASS_VST_ChannelSetDSP(self.hStream, vst_plugin_path, flags, 0)
+        pybass.BASS_VST_SetParam(self.vstHandle, 0, 0.0)
+        pybass.BASS_VST_SetParam(self.vstHandle, 1, 1.0)
+        pybass.BASS_VST_SetParam(self.vstHandle, 2, 0.0)
+        pybass.BASS_VST_SetParam(self.vstHandle, 3, 0.0)
+        # print(os.path.join(os.path.dirname(__file__), 'packages', 'LoudMax64.dll'))
+        # self.parent.Show()
+        # x = BASS_VST_SetScope(self.vstHandle, 123)
+        # dialog = wx.TextEntryDialog(self.parent.parent.parent, 'Enter Your Name', 'Text Entry Dialog')
+        # BASS_VST_EmbedEditor(self.vstHandle, dialog.GetHandle())
+        # dialog.ShowModal()
+        # if dialog.ShowModal() == wx.ID_OK:
+        #     self.text.SetValue('Name entered:' + dialog.GetValue())
+        # dialog.Destroy()
+
+        # BASS_VST_EmbedEditor(self.vstHandle, self.parent.GetHandle())
+        # print()
+
+        # param = BASS_VST_GetParam(self.vstHandle, 0)
+        # info = None
+        # BASS_VST_SetParam(self.vstHandle, 1, 1.0)
+
+        # print(param)
+        # param = BASS_VST_GetParam(self.vstHandle, 1)
+        # print(param)
+        ######
+
         self.parent.cue.hStream = self.hStream
         audio.set_volume(self.hStream, 0.0)
         if self.resume is not None:
@@ -145,6 +210,7 @@ class AudioControl(threading.Thread):
                 resume = duration + self.resume
             audio.set_position(self.hStream, resume)
         pybass.BASS_ChannelPlay(self.hStream, False)
+
         self.fadein.cnt = self.fadein.time
         if is_position_set is False and self.parent.IsLoopOn():
             self.fadein.cnt = self.fadein.time
@@ -303,7 +369,7 @@ class PlayBoxControl():
 
     def SetAudioEventWithDBRESP(self):
         # if self.parent.MFEATS.IsPathTasking(self.cue.path):
-        # 	return
+        #   return
         resp = mfeats.getby_key_value('mdx', self.cue.mdx)
         if resp is None:
             return
@@ -326,7 +392,7 @@ class PlayBoxControl():
         self.reInitWave = True
 
     def IsAutoGainOn(self):
-        return True
+        return False
         return self.cue.autogain_on
 
     def SetAutoGainOn(self):

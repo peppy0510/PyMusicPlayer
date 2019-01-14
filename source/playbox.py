@@ -5,26 +5,27 @@
 # email: peppy0510@hotmail.com
 
 
-import os
-import io
-import wx
-import time
-import math
-import numpy
 import audio
 import images
+import io
+import math
 import mutagen
+import numpy
+import os
 import threading
+import time
+import wx
+
 from PIL import Image
-from utilities import Struct
-from macroboxlib import RectBox
+from macroboxlib import COLOR_TOOLBAR_BG
 from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_PLAYINFO
-from macroboxlib import COLOR_TOOLBAR_BG
 from macroboxlib import GetPreference
+from macroboxlib import RectBox
 from playboxlib import AudioControl
-from playboxlib import PlayBoxDnD
 from playboxlib import PlayBoxControl
+from playboxlib import PlayBoxDnD
+from utilities import Struct
 # from playboxlib import *  # noqa
 
 
@@ -151,11 +152,11 @@ class PlayBox(RectBox, PlayBoxControl):
             self.reInitBuffer = True
 
         # if namespace == 'agc_toggle' and self.cache.oneshotkey is False:
-        # 	self.cache.oneshotkey = True
-        # 	if self.IsAutoGainOn():
-        # 		self.SetAutoGainOff()
-        # 	else: self.SetAutoGainOn()
-        # 	self.reInitBuffer = True
+        #   self.cache.oneshotkey = True
+        #   if self.IsAutoGainOn():
+        #       self.SetAutoGainOff()
+        #   else: self.SetAutoGainOn()
+        #   self.reInitBuffer = True
 
         if namespace == 'previous_track':
             self.ControlButton.SetButtonFlash(1)
@@ -308,11 +309,11 @@ class PlayBoxControlButton(RectBox):
             self.button_status[4] = False
             self.SetButtonColors()
         # elif self.parent.IsAutoGainOn() and self.button_status[5] is False:
-        # 	self.button_status[5] = True
-        # 	self.SetButtonColors()
+        #   self.button_status[5] = True
+        #   self.SetButtonColors()
         # elif self.parent.IsAutoGainOn() is False and self.button_status[5]:
-        # 	self.button_status[5] = False
-        # 	self.SetButtonColors()
+        #   self.button_status[5] = False
+        #   self.SetButtonColors()
 
     def HandleEventPlayControl(self, event):
         if event.LeftDown is False:
@@ -331,9 +332,9 @@ class PlayBoxControlButton(RectBox):
         if downIdx == 4 and status[4] is False:
             self.parent.SetLoopOff()
         # if downIdx == 5 and status[5]:
-        # 	self.parent.SetAutoGainOn()
+        #   self.parent.SetAutoGainOn()
         # if downIdx == 5 and status[5] is False:
-        # 	self.parent.SetAutoGainOff()
+        #   self.parent.SetAutoGainOff()
 
         if downIdx == 1:
             self.parent.OnPrev()
@@ -731,13 +732,15 @@ class PlayBoxApic(RectBox):
 
     def IsStreamImage(self, stream):
         # http://www.wxpython.org/docs/api/wx.ImageHandler-class.html#SetType
-        for v in ('JPEG', 'BMP', 'PNG', 'GIF'):
+        for v in ('JPEG', 'BMP', 'PNG', 'GIF',):
             # exec('handler = wx.%sHandler()' % (v))
-            handler = eval('wx.%sHandler()' % (v))
-            if handler.CanReadStream(stream):
+            # handler = eval('wx.%sHandler()' % (v))
+            if hasattr(wx, v + 'Handler'):
+                handler = getattr(wx, v + 'Handler')()
+                if hasattr(handler, 'CanRead') and handler.CanRead(stream):
+                    handler.Destroy()
+                    return True
                 handler.Destroy()
-                return True
-            handler.Destroy()
         return False
 
     def GetApic(self, path):
@@ -751,7 +754,7 @@ class PlayBoxApic(RectBox):
             if key == []:
                 return None, path
             artwork = file.tags[key[0]].data
-        except:
+        except Exception:
             return None, path
 
         buf = io.BytesIO(artwork)
@@ -764,11 +767,11 @@ class PlayBoxApic(RectBox):
             rebuf = io.BytesIO()
             im.save(rebuf, 'PNG')
             rebuf.seek(0)
-            bmp = wx.ImageFromStream(rebuf)
+            bmp = wx.Image(rebuf)
             rebuf.close()
         else:
             buf.seek(0)
-            bmp = wx.ImageFromStream(buf)
+            bmp = wx.Image(buf)
         buf.close()
         ratio = 1.0 * bmp.GetWidth() / bmp.GetHeight()
         width, height = self.GetClientSize()
@@ -874,7 +877,7 @@ class PlayBoxSpectrum(RectBox):
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
-        self.width = 320
+        self.width = 320 * 2
         self.height = 39
         self.resolution = 1
         self.saturation = 0.1
@@ -892,7 +895,7 @@ class PlayBoxSpectrum(RectBox):
 
     def InitGround(self):
         w, h = (self.width, self.height)
-        len_spectrum = 103
+        len_spectrum = 103 * 2
         spLength = len_spectrum - 1
         sw = int(1.0 * w / spLength)
         offset = (w - sw * spLength) * 0.5

@@ -10,6 +10,7 @@
 
 import os
 import sys
+
 from utilities import get_user_docapp_path
 
 
@@ -47,32 +48,34 @@ elif sys.platform.startswith('darwin'):
         PROCESS_NAME = 'python'
 
 
-import time
-import numpy
 import ctypes
-import pybass
-import sqlite3
-import mutagen
-import threading
 import multiprocessing
-from copy import deepcopy
+import mutagen
+import numpy
+import modpybass as pybass
+# pybass = pybass.load()
+import sqlite3
+import threading
+import time
+
 from audio import fir_filter
 from audio import get_channel
 from audio import init_bass_decode
+from copy import deepcopy
 from macroboxlib import PREFERENCE_DB
-from utilities import open_shelves
-from utilities import get_master_path
-from utilities import is_process_running_by_pid
-from utilities import run_hidden_subprocess
-from utilities import is_process_running_by_name
-from utilities import kill_self_process
+from utilities import PipeMessenger
+from utilities import Struct
 from utilities import compress_object
 from utilities import decompress_object  # noqa
-from utilities import set_process_priority
-from utilities import Struct
-from utilities import makemdx
+from utilities import get_master_path
 from utilities import get_memory_by_pid
-from utilities import PipeMessenger
+from utilities import is_process_running_by_name
+from utilities import is_process_running_by_pid
+from utilities import kill_self_process
+from utilities import makemdx
+from utilities import open_shelves
+from utilities import run_hidden_subprocess
+from utilities import set_process_priority
 
 
 # import multiprocessing.forking
@@ -98,12 +101,12 @@ from utilities import PipeMessenger
 # tuple of (field_key, field_type)
 
 # MFEATS_DEFINITION = (\
-# 	('mdx', 'TEXT PRIMARY KEY'), ('path', 'TEXT'), ('duration', 'REAL'),\
-# 	('channel', 'INTEGER'), ('bit', 'INTEGER'), ('samplerate', 'INTEGER'),\
-# 	('bitrate', 'INTEGER'), ('key', 'TEXT'), ('tempo', 'REAL'),\
-# 	('waveform', 'BLOB'), ('highlight', 'BLOB'), ('user_highlight', 'BLOB'),\
-# 	('similar_artists', 'BLOB'), ('fingerprint', 'BLOB'), ('autogain', 'REAL'),\
-# 	('md5', 'TEXT'), ('date', 'REAL'), ('version', 'TEXT'), ('error', 'INTEGER'),)
+#   ('mdx', 'TEXT PRIMARY KEY'), ('path', 'TEXT'), ('duration', 'REAL'),\
+#   ('channel', 'INTEGER'), ('bit', 'INTEGER'), ('samplerate', 'INTEGER'),\
+#   ('bitrate', 'INTEGER'), ('key', 'TEXT'), ('tempo', 'REAL'),\
+#   ('waveform', 'BLOB'), ('highlight', 'BLOB'), ('user_highlight', 'BLOB'),\
+#   ('similar_artists', 'BLOB'), ('fingerprint', 'BLOB'), ('autogain', 'REAL'),\
+#   ('md5', 'TEXT'), ('date', 'REAL'), ('version', 'TEXT'), ('error', 'INTEGER'),)
 MFEATS_DEFINITION = (
     ('mdx', 'TEXT PRIMARY KEY'), ('path', 'TEXT'), ('duration', 'REAL'),
     ('channel', 'INTEGER'), ('bit', 'INTEGER'), ('samplerate', 'INTEGER'),
@@ -216,13 +219,13 @@ def mfeats_single(path, queue=None):
 
             # key_frame_length = int(fs*0.25); key_frame_jump = 0.8
             # for i in range(0, len(analyze_frame)-key_frame_length,\
-            # 	int(key_frame_length*key_frame_jump)):
-            # 	spectrum = numpy.fft.fft(\
-            # 		analyze_frame[i:i+key_frame_length],\
-            # 		int(fs*key_analysis_resolution))
-            # 	spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
-            # 	notes = spectrum_to_note_by_max(spectrum, note_freq_div)
-            # 	chromagram += [note_to_chroma_by_max(notes)]
+            #   int(key_frame_length*key_frame_jump)):
+            #   spectrum = numpy.fft.fft(\
+            #       analyze_frame[i:i+key_frame_length],\
+            #       int(fs*key_analysis_resolution))
+            #   spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
+            #   notes = spectrum_to_note_by_max(spectrum, note_freq_div)
+            #   chromagram += [note_to_chroma_by_max(notes)]
             analyze_frame = []
 
     # waveform
@@ -232,8 +235,8 @@ def mfeats_single(path, queue=None):
     # tempo analysis with tempo_frame
 
     # if duration > 60:
-    # 	tempo_frame = numpy.concatenate(tempo_frame, axis=0)
-    # 	tempo = get_tempo(tempo_frame, tempo_fs)
+    #   tempo_frame = numpy.concatenate(tempo_frame, axis=0)
+    #   tempo = get_tempo(tempo_frame, tempo_fs)
     # else: tempo = 0.0
     tempo_frame = numpy.concatenate(tempo_frame, axis=0)
     tempo = get_tempo(tempo_frame, tempo_fs)
@@ -419,7 +422,7 @@ def mfeats_single(path, queue=None):
         pybass.BASS_StreamFree(hstream)
 
     # print 'mfeats_single_finished: elapsed_time: %03.06fsec: %03.06fmsec/onesec'\
-    # 	% (time.time()-tic, (time.time()-tic)/duration*1000)
+    #   % (time.time()-tic, (time.time()-tic)/duration*1000)
     # return mfeats_data
 
     if queue is not None:
@@ -997,7 +1000,7 @@ class MFEATS_JOB_Scheduler(threading.Thread):
                 # self.Messenger.send_message(this.path, CLIENT_ADDRESS)
                 # print 'watch_dead_proclist job finished: %s' % (this.path)
                 # print 'watch_dead_proclist sending message to client: %s'\
-                # 	% (this.address)
+                #   % (this.address)
 
     def watch_new_proclist(self):
         if self.Messenger.has_message() is False:
