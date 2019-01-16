@@ -78,7 +78,7 @@ sys.path.insert(0, packages)
 # from ctypes import WinDLL
 # gdi32 = WinDLL('gdi32.dll')
 # fonts = [font for font in os.listdir(packages)\
-# 	if font.endswith('otf') or font.endswith('ttf')]
+#   if font.endswith('otf') or font.endswith('ttf')]
 # for font in fonts: gdi32.AddFontResourceA(os.path.join(packages, font))
 
 
@@ -381,7 +381,7 @@ class CursorEventCatcher():
                 and self.parent.ListBox.IsAnyListLocked():
             self.SetCursorWAIT()
         # elif self.parent.ListBox.Header.IsSplitterOnSize():
-        # 	self.SetCursorSIZEWE()
+        #   self.SetCursorSIZEWE()
         elif self.IsInTextEdit(event):
             pass
         elif isInFrameReSize is False and self.parent.pending_item_drag is None:
@@ -575,13 +575,13 @@ class MFEATS_Scheduler(wx.Timer):
         self.SendJobToProcessor()
 
     # def watch_dead_proclist(self):
-    # 	if self.proclist == []: return
-    # 	for i in range(len(self.proclist)-1, -1, -1):
-    # 		if self.proclist[i].proc.is_alive() is False:
-    # 			self.proclist[i].proc._Thread__stop()
-    # 			this = self.proclist.pop(i)
-    # 			this.path
-    # 			# self.Messenger.send_message(this.path, CLIENT_ADDRESS)
+    #   if self.proclist == []: return
+    #   for i in range(len(self.proclist)-1, -1, -1):
+    #       if self.proclist[i].proc.is_alive() is False:
+    #           self.proclist[i].proc._Thread__stop()
+    #           this = self.proclist.pop(i)
+    #           this.path
+    #           # self.Messenger.send_message(this.path, CLIENT_ADDRESS)
 
     def StopNotify(self):
         self.stop = True
@@ -612,7 +612,13 @@ class MFEATS_Scheduler(wx.Timer):
             pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
             for itemIdx in itemsIdx:
                 path = self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
-                self.AddMFEATSTask(path, urgent=False)
+                # self.AddMFEATSTask(path, urgent=False)
+                t = threading.Thread(
+                    target=self.AddMFEATSTask,
+                    args=(path,), kwargs={'urgent': False},
+                    daemon=True
+                )
+                t.start()
 
     def SetProcsLimit(self, value):
         self.procs_limit = value
@@ -746,7 +752,7 @@ class MFEATS_Scheduler(wx.Timer):
         for i in range(len(self.proclist)):
             self.proclist[i].proc.join()
         # for i in range(len(self.proclist)):
-        # 	self.proclist[i].proc._Thread__stop()
+        #   self.proclist[i].proc._Thread__stop()
 
     def __del__(self):
         self.terminate()
@@ -824,7 +830,13 @@ class MFEATS_Network_Scheduler(wx.Timer):
             pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
             for itemIdx in itemsIdx:
                 path = self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
-                self.AddMFEATSTask(path, urgent=False)
+                # self.AddMFEATSTask(path, urgent=False)
+                t = threading.Thread(
+                    target=self.AddMFEATSTask,
+                    args=(path,), kwargs={'urgent': False},
+                    daemon=True
+                )
+                t.start()
 
     def SetProcsLimit(self, value):
         self.procs_limit = int(value)
@@ -908,14 +920,14 @@ class MFEATS_Network_Scheduler(wx.Timer):
                 self.Messenger.send_message('connected', 'macrobox_mfeats')
                 # self.Messenger.send_message('connected', mfeats.SERVER_ADDRESS)
                 # if 'connected' not in self.Messenger.get_message():
-                # 	self.wakeup = True
+                #   self.wakeup = True
         if self.wakeup is False:
             return
         # if mfeats.is_scheduler_running(): return
         # self.wakeup = False
         # mfeats.boot_scheduler()
         # for path in self.GetProcPath():
-        # 	self.Messenger.send_socket_message(path, mfeats.SERVER_ADDRESS)
+        #   self.Messenger.send_socket_message(path, mfeats.SERVER_ADDRESS)
 
     def ResetItemValue(self, old_path, new_path):
         idx = [i for i in range(len(self.taskpath))
@@ -987,7 +999,7 @@ class MFEATS_Network_Scheduler(wx.Timer):
     def __del__(self):
         self.Messenger.send_message('terminate', 'macrobox_mfeats', urgent=True)
         # self.Messenger.send_message('terminate',\
-        # 	mfeats.SERVER_ADDRESS, urgent=True)
+        #   mfeats.SERVER_ADDRESS, urgent=True)
         time.sleep(0.1)
         self.Messenger.terminate()
         self.Messenger._Thread__stop()
@@ -1911,10 +1923,10 @@ def MetaCrawler(path, queue):
             data = '%s %s' % (release.data['year'], release.data['title'])
             info.discogs.releases.append(data)
             # if 'images' in release.data.keys():
-            # 	# uri = release.data['images'][0]['uri']
-            # 	uri = release.data['images'][0]['uri150']
-            # 	artwork = urllib.urlopen(uri).read()
-            # 	info.discogs.images.append(artwork)
+            #   # uri = release.data['images'][0]['uri']
+            #   uri = release.data['images'][0]['uri150']
+            #   artwork = urllib.urlopen(uri).read()
+            #   info.discogs.images.append(artwork)
             queue.put(info)
     except Exception:
         pass

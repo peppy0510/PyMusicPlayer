@@ -888,6 +888,7 @@ class PlayBoxSpectrum(RectBox):
         RectBox.__init__(self, parent)
         self.parent = parent
         self.scale = 1
+        self.max_scale = 4
         self.width = 320 * self.scale
         self.height = 39
         self.resolution = 1
@@ -963,10 +964,9 @@ class PlayBoxSpectrum(RectBox):
         self.Show()
         _, y, _, _ = self.parent.Wave.GetRect()
         w, _ = self.parent.GetSize()
-
         scale = int((w - 200) / 320)
         scale = 1 if scale < 1 else scale
-        scale = 3 if scale > 3 else scale
+        scale = self.max_scale if scale > self.max_scale else scale
         if self.scale != scale:
             self.scale = scale
             self.width = 320 * self.scale
@@ -1087,7 +1087,7 @@ class PlayBoxWave(RectBox):
         elif isSideShowOn and isTopShowOn:
             leftPad = 13
 
-        leftPad = 13
+        leftPad = 20
 
         x, y = (leftPad, h - self.height - 15 + 1 - 3)
         # x, y = (leftPad, cy-self.height-15)

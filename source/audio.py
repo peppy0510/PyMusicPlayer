@@ -507,15 +507,15 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     if hstream == 0:
         return 0
     amplify = 1.25
-    # amplify = 1.25 * pow(spectrum_scale, 0.5) * 0.75
+    amplify = 1.25 * pow(spectrum_scale, 0.5)
     # amplify = 0.99
     fftrex = 1
     fs = get_fs(hstream)
     if fs == 0:
         return None, None
     freqmax = int(round(fs / fftrex))
-    # frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
-    frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel) * pow(spectrum_scale, 0.75)))
+    frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
+    # frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel) * pow(spectrum_scale, 0.75)))
     fftpnt = int(round(freqmax * fftrex * 0.1))
     data = numpy.arange(frame_length, dtype=ctypes.c_short)
     pybass.BASS_ChannelGetData(hstream, data.ctypes.

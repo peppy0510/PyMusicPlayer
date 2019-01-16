@@ -49,10 +49,10 @@ elif sys.platform.startswith('darwin'):
 
 
 import ctypes
+import modpybass as pybass
 import multiprocessing
 import mutagen
 import numpy
-import modpybass as pybass
 # pybass = pybass.load()
 import sqlite3
 import threading
@@ -138,6 +138,8 @@ def mfeats_single(path, queue=None):
     # uses mono data
 
     # tic = time.time()
+    find_key = False
+    find_gain = False
     key, bit, error = ('', 16, 0)
     path = os.path.abspath(path)
     mdx = makemdx(path)
@@ -284,106 +286,109 @@ def mfeats_single(path, queue=None):
     # autogain analysis in highlight period
 
     autogain = 0.4
+    if find_gain:
+        if duration > 60:
+            autogain_analysis_length = highlight[1]
+            if duration - highlight[0] < autogain_analysis_length:
+                autogain_analysis_length = duration - highlight[0]
+            frame_length = fs * channel * autogain_analysis_length
+            byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, highlight[0])
+            pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+            frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
 
-    if duration > 60:
+            pybass.BASS_ChannelGetData(
+                hstream,
+                frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)),
+                int(frame_length * 2))
 
-        autogain_analysis_length = highlight[1]
-        if duration - highlight[0] < autogain_analysis_length:
-            autogain_analysis_length = duration - highlight[0]
-        frame_length = fs * channel * autogain_analysis_length
-        byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, highlight[0])
-        pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
-        frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
+            mono_frame = frame_raw[::channel] / 32768.0
+            mono_frame = fir_filter(mono_frame, lowcut=500, highcut=fs / 2, fs=fs, order=15)
+            mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=7)
+            mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=5)
+            mono_frame = fir_filter(mono_frame, lowcut=5000, highcut=fs / 2, fs=fs, order=5)
+            if fs / 2 > 21000:
+                mono_frame = fir_filter(mono_frame, lowcut=0, highcut=20000, fs=fs, order=45)
+                mono_frame += fir_filter(mono_frame, lowcut=15000, highcut=fs / 2, fs=fs, order=5) * 0.5
+            rms = numpy.mean(mono_frame**2)**0.5 * 3
 
-        pybass.BASS_ChannelGetData(
-            hstream,
-            frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)),
-            int(frame_length * 2))
+            # spectrum = numpy.fft.fft(mono_frame, fs)
+            # spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
+            # pylab.plot(spectrum); pylab.show()
 
-        mono_frame = frame_raw[::channel] / 32768.0
-        mono_frame = fir_filter(mono_frame, lowcut=500, highcut=fs / 2, fs=fs, order=15)
-        mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=7)
-        mono_frame = fir_filter(mono_frame, lowcut=1000, highcut=fs / 2, fs=fs, order=5)
-        mono_frame = fir_filter(mono_frame, lowcut=5000, highcut=fs / 2, fs=fs, order=5)
-        if fs / 2 > 21000:
-            mono_frame = fir_filter(mono_frame, lowcut=0, highcut=20000, fs=fs, order=45)
-            mono_frame += fir_filter(mono_frame, lowcut=15000, highcut=fs / 2, fs=fs, order=5) * 0.5
-        rms = numpy.mean(mono_frame**2)**0.5 * 3
-
-        # spectrum = numpy.fft.fft(mono_frame, fs)
-        # spectrum = numpy.abs(spectrum[1:int(len(spectrum)/2)])
-        # pylab.plot(spectrum); pylab.show()
-
-        autogain = 0.14 / rms
-    else:
-        autogain = 0.4
+            autogain = 0.14 / rms
 
     # key analysis in highlight period
 
-    chromagram, resolution = ([], 1.0)
-    note_freq_div = get_note_freq_div(resolution)
-    # note_window = get_note_window(fs, resolution, note_freq_div)
-    if xtempo == 0:
-        frame_length = int(fs * channel * 0.5)
-    else:
-        frame_length = int(fs * channel * (60.0 / xtempo))
+    key = ''
+    if find_key:
+        chromagram, resolution = ([], 1.0)
+        note_freq_div = get_note_freq_div(resolution)
+        # note_window = get_note_window(fs, resolution, note_freq_div)
+        if xtempo == 0:
+            frame_length = int(fs * channel * 0.5)
+        else:
+            frame_length = int(fs * channel * (60.0 / xtempo))
 
-    offset_position, until_position = (highlight[0], fs * channel * until_duration * 2)
+        offset_position, until_position = (highlight[0], fs * channel * until_duration * 2)
 
-    if frame_length > total_frame_length:
-        frame_length = total_frame_length - 1
+        if frame_length > total_frame_length:
+            frame_length = total_frame_length - 1
 
-    if offset_position + until_position > total_frame_length:
-        until_position = total_frame_length - offset_position
+        if offset_position + until_position > total_frame_length:
+            until_position = total_frame_length - offset_position
 
-    frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
-    byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, offset_position)
-    pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+        frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
+        byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, offset_position)
+        pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
 
-    for cnt, frame_position in enumerate(
-            numpy.arange(0, total_frame_length - frame_length, frame_length)):
+        for cnt, frame_position in enumerate(
+                numpy.arange(0, total_frame_length - frame_length, frame_length)):
 
-        pybass.BASS_ChannelGetData(
-            hstream, frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
+            pybass.BASS_ChannelGetData(
+                hstream, frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
 
-        mono_frame = frame_raw[::channel] / 32768.0
-        spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
-        spectrum = numpy.abs(spectrum[1:int(len(spectrum) / 2)])
-        notes = spectrum_to_note_by_max(spectrum, note_freq_div)
-        chromagram += [note_to_chroma_by_max(notes)]
-        if (cnt + 1) * frame_length >= until_position:
-            break
+            mono_frame = frame_raw[::channel] / 32768.0
+            spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
+            spectrum = numpy.abs(spectrum[1:int(len(spectrum) / 2)])
 
-    scored_keys, key_scores, key_counts = ([], [0] * 24, [0] * 24)
-    for chroma in chromagram:
-        lag, score = get_chord_binaries_correlation_lag_score(chroma)
-        scored_keys += [lag]
-        key_counts[lag] += 1
-        key_scores[lag] += score
-    key_scores = numpy.array(key_scores)
-    max_key_scores = max(key_scores)
-    if max_key_scores == 0.0:
-        key = ''
-    else:
-        key_scores = key_scores / max_key_scores * 100
-        scored_key_idx = []
-        for i in range(1):
-            value, pnt = find_max(key_scores)
-            if value < 50:
+            if find_key:
+
+                notes = spectrum_to_note_by_max(spectrum, note_freq_div)
+                chromagram += [note_to_chroma_by_max(notes)]
+
+            if (cnt + 1) * frame_length >= until_position:
                 break
-            scored_key_idx += [pnt[0]]
-            key_scores[pnt[0]] = 0
-        string_keys = []
-        for i in range(len(scored_key_idx) - 1, -1, -1):
-            if scored_key_idx[i] - 12 in scored_key_idx:
-                scored_key_idx.pop(i)
-                continue
-            elif scored_key_idx[i] + 12 in scored_key_idx:
-                scored_key_idx.pop(i)
-                continue
-            string_keys += [chord_idx_to_char(scored_key_idx[i])]
-        string_keys = ' or '.join(string_keys)
-        key = '%s' % (string_keys)
+
+        scored_keys, key_scores, key_counts = ([], [0] * 24, [0] * 24)
+        for chroma in chromagram:
+            lag, score = get_chord_binaries_correlation_lag_score(chroma)
+            scored_keys += [lag]
+            key_counts[lag] += 1
+            key_scores[lag] += score
+        key_scores = numpy.array(key_scores)
+        max_key_scores = max(key_scores)
+        if max_key_scores == 0.0:
+            key = ''
+        else:
+            key_scores = key_scores / max_key_scores * 100
+            scored_key_idx = []
+            for i in range(1):
+                value, pnt = find_max(key_scores)
+                if value < 50:
+                    break
+                scored_key_idx += [pnt[0]]
+                key_scores[pnt[0]] = 0
+            string_keys = []
+            for i in range(len(scored_key_idx) - 1, -1, -1):
+                if scored_key_idx[i] - 12 in scored_key_idx:
+                    scored_key_idx.pop(i)
+                    continue
+                elif scored_key_idx[i] + 12 in scored_key_idx:
+                    scored_key_idx.pop(i)
+                    continue
+                string_keys += [chord_idx_to_char(scored_key_idx[i])]
+            string_keys = ' or '.join(string_keys)
+            key = '%s' % (string_keys)
 
     # chromagram = numpy.array(chromagram).T
     # chromagram = numpy.flipud(chromagram)
@@ -816,12 +821,40 @@ def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
             conn.close()
 
 
+# class SQLiteThread(threading.Thread):
+
+#     def __init__(self):
+#         threading.Thread.__init__(self)
+#         self.interval = 0.05
+#         self.quit = False
+#         self.argvs = []
+#         self.kwargs = {}
+#         self.run()
+
+#     def getby_key_value(self, *argvs, **kwargs):
+#         self.argvs = argvs
+#         self.kwargs = kwargs
+
+#     def run(self):
+#         while not self.quit:
+
+#             resp = getby_key_value_with_thread(self.result)
+
+#     def __del__(self):
+#         pass
+
+
+# def getby_key_value_with_thread(key, value, table_name='mfeats', db_name=None):
+#     thread = SQLiteThread()
+#     thread.getby_key_value(key, value, table_name, db_name)
+
+
 def getby_key_value(key, value, table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
     query = '''SELECT * FROM %s WHERE %s="%s"''' % (table_name, key, value)
     conn = None
-
+    # sqlite.connect(':memory:', check_same_thread = False)
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
     resp = c.execute(query)

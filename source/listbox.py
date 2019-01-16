@@ -5,41 +5,42 @@
 # email: peppy0510@hotmail.com
 
 
-import os
-import wx
-import sys
-import math
-import stat
-import glob
 import audio
+import glob
 import images
-import threading
+import math
+import os
+import stat
 import subprocess
+import sys
+import threading
 import webbrowser
+import wx
+
+from listboxlib import ListBoxListDnD
+from listboxlib import ListControl
+from macroboxlib import Button
+from macroboxlib import COLOR_STATUS_BG
+from macroboxlib import ComboBox
+from macroboxlib import DialogBox
+from macroboxlib import DialogPanel
+from macroboxlib import FONT_ITEM
+from macroboxlib import FONT_ITEM_SIZE
+from macroboxlib import GetPreference
+from macroboxlib import ItemTextEdit
+from macroboxlib import ListBoxColumn
+from macroboxlib import MakeMusicFileItem
+from macroboxlib import RectBox
+from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import SUPPORTED_PLAYLIST_TYPE
+from macroboxlib import SetPreference
+from macroboxlib import StaticText
+from macroboxlib import TabTextEdit
+from macroboxlib import TextCtrl
+from macroboxlib import UserInputDialogBox
 from operator import itemgetter
 from utilities import Struct
 from utilities import get_user_docapp_path
-from listboxlib import ListControl
-from listboxlib import ListBoxListDnD
-from macroboxlib import RectBox
-from macroboxlib import Button
-from macroboxlib import ComboBox
-from macroboxlib import DialogBox
-from macroboxlib import TextCtrl
-from macroboxlib import StaticText
-from macroboxlib import DialogPanel
-from macroboxlib import TabTextEdit
-from macroboxlib import ItemTextEdit
-from macroboxlib import ListBoxColumn
-from macroboxlib import GetPreference
-from macroboxlib import SetPreference
-from macroboxlib import MakeMusicFileItem
-from macroboxlib import UserInputDialogBox
-from macroboxlib import FONT_ITEM
-from macroboxlib import FONT_ITEM_SIZE
-from macroboxlib import COLOR_STATUS_BG
-from macroboxlib import SUPPORTED_AUDIO_TYPE
-from macroboxlib import SUPPORTED_PLAYLIST_TYPE
 
 
 class ListBox(RectBox, ListControl):
@@ -196,9 +197,9 @@ class ListBox(RectBox, ListControl):
                                  pens=wx.Pen(color, 1), brushes=wx.Brush(color))
         # color = self.st.SCROLLBAR_BG_COLOR
         # if self.is_slider_h_shown and self.is_slider_v_shown:
-        # 	rects = ((width-ss, height-ss, ss, ss),)
-        # 	dc.DrawRectangleList(rects,\
-        # 		pens=wx.Pen(color, 1), brushes=wx.Brush(color))
+        #   rects = ((width-ss, height-ss, ss, ss),)
+        #   dc.DrawRectangleList(rects,\
+        #       pens=wx.Pen(color, 1), brushes=wx.Brush(color))
         self.List.reInitBuffer = True
         self.Header.reInitBuffer = True
         self.SliderH.reInitBuffer = True
@@ -331,7 +332,7 @@ class ListBoxList(RectBox):
                 if col == statusIdx:
                     continue
                 # limitedString = self.LimitTextLength(\
-                # 	dc, string, column.width-left_margin-15, tww)
+                #   dc, string, column.width-left_margin-15, tww)
                 limitedString = self.LimitTextLength(
                     dc, string, column.width - left_margin - 8, tww)
                 if right_align:
@@ -406,11 +407,11 @@ class ListBoxList(RectBox):
                 # analyzing status
                 status = self.parent.innerList[listIdx].items[item][statusIdx]
                 # rects = (columns[i].x+1, row_size*row+rect.y-row_offset+1,\
-                # 	columns[i].width-2-22, row_size-1)
+                #   columns[i].width-2-22, row_size-1)
                 rects = (columns[i].x + 1, row_size * row + rect.y - row_offset + 1, 4, row_size - 1)
                 # elif status == 'analyzing':
-                # 	dc.DrawRectangleList((rects,), pens=wx.Pen((80,80,255), 0),\
-                # 		brushes=wx.Brush(wx.Colour(100,100,255)))
+                #   dc.DrawRectangleList((rects,), pens=wx.Pen((80,80,255), 0),\
+                #       brushes=wx.Brush(wx.Colour(100,100,255)))
                 if self.parent.innerList[listIdx].items[item][pathIdx] in procpath:
                     color = self.parent.st.ANALYZE_PEND_COLOR
                     dc.DrawRectangleList((rects,), pens=wx.Pen(color, 1),
@@ -731,7 +732,7 @@ class ListBoxList(RectBox):
 
     def CATCH_EVT_KEY_DOWN(self, event):
         # isSPKD = event.AltDown or event.CmdDown\
-        # 	or event.ControlDown or event.ShiftDown
+        #   or event.ControlDown or event.ShiftDown
         # if namespace is None: return
         # print event.KeyCode
 
@@ -1430,7 +1431,7 @@ class ListBoxTabDnD(wx.FileDropTarget):
         if self.parent.parent.ListBox.IsFilteredAll():
             return 0
         # if self.parent.parent.ListBox.IsFilteredAll():
-        # 	filtered = True
+        #   filtered = True
         # else: filtered = False
         tabRectIdx = self.parent.GetTabRectIdx(x)
         if self.downTabIdx is not None:
@@ -2769,20 +2770,20 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         # WebLink
 
         # if single:
-        # 	self.AppendSeparator()
-        # 	idx = 120;
-        # 	self.itemWebLink = wx.Menu()
-        # 	for ps in self.weblink_preset:
-        # 		idx += 1
-        # 		fields = ' + '.join((ps[2], ps[3])).strip(' + ')
-        # 		name = '\t'.join((ps[0], fields))
-        # 		menuitem = wx.MenuItem(self.itemWebLink,\
-        # 			idx, name, wx.EmptyString, wx.ITEM_NORMAL)
-        # 		self.itemWebLink.Append(menuitem)
-        # 		self.Bind(wx.EVT_MENU, self.OnWebLink, menuitem)
-        # 		menuitem.Destroy()
-        # 	idx = 7; name = 'Web Link'
-        # 	self.AppendMenu(idx, name, self.itemWebLink)
+        #   self.AppendSeparator()
+        #   idx = 120;
+        #   self.itemWebLink = wx.Menu()
+        #   for ps in self.weblink_preset:
+        #       idx += 1
+        #       fields = ' + '.join((ps[2], ps[3])).strip(' + ')
+        #       name = '\t'.join((ps[0], fields))
+        #       menuitem = wx.MenuItem(self.itemWebLink,\
+        #           idx, name, wx.EmptyString, wx.ITEM_NORMAL)
+        #       self.itemWebLink.Append(menuitem)
+        #       self.Bind(wx.EVT_MENU, self.OnWebLink, menuitem)
+        #       menuitem.Destroy()
+        #   idx = 7; name = 'Web Link'
+        #   self.AppendMenu(idx, name, self.itemWebLink)
 
         self.AppendSeparator()
 
@@ -2893,11 +2894,11 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         elif event.Id == 5:
             self.OpenContainingFolder()
         # elif event.Id == 7-diff:
-        # 	self.AnalyzeSelectedItems()
+        #   self.AnalyzeSelectedItems()
         # elif event.Id == 8-diff:
-        # 	self.AnalyzeSelectedItems(forced=True)
+        #   self.AnalyzeSelectedItems(forced=True)
         # elif event.Id == 8-diff:
-        # 	self.CheckItemsConsistency()
+        #   self.CheckItemsConsistency()
 
     def EditSelectedItem(self):
         self.parent.parent.parent.DialogBox = ItemEditBox(self.parent)
@@ -2920,7 +2921,14 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         mdxs = self.parent.parent.GetSelectedItemsKeyValue('mdx')
         paths = self.parent.parent.GetSelectedItemsKeyValue('path')
         for path, mdx in zip(paths, mdxs):
-            self.parent.parent.parent.MFEATS.AddMFEATSTask(path, urgent=False, forced=forced)
+            # print('xxxxxxx')
+            # self.parent.parent.parent.MFEATS.AddMFEATSTask(path, urgent=False, forced=forced)
+            t = threading.Thread(
+                target=self.parent.parent.parent.MFEATS.AddMFEATSTask,
+                args=(path,), kwargs={'urgent': False, 'forced': forced},
+                daemon=True
+            )
+            t.start()
 
     def CheckItemsConsistency(self):
         selectedItems = self.parent.parent.GetSelectedItems()
