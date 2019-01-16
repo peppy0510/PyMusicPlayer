@@ -5,24 +5,25 @@
 # email: peppy0510@hotmail.com
 
 
-import os
-import wx
-import gc
-import re
-import time
-import math
-import stat
-import glob
 import audio
+import gc
+import glob
+import math
 import mfeats
 import mutagen
+import os
+import re
+import stat
 import threading
+import time
+import wx
+
 from copy import deepcopy
-from operator import itemgetter
-from utilities import Struct
 from macroboxlib import InnerList
 from macroboxlib import MakeMusicFileItem
 from macroboxlib import SUPPORTED_PLAYLIST_TYPE
+from operator import itemgetter
+from utilities import Struct
 
 
 threadListLock = threading.Lock()
@@ -525,7 +526,7 @@ class ListControl():
             cmd += u''' mutagen.id3.%s(encoding=3, text=[newValue])'''
             exec(cmd % (id3Key))
             mutagen_mp3.save()
-        except:
+        except Exception:
             return False
         self.SetListItemsValueWhereColumnKey(
             ('path', path), (columnKey, newValue))
@@ -883,8 +884,10 @@ class ListControl():
             selectedList = self.selectedList
         if len(title) == 0:
             return
-        if len(title) > 64:
+        if len(title) > 256:
             return
+        # if len(title) > 64:
+        #     return
         title = self.LimitFileName(title)
         self.innerList[selectedList].title = title
 
@@ -1099,10 +1102,10 @@ class ListControl():
     def SetVirtualPositionY(self, y, bounce=False):
         y = self.LimitVirtualPositionY(y, bounce=bounce)
         # if bounce:
-        # 	if y == 0: y = 1
-        # 	vpy_limit = self.GetVirtualPositionYLimit()
-        # 	if y == vpy_limit: y = y-5
-        # 	print y
+        #   if y == 0: y = 1
+        #   vpy_limit = self.GetVirtualPositionYLimit()
+        #   if y == vpy_limit: y = y-5
+        #   print y
         self.innerList[self.selectedList].rects.offset.y = y
         self.reInitBuffer = True
 
