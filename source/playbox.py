@@ -209,7 +209,9 @@ class PlayBox(RectBox, PlayBoxControl):
 
     def __del__(self):
         self.AudioControl.loop = False
-        self.AudioControl._Thread__stop()
+        # self.AudioControl._Thread__stop()
+        # self.AudioControl._stop()
+        self.AudioControl._delete()
         self.AudioControl._Thread__exc_clear()
 
 
@@ -832,7 +834,11 @@ class PlayBoxApic(RectBox):
         self.apic = None
         self.path = self.parent.cue.path
         if hasattr(self, 'Thread') and self.Thread.is_alive():
-            self.Thread._Thread__stop()
+            # print(dir(self.Thread))
+            self.Thread._delete()
+            # self.Thread._set_tstate_lock()
+            # self.Thread._stop()
+            # self.Thread._Thread__stop()
         self.Thread = threading.Thread(
             target=self.GetApicThread, name='apic', args=())
         self.Thread.start()

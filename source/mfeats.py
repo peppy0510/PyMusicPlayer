@@ -138,7 +138,7 @@ def mfeats_single(path, queue=None):
     # uses mono data
 
     # tic = time.time()
-    find_key = False
+    find_key = True
     find_gain = False
     key, bit, error = ('', 16, 0)
     path = os.path.abspath(path)

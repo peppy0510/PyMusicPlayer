@@ -472,11 +472,18 @@ class ListBoxList(RectBox):
         if len(rows) == 0:
             return
         x = self.parent.GetVirtualPositionX() - 1
-        y = row_size * rows[0] - row_offset
+        y = row_size * rows[0] - row_offset - 1
         w = self.parent.GetVirtualPositionXW() - 1 + 1
-        h = row_size * rows[0] - row_offset
-        color = self.parent.st.INSERTITEM_CURSOR_COLOR
-        dc.DrawLineList([(x, y, w, h)], pens=wx.Pen(color, 1))
+        # h = row_size * rows[0] - row_offset
+        # color = self.parent.st.INSERTITEM_CURSOR_COLOR
+        # dc.DrawLineList([(x, y, w, h)], pens=wx.Pen(color, 1))
+
+        # lr_pad = 1
+        # print(itemsLength, self.FileDrop.insertItemIdx)
+        if itemsLength == self.FileDrop.insertItemIdx:
+            y -= 1
+        dc.DrawRectangleList(((x, y, w + 2, 3),),
+                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((200, 200, 200, 255)))
 
     # Handle ListBoxList Event
 
@@ -1433,7 +1440,7 @@ class ListBoxTabDnD(wx.FileDropTarget):
         # if self.parent.parent.ListBox.IsFilteredAll():
         #   filtered = True
         # else: filtered = False
-        tabRectIdx = self.parent.GetTabRectIdx(x)
+        tabRectIdx = self.parent.GetTabRectIdx((x, y))
         if self.downTabIdx is not None:
             return
         isExistingTab = tabRectIdx is not None and tabRectIdx != -1
@@ -1448,7 +1455,14 @@ class ListBoxTabDnD(wx.FileDropTarget):
     def CreateAndDropToNewTab(self, inpaths):
         if len(inpaths) > 1:
             self.parent.parent.ListBox.AddInnerList()
-            self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
+            # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
+            self.DropFromOutside(inpaths)
+            # t = threading.Thread(
+            #     target=self.parent.parent.ListBox.List.FileDrop.DropFromOutside,
+            #     args=(inpaths,), daemon=True
+            # )
+            # t.start()
+
             self.parent.parent.ListBox.Header.SetAutoColumnWidth()
             self.parent.reInitBuffer = True
 
@@ -1470,12 +1484,26 @@ class ListBoxTabDnD(wx.FileDropTarget):
                 title = None
             self.parent.parent.ListBox.AddInnerList(title)
             self.parent.parent.ListBox.Header.SetAutoColumnWidth()
-            self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
+            # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
+            self.DropFromOutside(inpaths)
             self.parent.reInitBuffer = True
 
+    def DropFromOutside(self, inpaths, tabRectIdx=None):
+
+        kwargs = {}
+        if tabRectIdx:
+            kwargs.update({'selectedList': tabRectIdx})
+
+        t = threading.Thread(
+            target=self.parent.parent.ListBox.List.FileDrop.DropFromOutside,
+            args=(inpaths,), kwargs=kwargs, daemon=True
+        )
+        t.start()
+
     def DropToExistingTab(self, inpaths, tabRectIdx):
-        self.parent.parent.ListBox.List.FileDrop.DropFromOutside(
-            inpaths, selectedList=tabRectIdx)
+        # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(
+        #     inpaths, selectedList=tabRectIdx)
+        self.DropFromOutside(inpaths, selectedList=tabRectIdx)
         self.parent.reInitBuffer = True
 
     def SearchPatternIncludeSub(self, filepath, pattern='*'):
@@ -1502,6 +1530,7 @@ class ListBoxTab(RectBox):
         self.cache.skip = Struct(leftDClick=False)
         self.tab_num_limit = 20
         self.tab_width = 200
+        self.tab_height = 26
         self.bottom_height = 1
         self.tab_rel_width = 200
         self.TextEdit = None
@@ -1517,6 +1546,7 @@ class ListBoxTab(RectBox):
         self.InitBuffer()
 
     def IsTabCreationLimited(self):
+        return False
         if len(self.rects) > self.tab_num_limit:
             return True
         return False
@@ -1542,16 +1572,17 @@ class ListBoxTab(RectBox):
                              pens=wx.Pen((255, 255, 255), 0), brushes=wx.Brush((255, 255, 255)))
 
     def DrawTabRectSelected(self, dc):
-        x, y, w, h = self.rects[self.parent.ListBox.selectedList]
+        x, y, w, h = self.rects[self.parent.ListBox.selectedList + 1]
         rect = (x + 1, y, w - 1, h + 1)
         color = self.parent.parent.st.LISTBOX.LISTTAB_FG_COLOR
+        color = (200, 200, 200)
         dc.DrawRectangleList((rect,),
                              pens=wx.Pen((0, 0, 0), 1), brushes=wx.Brush(color))
 
     def DrawTabRect(self, dc):
         tabLength = len(self.parent.ListBox.innerList)
         width, height = self.GetClientSize()
-        add_width = 26
+        add_width = width
         rects = list()
         if tabLength == 0:
             r_width = 0
@@ -1560,52 +1591,108 @@ class ListBoxTab(RectBox):
         if r_width > self.tab_width:
             r_width = self.tab_width
         x = 0
-        for i in range(0, tabLength):
-            rects.append(wx.Rect(int(i * r_width), 0, math.ceil(r_width), height - self.bottom_height))
+        rects.append(wx.Rect(0, 0, width - 1, self.tab_height - 1))
+        for i in range(1, tabLength + 1):
+            rects.append(wx.Rect(
+                0,
+                self.tab_height * i,
+                width - 1,
+                self.tab_height - 1))
             x += r_width
         x = rects[-1].x + rects[-1].width
         if x > width - add_width:
             x = width - add_width
-        rects.append(wx.Rect(x, 0, add_width - 1, height - self.bottom_height))
+        # rects.append(wx.Rect(0, height - self.tab_height, width - 1, self.tab_height))
+
+        # print(rects)
+        # rects.append(wx.Rect(0, 0, 0, 0))
         self.rects = rects
         color = self.parent.parent.st.LISTBOX.LISTTAB_BG_COLOR
-        for i in range(len(rects)):
-            dc.GradientFillLinear(rects[i],
-                                  color, color, nDirection=wx.SOUTH)
-        self.tab_rel_width = r_width
-        if self.IsTabCreationLimited():
-            dc.GradientFillLinear(rects[-1],
-                                  color, color, nDirection=wx.SOUTH)
+        for i in range(1, len(rects)):
+            dc.GradientFillLinear(rects[i], color, color, nDirection=wx.EAST)
+
+        rect = wx.Rect(rects[0])
+        rect.height += 1
+        dc.GradientFillLinear(rect, (0, 0, 0), (0, 0, 0), nDirection=wx.EAST)
+        # self.tab_rel_width = r_width
+        # self.tab_rel_width = 200
+        # if self.IsTabCreationLimited():
+        #     dc.GradientFillLinear(rects[-1], color, color, nDirection=wx.SOUTH)
+
+    # def DrawTabRect(self, dc):
+    #     tabLength = len(self.parent.ListBox.innerList)
+    #     width, height = self.GetClientSize()
+    #     add_width = 26
+    #     rects = list()
+    #     if tabLength == 0:
+    #         r_width = 0
+    #     else:
+    #         r_width = 1.0 * (width - add_width) / tabLength
+    #     if r_width > self.tab_width:
+    #         r_width = self.tab_width
+    #     x = 0
+    #     for i in range(0, tabLength):
+    #         rects.append(wx.Rect(int(i * r_width), 0, math.ceil(r_width), height - self.bottom_height))
+    #         x += r_width
+    #     x = rects[-1].x + rects[-1].width
+    #     if x > width - add_width:
+    #         x = width - add_width
+    #     rects.append(wx.Rect(x, 0, add_width - 1, height - self.bottom_height))
+    #     self.rects = rects
+    #     color = self.parent.parent.st.LISTBOX.LISTTAB_BG_COLOR
+    #     for i in range(len(rects)):
+    #         dc.GradientFillLinear(rects[i], color, color, nDirection=wx.SOUTH)
+    #     self.tab_rel_width = r_width
+    #     if self.IsTabCreationLimited():
+    #         dc.GradientFillLinear(rects[-1], color, color, nDirection=wx.SOUTH)
 
     def DrawTabInsertLine(self, dc):
         if self.FileDrop.insertTabIdx is None:
             return
-        rect = self.rects[self.FileDrop.insertTabIdx]
-        x = rect.x - 1
-        if x < 0:
-            x = rect.x
-        dc.DrawRectangleList(((x, 1, 3, self.GetSize().height - self.bottom_height - 1),),
-                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((250, 250, 250, 255)))
-
-    def DrawTabLineV(self, dc):
-        lines = list()
-        for rect in self.rects:
-            lines.append((rect.x, rect.y, rect.x, rect.y + rect.height - 1))
-        lines.append((rect.x + rect.width, rect.y,
-                      rect.x + rect.width, rect.y + rect.height - 1))
-        dc.DrawLineList(lines, pens=wx.Pen((50, 50, 50), 1))
+        # print(self.FileDrop.insertTabIdx)
+        if self.FileDrop.insertTabIdx + 1 < len(self.rects):
+            rect = self.rects[self.FileDrop.insertTabIdx + 1]
+            y = rect.y - 1
+        else:
+            rect = self.rects[-1]
+            y = rect.y + rect.height - 1
+        lr_pad = 1
+        dc.DrawRectangleList(((lr_pad, y, self.GetSize().width - lr_pad * 2, 3),),
+                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((200, 200, 200, 255)))
+        # dc.DrawLineList(((lr_pad, y, self.GetSize().width - lr_pad * 2, y),),
+        #                 pens=wx.Pen((250, 250, 250), 1))
 
     def DrawTabLineH(self, dc):
         lines = list()
-        _, height = self.GetSize()
-        width = self.rects[-1].x + self.rects[-1].width
-        lines.append((0, 0, 0, height))
-        lines.append((0, 0, width, 0))
-        lines.append((0, height - 1, width, height - 1))
-        color = (0, 0, 0)
+        for rect in self.rects[1:]:
+            lines.append((rect.x,
+                          rect.y + rect.height,
+                          rect.width,
+                          rect.y + rect.height))
+        lines.append((rect.x,
+                      rect.y + rect.height,
+                      rect.width,
+                      rect.y + rect.height))
+        dc.DrawLineList(lines, pens=wx.Pen((30, 30, 30), 1))
+
+    def DrawTabLineV(self, dc):
+        lines = list()
+        width, height = self.GetSize()
+        height = self.rects[-1].y + self.rects[-1].height
+        lines.append((0, 1, width, 1))
+
+        lr_pad = 1
+        lines.append((lr_pad, self.rects[1].y, lr_pad, height + 1))
+        lines.append((width - lr_pad * 2, self.rects[1].y, width - lr_pad * 2, height + 1))
+
+        lines.append((lr_pad, 1, lr_pad, self.rects[0].height + 1))
+        lines.append((width - lr_pad * 2, 1, width - lr_pad * 2, self.rects[0].height + 1))
+        # lines.append((0, height - 1, width, height - 1))
+        # color = (0, 0, 0)
+        color = (30, 30, 30)
         dc.DrawLineList(lines, pens=wx.Pen(color, 1))
-        w, h = self.GetSize()
-        dc.DrawLineList(((0, 0, w, 0), (0, h - 1, w, h - 1),), pens=wx.Pen(color, 1))
+        # w, h = self.GetSize()
+        # dc.DrawLineList(((0, 0, w, 0), (0, h - 1, w, h - 1),), pens=wx.Pen(color, 1))
 
     def DrawTabText(self, dc):
         if self.tab_rel_width < 30:
@@ -1618,17 +1705,17 @@ class ListBoxTab(RectBox):
         font.SetPixelSize((6, 11))
         font.SetFaceName(FONT_ITEM)
         dc.SetFont(font)
-        for i, v in enumerate(zip(self.rects, self.GetTabsTitles())):
+        for i, v in enumerate(zip(self.rects[1:], self.GetTabsTitles())):
             rect, title = v
             margin = self.close_rects[i].width + 15
             if rect.width - margin < 12:
                 continue
             if i == self.parent.ListBox.selectedList:
                 selected_texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                selected_xys.append((rect.x + 11, rect.y + 5))
+                selected_xys.append((rect.x + 11, rect.y + 5 + 1))
             else:
                 texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                xys.append((rect.x + 11, rect.y + 5))
+                xys.append((rect.x + 11, rect.y + 5 + 1))
         dc.DrawTextList(texts, xys,
                         foregrounds=wx.Colour(210, 210, 210), backgrounds=None)
         dc.DrawTextList(selected_texts, selected_xys,
@@ -1638,23 +1725,26 @@ class ListBoxTab(RectBox):
         size = 6
         right_align = 10
         close_rects = list()
-        for i, rect in enumerate(self.rects[:-1]):
+        for i, rect in enumerate(self.rects[1:]):
             offset_x = rect.x + rect.width - size - right_align
-            offset_y = (self.GetSize().height - size) * 0.5 - 1
-            if self.tab_rel_width < 60 and i != self.parent.ListBox.selectedList:
-                close_rects.append(wx.Rect(0, 0, 0, 0))
-                continue
-            elif self.cache.tabIdx != i or i != self.parent.ListBox.selectedList:
-                close_rects.append(wx.Rect(0, 0, 0, 0))
-                continue
-            else:
-                close_rects.append(wx.Rect(offset_x - 3, offset_y - 3, size + 6, size + 6))
+            # offset_y = (self.GetSize().height - size) * 0.5 - 1
+            offset_y = rect.y + 8 + 1
+            # print(offset_x, offset_y)
+            # if self.tab_rel_width < 60 and i != self.parent.ListBox.selectedList:
+            #     close_rects.append(wx.Rect(0, 0, 0, 0))
+            #     continue
+            # elif self.cache.tabIdx != i or i != self.parent.ListBox.selectedList:
+            #     close_rects.append(wx.Rect(0, 0, 0, 0))
+            #     continue
+            # else:
+            close_rects.append(wx.Rect(offset_x - 3, offset_y - 3, size + 6, size + 6))
             if i == self.parent.ListBox.selectedList:
                 dc.DrawBitmap(self.bmp.close, offset_x, offset_y, useMask=True)
         self.close_rects = close_rects
-        rect = self.rects[-1]
+        rect = self.rects[0]
         offset_x = rect.x + rect.width - size - right_align
-        offset_y = (self.GetSize().height - size) * 0.5 - 1
+        # offset_y = (self.GetSize().height - size) * 0.5 - 1
+        offset_y = 8 + 1
         if self.IsTabCreationLimited() is False:
             dc.DrawBitmap(self.bmp.add, offset_x, offset_y, useMask=True)
 
@@ -1664,15 +1754,15 @@ class ListBoxTab(RectBox):
         if self.onClient is False:
             return None
         x, y = xy
-        return self.GetTabRectIdx(x)
+        return self.GetTabRectIdx((x, y))
 
     def ExtendGlobalEvent(self, event):
-        event.tabIdx = self.GetTabRectIdx(event.X)
+        event.tabIdx = self.GetTabRectIdx((event.X, event.Y))
         event.down.tabIdx, event.drag.tabIdx = (None, None)
         event.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
         event.down.closeIdx, event.drag.closeIdx = (None, None)
         if event.LeftDown or event.RightDown or event.MiddleDown:
-            event.down.tabIdx = self.GetTabRectIdx(event.down.X)
+            event.down.tabIdx = self.GetTabRectIdx((event.down.X, event.down.Y))
             event.down.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
         if (event.LeftDown is False and event.LeftIsDown)\
                 or (event.RightDown is False and event.RightIsDown)\
@@ -1680,7 +1770,7 @@ class ListBoxTab(RectBox):
             event.down.tabIdx = self.cache.down.tabIdx
             event.down.closeIdx = self.cache.down.closeIdx
         if event.LeftDrag:
-            event.drag.tabIdx = self.GetTabRectIdx(event.drag.X)
+            event.drag.tabIdx = self.GetTabRectIdx((event.drag.X, event.drag.Y))
             event.drag.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
         if event.LeftDrag is False and event.LeftIsDrag:
             event.drag.tabIdx = self.cache.drag.tabIdx
@@ -1825,7 +1915,7 @@ class ListBoxTab(RectBox):
         self.FileDrop.downTabIdx = event.drag.tabIdx
         if len(self.parent.ListBox.innerList) == 1:
             return
-        self.FileDrop.insertTabIdx = self.GetInsertTabRectIdx(event.X)
+        self.FileDrop.insertTabIdx = self.GetInsertTabRectIdx(event.Y)
         self.DirectDraw()
 
     def HandleEventTabShuffleDragFinalize(self, event):
@@ -1917,31 +2007,51 @@ class ListBoxTab(RectBox):
             titles.append(self.parent.ListBox.innerList[i].title)
         return titles
 
-    def GetTabRectIdx(self, x):
+    def GetTabRectIdx(self, xy):
+        x, y = xy
         if self.onClient is False:
             return None
-        xy = wx.Point(x, 0.5 * self.GetSize().height)
-        if self.IsInRect(self.rects[-1], xy):
+        xy = wx.Point(x, y)
+        # add_button_size = self.rects[0].height
+
+        add_button = wx.Rect((
+            self.close_rects[0].x,
+            self.close_rects[0].y - self.rects[0].height,
+            self.close_rects[0].width,
+            self.close_rects[0].height,
+        ))
+
+        if self.IsInRect(add_button, xy):
             return -1
-        for i, rect in enumerate(self.rects[:-1]):
+        for i, rect in enumerate(self.rects[1:]):
             if self.IsInRect(rect, xy):
                 return i
         return None
 
-    def GetInsertTabRectIdx(self, x):
+    def GetInsertTabRectIdx(self, y):
         if self.onClient is False:
             return None
-        xy = wx.Point(x, 0.5 * self.GetSize().height)
-        for i, r in enumerate(self.rects[:-1]):
-            rect = wx.Rect(r.x - r.width * 0.5, r.y, r.width, r.height)
+        # xy = wx.Point(x, 0.5 * self.GetSize().height)
+        xy = wx.Point(1, y)
+        for i, r in enumerate(self.rects[1:]):
+            y = r.y - r.height * 0.5
+            height = r.height
+            if i == 0:
+                y = 0
+                height = r.y + r.height * 0.5
+            # if i == len(self.rects[1:]) - 1:
+            #     height = self.GetSize().height - r.y + r.height * 0.5
+                # print(height)
+            rect = wx.Rect(r.x, y, r.width, height)
             if self.IsInRect(rect, xy):
                 return i
-        x = self.rects[-1].x - self.rects[-2].width * 0.5
-        width = self.GetSize().width - x
-        rect = wx.Rect(x, r.y, width, r.height)
-        if self.IsInRect(rect, xy):
-            return i + 1
-        return None
+        return i + 1
+        # x = self.rects[-1].x - self.rects[-2].width * 0.5
+        # width = self.GetSize().width - x
+        # rect = wx.Rect(x, r.y, width, r.height)
+        # if self.IsInRect(rect, xy):
+        #     return i + 1
+        # return None
 
     def GetTabCloseRectIdx(self, xy):
         if self.onClient is False:
@@ -2450,7 +2560,7 @@ class ItemEditBox(DialogBox):
             try:
                 newValue = float(newValue)
                 newValue = u'%05.1f' % (0.1 * round(newValue * 10))
-            except:
+            except Exception:
                 newValue = ''
         self.parent.parent.SetItemValueByColumnIdx(itemIdx, self.columnIdx, newValue)
 
@@ -2513,7 +2623,7 @@ class ItemEditBox(DialogBox):
                     try:
                         newValue = float(newValue)
                         newValue = u'%05.1f' % (0.1 * round(newValue * 10))
-                    except:
+                    except Exception:
                         newValue = ''
                 tag_resp = self.parent.parent.RenameID3TAGByColumnItemIdx(columnIdx, itemIdx, newValue)
                 if tag_resp is False:
@@ -2666,7 +2776,7 @@ class ListBoxPopupTab(wx.Menu):
                         self.parent.parent.ListBox.innerList[selectedList].items)
             try:
                 audio.generate_m3u(savepath, paths)
-            except:
+            except Exception:
                 pass
 
 

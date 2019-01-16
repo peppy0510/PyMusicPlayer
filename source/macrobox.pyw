@@ -132,11 +132,33 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         sph = 4
         self.PlayBox.SetRect((0, 0, w, pbh + sph))
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
-        self.ListBox.SetRect((0, pbh + sph, w, h - pbh + sph - (24 + 26 + 35 + 5) + 26))
+
+        if w < 740:
+            left_panel_width = 0
+            right_panel_width = 0
+        else:
+            import math
+            left_panel_width = math.ceil(160 + (w - 740) * 0.333)
+            right_panel_width = 0
+        self.ListBox.SetRect((
+            left_panel_width,
+            pbh + sph,
+            w - (left_panel_width + right_panel_width),
+            h - pbh + sph - (26 + 35 + 5) + 26)
+        )
+        self.ListSearch.SetRect((0, h - 27 - 5 - 26, w, 0))
+        self.StatusBox.SetRect((0, h - 27 - 5, w, 27))
+        self.ListTab.SetRect((
+            0, pbh + sph, left_panel_width,
+            h - pbh + sph - (26 + 35 + 5) + 26)
+        )
+
+        # self.ListBox.SetRect((0, pbh + sph, w, h - pbh + sph - (24 + 26 + 35 + 5) + 26))
         # self.ListSearch.SetRect((0, h-24-27-5-26, w, 26))
-        self.ListSearch.SetRect((0, h - 24 - 27 - 5 - 26, w, 0))
-        self.StatusBox.SetRect((0, h - 24 - 27 - 5, w, 27))
-        self.ListTab.SetRect((0, h - 24 - 5, w, 24))
+        # self.ListSearch.SetRect((0, h - 24 - 27 - 5 - 26, w, 0))
+        # self.StatusBox.SetRect((0, h - 24 - 27 - 5, w, 27))
+        # self.ListTab.SetRect((0, h - 24 - 5, w, 24))
+
         self.BorderBoxHB.SetRect((0, h - 5, w, 5))
         self.PlayBox.OnSize()
         self.ListTab.OnSize()

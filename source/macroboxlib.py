@@ -2732,7 +2732,7 @@ class ScriptProcessProgressBox(DialogBox, ScriptControl):
                     try:
                         new = float(new)
                         new = u'%05.1f' % (0.1 * round(new * 10))
-                    except:
+                    except Exception:
                         new = ''
                 tag_resp = self.parent.parent.MainPanel\
                     .ListBox.RenameID3TAGByColumnItemIdx(
