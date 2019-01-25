@@ -1,11 +1,14 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
 import audio
+import copy
 import gc
 import glob
 import math
@@ -18,10 +21,10 @@ import threading
 import time
 import wx
 
-from copy import deepcopy
 from macroboxlib import InnerList
 from macroboxlib import MakeMusicFileItem
 from macroboxlib import SUPPORTED_PLAYLIST_TYPE
+from macroboxlib import SUPPORTED_AUDIO_TYPE
 from operator import itemgetter
 from utilities import Struct
 
@@ -176,7 +179,7 @@ class ListBoxListDnD(wx.FileDropTarget):
                 item = MakeMusicFileItem(path, order, columns)
                 try:
                     item = MakeMusicFileItem(path, order, columns)
-                except:
+                except Exception:
                     item = None
                 if item is None:
                     continue
@@ -215,7 +218,7 @@ class ListBoxListDnD(wx.FileDropTarget):
             self.parent.parent.reInitBuffer = True
         try:
             del extended_paths, stats, innerListSeg
-        except:
+        except Exception:
             pass
 
         # print(len(self.parent.parent.innerList[0].items))
@@ -488,7 +491,7 @@ class ListControl():
             return False
         try:
             os.rename(oldPath, newPath)
-        except:
+        except Exception:
             return False
 
         newMDX = audio.makemdx(newPath)
@@ -522,9 +525,8 @@ class ListControl():
             return False
         try:
             mutagen_mp3 = mutagen.mp3.MP3(path)
-            cmd = u'''mutagen_mp3[id3Key] = '''
-            cmd += u''' mutagen.id3.%s(encoding=3, text=[newValue])'''
-            exec(cmd % (id3Key))
+            attr = getattr(mutagen.id3, id3Key)
+            mutagen_mp3[id3Key] = attr(encoding=3, text=[newValue])
             mutagen_mp3.save()
         except Exception:
             return False
@@ -1049,7 +1051,7 @@ class ListControl():
     def CloneColumnsDefinitionToAll(self, selectedList=None):
         if selectedList is None:
             selectedList = self.selectedList
-        columns = deepcopy(self.innerList[selectedList].columns)
+        columns = copy.deepcopy(self.innerList[selectedList].columns)
         for listIdx in range(len(self.innerList)):
             if listIdx == selectedList:
                 continue
@@ -1128,7 +1130,7 @@ class ListControl():
             return 0
         try:
             list_width = self.List.GetSize().width
-        except:
+        except Exception:
             list_width = 0
         cols_width = self.GetShownColumnsWidth()
         if cols_width < list_width:
@@ -1277,7 +1279,7 @@ class ListControl():
     def GetMaxLineFloat(self):
         try:
             height = self.List.GetSize().height
-        except:
+        except Exception:
             height = 0
         return 1.0 * height / self.GetRowsHeight()
 
@@ -1436,7 +1438,7 @@ class ListControl():
     def UnSelectItemAll(self, selectedList=None):
         if selectedList is None:
             selectedList = self.selectedList
-        self.innerList[selectedList].selectedItems = list()
+        self.innerList[selectedList].selectedItems = []
         self.reInitBuffer = True
 
     # UI Action Control
@@ -1616,7 +1618,7 @@ class ListControl():
             item = list(self.innerList[selectedList].items[itemIdx])
             try:
                 tempo = float(item[tempoIdx])
-            except:
+            except Exception:
                 continue
             if tempo <= 95:
                 tempo = tempo * 2.0
@@ -1636,7 +1638,7 @@ class ListControl():
             oldValue = self.innerList[selectedList].items[itemIdx][tempoIdx]
             try:
                 tempo = float(oldValue)
-            except:
+            except Exception:
                 continue
             if tempo >= 120:
                 tempo = tempo * 0.5
@@ -1669,3 +1671,37 @@ class ListControl():
         # self.parent.CursorEventCatcher.SetCursorARROW()
         self.SetListUnLock(selectedList)
         self.List.reInitBuffer = True
+
+
+# http://www.blog.pythonlibrary.org/2011/02/10/
+# wxpython-showing-2-filetypes-in-wx-filedialog/
+
+class FileOpenDialog(wx.FileDialog):
+
+    def __init__(self, parent):
+        self.parent = parent
+        message = 'Import Tracks'
+        defaultDir = os.path.expanduser(u'~')
+        defaultDir = os.path.dirname(defaultDir)
+        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
+        wildcard += [u'*.%s' % (v) for v in SUPPORTED_AUDIO_TYPE]
+        wildcard = u';'.join(wildcard)
+        wx.FileDialog.__init__(self, parent,
+                               defaultDir=defaultDir, message=message, wildcard=wildcard,
+                               style=wx.FD_OPEN | wx.FD_MULTIPLE | wx.FD_CHANGE_DIR)
+
+
+class FileSaveDialog(wx.FileDialog):
+
+    def __init__(self, parent):
+        self.parent = parent
+        message = 'Export Tracklist'
+        defaultDir = os.path.expanduser(u'~')
+        defaultDir = os.path.dirname(defaultDir)
+        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
+        wildcard = u';'.join(wildcard)
+        wx.FileDialog.__init__(self, parent,
+                               defaultDir=defaultDir, message=message, wildcard=wildcard,
+                               style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT | wx.FD_CHANGE_DIR)
+        filename = self.parent.parent.ListBox.GetListTitle()
+        self.SetFilename(filename)

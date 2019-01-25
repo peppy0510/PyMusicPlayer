@@ -17,8 +17,16 @@ import threading
 import webbrowser
 import wx
 
+from listboxlib import FileOpenDialog
+from listboxlib import FileSaveDialog
 from listboxlib import ListBoxListDnD
 from listboxlib import ListControl
+from listboxtab import ListBoxPopupTab
+from listboxtab import ListBoxPopupTabAdd
+from listboxtab import ListBoxTab
+from listboxtab import ListBoxTabDnD
+from listboxtab import ListBoxTabSliderV
+from listboxtab import TabRenameBox
 from macroboxlib import Button
 from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
@@ -58,7 +66,7 @@ class ListBox(RectBox, ListControl):
         self.focus = Struct(item=-1, shift=-1)
         self.edit = Struct(on=False, item=None, column=None, input=None, commit=False)
         self.LoadPreferences()
-        self.SetBackgroundColour(self.st.LIST_BG_COLOR)
+        self.SetBackgroundColour(self.st.BG_COLOR)
 
         self.List = ListBoxList(self)
         self.Header = ListBoxHeader(self)
@@ -193,8 +201,7 @@ class ListBox(RectBox, ListControl):
             dc.DrawLineList(lines, pens=pens)
             rects = ((width - ss, 2, ss, hh - 2),)
             color = self.st.HEADER_BG_COLOR
-            dc.DrawRectangleList(rects,
-                                 pens=wx.Pen(color, 1), brushes=wx.Brush(color))
+            dc.DrawRectangleList(rects, pens=wx.Pen(color, 1), brushes=wx.Brush(color))
         # color = self.st.SCROLLBAR_BG_COLOR
         # if self.is_slider_h_shown and self.is_slider_v_shown:
         #   rects = ((width-ss, height-ss, ss, ss),)
@@ -204,6 +211,10 @@ class ListBox(RectBox, ListControl):
         self.Header.reInitBuffer = True
         self.SliderH.reInitBuffer = True
         self.SliderV.reInitBuffer = True
+
+        lines = [(0, 0, 0, self.GetSize().height)]
+        color = self.st.HEADER_PN_COLOR
+        dc.DrawLineList(lines, pens=wx.Pen(color, 1))
 
     # Buffered DC
 
@@ -358,9 +369,9 @@ class ListBoxList(RectBox):
                 n_rects.append((rect.x, row_size * row + rect.y - row_offset, width, row_size))
 
                 if shownItemIdx[row] % 2 == 0:
-                    n_rects_odd.append((rect.x, row_size * row + rect.y - row_offset, width, row_size))
+                    n_rects_odd.append((rect.x + 1, row_size * row + rect.y - row_offset, width - 1, row_size))
                 else:
-                    n_rects_even.append((rect.x, row_size * row + rect.y - row_offset, width, row_size))
+                    n_rects_even.append((rect.x + 1, row_size * row + rect.y - row_offset, width - 1, row_size))
 
         if shownItemIdx != []:
             lines.append((rect.x, row_size * (row + 1) + rect.y - row_offset,
@@ -372,7 +383,7 @@ class ListBoxList(RectBox):
             if v < 0:
                 return 0
             return v
-        ct = self.parent.line_contrast
+        ct = self.parent.st.LIST_BG_CONTRAST
         r, g, b = self.parent.st.LIST_BG_COLOR
         bgcolor_odd = [limitcolor(v) for v in (r - ct, g - ct, b - ct)]
         bgcolor_even = [limitcolor(v) for v in (r + ct, g + ct, b + ct)]
@@ -521,7 +532,6 @@ class ListBoxList(RectBox):
         return event
 
     def CATCH_EVT_GLOBAL(self, event):
-
         if self.parent.parent.HasToSkipEvent():
             return
         self.HandleEventItemDrag(event)
@@ -532,7 +542,7 @@ class ListBoxList(RectBox):
         self.HandleEventItemSelectionLeftUp(event)
         self.HandleEventItemPopup(event)
         self.InitPendingEventState(event)
-        self.HandleEventTextEditDestroy(event)
+        # self.HandleEventTextEditDestroy(event)
 
         # MACOSX
         if event.LeftUpDelayed:
@@ -550,17 +560,17 @@ class ListBoxList(RectBox):
         if self.cache.insertItemDelayed <= 10:
             self.DirectDraw()
 
-    def HandleEventTextEditDestroy(self, event):
-        if self.TextEdit is None:
-            return
-        isInRect = self.IsInRect(self.TextEdit.GetRect(), (event.X, event.Y))
-        if isInRect is False and event.RightDown or event.MiddleDown:
-            self.TextEdit.destroy = True
-        if self.TextEdit.destroy:
-            self.TextEdit.Destroy()
-            self.TextEdit = None
-            # self.reInitBuffer = True
-            self.DirectDraw()
+    # def HandleEventTextEditDestroy(self, event):
+    #     if self.TextEdit is None:
+    #         return
+    #     isInRect = self.IsInRect(self.TextEdit.GetRect(), (event.X, event.Y))
+    #     if isInRect is False and event.RightDown or event.MiddleDown:
+    #         self.TextEdit.destroy = True
+    #     if self.TextEdit.destroy:
+    #         self.TextEdit.Destroy()
+    #         self.TextEdit = None
+    #         # self.reInitBuffer = True
+    #         self.DirectDraw()
 
     def InitPendingEventState(self, event):
         if event.LeftUp is False:
@@ -1398,658 +1408,6 @@ class ListBoxSearch(RectBox):
         self.DirectDraw()
 
 
-threadListLock = threading.Lock()
-
-
-class ListBoxTabDnD(wx.FileDropTarget):
-
-    def __init__(self, parent):
-        wx.FileDropTarget.__init__(self)
-        self.parent = parent
-        self.tabDrag = False
-        self.downTabIdx = None
-        self.insertTabIdx = None
-
-    def OnEnter(self, x, y, d):
-        self.onClient = True
-        self.parent.onClient = True
-        return d
-
-    def OnLeave(self):
-        self.onClient = False
-        self.parent.onClient = False
-
-    def OnDragOver(self, x, y, d):
-        self.onClient = True
-        self.parent.onClient = True
-        return d
-
-    def OnDropFiles(self, x, y, inpaths):
-        if self.tabDrag:
-            return 0
-        if self.parent.parent.ListBox.IsFilteredAll():
-            return 0
-        # if self.parent.parent.ListBox.IsFilteredAll():
-        #   filtered = True
-        # else: filtered = False
-        tabRectIdx = self.parent.GetTabRectIdx((x, y))
-        if self.downTabIdx is not None:
-            return
-        isExistingTab = tabRectIdx is not None and tabRectIdx != -1
-        if isExistingTab:
-            self.DropToExistingTab(inpaths, tabRectIdx)
-        elif self.parent.IsTabCreationLimited():
-            return 0
-        else:
-            self.CreateAndDropToNewTab(inpaths)
-        return 0
-
-    def CreateAndDropToNewTab(self, inpaths):
-        if len(inpaths) > 1:
-            self.parent.parent.ListBox.AddInnerList()
-            # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
-            self.DropFromOutside(inpaths)
-            # t = threading.Thread(
-            #     target=self.parent.parent.ListBox.List.FileDrop.DropFromOutside,
-            #     args=(inpaths,), daemon=True
-            # )
-            # t.start()
-
-            self.parent.parent.ListBox.Header.SetAutoColumnWidth()
-            self.parent.reInitBuffer = True
-
-        elif len(inpaths) == 1:
-            path = inpaths[0]
-            if os.path.isfile(path) is False\
-                    and os.path.isdir(path) is False:
-                return
-            stats = os.stat(path)
-            basename = os.path.basename(path)
-            file_type = os.path.splitext(basename)[1][1:].lower()
-            if stats[stat.ST_MODE] == 16895:
-                title = basename
-            elif stats[stat.ST_MODE] == 33206\
-                    and file_type in SUPPORTED_PLAYLIST_TYPE:
-                title = os.path.splitext(basename)[0]
-                inpaths = audio.read_m3u(path)
-            else:
-                title = None
-            self.parent.parent.ListBox.AddInnerList(title)
-            self.parent.parent.ListBox.Header.SetAutoColumnWidth()
-            # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
-            self.DropFromOutside(inpaths)
-            self.parent.reInitBuffer = True
-
-    def DropFromOutside(self, inpaths, tabRectIdx=None):
-
-        kwargs = {}
-        if tabRectIdx:
-            kwargs.update({'selectedList': tabRectIdx})
-
-        t = threading.Thread(
-            target=self.parent.parent.ListBox.List.FileDrop.DropFromOutside,
-            args=(inpaths,), kwargs=kwargs, daemon=True
-        )
-        t.start()
-
-    def DropToExistingTab(self, inpaths, tabRectIdx):
-        # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(
-        #     inpaths, selectedList=tabRectIdx)
-        self.DropFromOutside(inpaths, selectedList=tabRectIdx)
-        self.parent.reInitBuffer = True
-
-    def SearchPatternIncludeSub(self, filepath, pattern='*'):
-        # filepath = unicode(filepath)
-        # pattern = unicode(pattern)
-        retlist = glob.glob(os.path.join(filepath, pattern))
-        findlist = os.listdir(filepath)
-        for f in findlist:
-            next = os.path.join(filepath, f)
-            if os.path.isdir(next):
-                retlist += self.SearchPatternIncludeSub(next, pattern)
-        return retlist
-
-
-class ListBoxTab(RectBox):
-
-    def __init__(self, parent):
-        RectBox.__init__(self, parent)
-        self.cache.down.tabIdx = None
-        self.cache.drag.tabIdx = None
-        self.cache.down.closeIdx = None
-        self.cache.drag.closeIdx = None
-        self.cache.tabIdx = None
-        self.cache.skip = Struct(leftDClick=False)
-        self.tab_num_limit = 20
-        self.tab_width = 200
-        self.tab_height = 26
-        self.bottom_height = 1
-        self.tab_rel_width = 200
-        self.TextEdit = None
-        self.text_edit_tabIdx = None
-        self.rects = ((0, 0, 0, 0), (0, 0, 0, 0))
-        self.FileDrop = ListBoxTabDnD(self)
-        self.SetDropTarget(self.FileDrop)
-        self.bmp = Struct()
-        self.bmp.add = images.listbox_tab_add.GetBitmap()
-        self.bmp.close = images.listbox_tab_close.GetBitmap()
-        color = self.parent.parent.st.LISTBOX.LISTTAB_BG_COLOR
-        self.SetBackgroundColour(color)
-        self.InitBuffer()
-
-    def IsTabCreationLimited(self):
-        return False
-        if len(self.rects) > self.tab_num_limit:
-            return True
-        return False
-
-    # Draw ListBoxTab
-
-    def SetRectDraw(self, dc):
-        self.DrawTabRect(dc)
-        self.DrawTabRectSelected(dc)
-        self.DrawTabLineH(dc)
-        self.DrawTabLineV(dc)
-        self.DrawTabInsertLine(dc)
-        self.DrawTabPolygon(dc)
-        self.DrawTabText(dc)
-        self.DrawTabTextEdit(dc)
-
-    def DrawTabTextEdit(self, dc):
-        if self.TextEdit is None:
-            return
-        x, y, w, h = self.TextEdit.GetRect()
-        rect = (x - 4, y - 2, w + 8, h + 3)
-        dc.DrawRectangleList((rect,),
-                             pens=wx.Pen((255, 255, 255), 0), brushes=wx.Brush((255, 255, 255)))
-
-    def DrawTabRectSelected(self, dc):
-        x, y, w, h = self.rects[self.parent.ListBox.selectedList + 1]
-        rect = (x + 1, y, w - 1, h + 1)
-        color = self.parent.parent.st.LISTBOX.LISTTAB_FG_COLOR
-        color = (200, 200, 200)
-        dc.DrawRectangleList((rect,), pens=wx.Pen((0, 0, 0), 1), brushes=wx.Brush(color))
-
-    def DrawTabRect(self, dc):
-        tabLength = len(self.parent.ListBox.innerList)
-        width, height = self.GetClientSize()
-        # add_width = width
-        rects = list()
-        # if tabLength == 0:
-        #     r_width = 0
-        # else:
-        #     r_width = 1.0 * (width - add_width) / tabLength
-        # if r_width > self.tab_width:
-        #     r_width = self.tab_width
-        # x = 0
-        rects.append(wx.Rect(0, 0, width - 1, self.tab_height - 1))
-        for i in range(1, tabLength + 1):
-            rects.append(wx.Rect(0, self.tab_height * i, width - 1, self.tab_height - 1))
-            # x += r_width
-        # x = rects[-1].x + rects[-1].width
-        # if x > width - add_width:
-        #     x = width - add_width
-        # rects.append(wx.Rect(0, height - self.tab_height, width - 1, self.tab_height))
-
-        # print(rects)
-        # rects.append(wx.Rect(0, 0, 0, 0))
-        self.rects = rects
-        color = self.parent.parent.st.LISTBOX.LISTTAB_BG_COLOR
-        for i in range(1, len(rects)):
-            dc.GradientFillLinear(rects[i], color, color, nDirection=wx.SOUTH)
-
-        rect = wx.Rect(rects[0])
-        rect.height += 1
-        dc.GradientFillLinear(rect, (0, 0, 0), (0, 0, 0), nDirection=wx.EAST)
-
-        rect = wx.Rect(0, rects[-1].y + rects[-1].height, width, height - (rects[-1].y + rects[-1].height))
-        # rect.height += 1
-        # dc.GradientFillLinear(rect, (0, 0, 0), color, nDirection=wx.SOUTH)
-        dc.GradientFillLinear(rect, (5, 5, 5), (5, 5, 5), nDirection=wx.EAST)
-
-        # self.tab_rel_width = r_width
-        # self.tab_rel_width = 200
-        # if self.IsTabCreationLimited():
-        #     dc.GradientFillLinear(rects[-1], color, color, nDirection=wx.SOUTH)
-
-    # def DrawTabRect(self, dc):
-    #     tabLength = len(self.parent.ListBox.innerList)
-    #     width, height = self.GetClientSize()
-    #     add_width = 26
-    #     rects = list()
-    #     if tabLength == 0:
-    #         r_width = 0
-    #     else:
-    #         r_width = 1.0 * (width - add_width) / tabLength
-    #     if r_width > self.tab_width:
-    #         r_width = self.tab_width
-    #     x = 0
-    #     for i in range(0, tabLength):
-    #         rects.append(wx.Rect(int(i * r_width), 0, math.ceil(r_width), height - self.bottom_height))
-    #         x += r_width
-    #     x = rects[-1].x + rects[-1].width
-    #     if x > width - add_width:
-    #         x = width - add_width
-    #     rects.append(wx.Rect(x, 0, add_width - 1, height - self.bottom_height))
-    #     self.rects = rects
-    #     color = self.parent.parent.st.LISTBOX.LISTTAB_BG_COLOR
-    #     for i in range(len(rects)):
-    #         dc.GradientFillLinear(rects[i], color, color, nDirection=wx.SOUTH)
-    #     self.tab_rel_width = r_width
-    #     if self.IsTabCreationLimited():
-    #         dc.GradientFillLinear(rects[-1], color, color, nDirection=wx.SOUTH)
-
-    def DrawTabInsertLine(self, dc):
-        if self.FileDrop.insertTabIdx is None:
-            return
-        print(self.FileDrop.insertTabIdx)
-        if self.FileDrop.insertTabIdx + 1 < len(self.rects):
-            rect = self.rects[self.FileDrop.insertTabIdx + 1]
-            y = rect.y - 1
-        else:
-            rect = self.rects[-1]
-            y = rect.y + rect.height - 1
-        lr_pad = 1
-        dc.DrawRectangleList(((lr_pad, y, self.GetSize().width - lr_pad * 2, 3),),
-                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((200, 200, 200, 255)))
-        # dc.DrawLineList(((lr_pad, y, self.GetSize().width - lr_pad * 2, y),),
-        #                 pens=wx.Pen((250, 250, 250), 1))
-
-    def DrawTabLineH(self, dc):
-        lines = list()
-        for rect in self.rects[1:]:
-            lines.append((rect.x,
-                          rect.y + rect.height,
-                          rect.width,
-                          rect.y + rect.height))
-        lines.append((rect.x,
-                      rect.y + rect.height,
-                      rect.width,
-                      rect.y + rect.height))
-        dc.DrawLineList(lines, pens=wx.Pen((30, 30, 30), 1))
-
-    def DrawTabLineV(self, dc):
-        lines = list()
-        width, height = self.GetSize()
-        height = self.rects[-1].y + self.rects[-1].height
-        lines.append((0, 1, width, 1))
-
-        lr_pad = 1
-        lines.append((lr_pad, self.rects[1].y, lr_pad, height + 1))
-        lines.append((width - lr_pad * 2, self.rects[1].y, width - lr_pad * 2, height + 1))
-
-        lines.append((lr_pad, 1, lr_pad, self.rects[0].height + 1))
-        lines.append((width - lr_pad * 2, 1, width - lr_pad * 2, self.rects[0].height + 1))
-        # lines.append((0, height - 1, width, height - 1))
-        # color = (0, 0, 0)
-        color = (30, 30, 30)
-        dc.DrawLineList(lines, pens=wx.Pen(color, 1))
-        # w, h = self.GetSize()
-        # dc.DrawLineList(((0, 0, w, 0), (0, h - 1, w, h - 1),), pens=wx.Pen(color, 1))
-
-    def DrawTabText(self, dc):
-        if self.tab_rel_width < 30:
-            return
-        xys = list()
-        texts = list()
-        selected_xys = list()
-        selected_texts = list()
-        font = wx.Font(0, wx.MODERN, wx.NORMAL, wx.NORMAL)
-        font.SetPixelSize((6, 11))
-        font.SetFaceName(FONT_ITEM)
-        dc.SetFont(font)
-        for i, v in enumerate(zip(self.rects[1:], self.GetTabsTitles())):
-            rect, title = v
-            margin = self.close_rects[i].width + 15
-            if rect.width - margin < 12:
-                continue
-            if i == self.parent.ListBox.selectedList:
-                selected_texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                selected_xys.append((rect.x + 11, rect.y + 5 + 1))
-            else:
-                texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                xys.append((rect.x + 11, rect.y + 5 + 1))
-        dc.DrawTextList(texts, xys,
-                        foregrounds=wx.Colour(210, 210, 210), backgrounds=None)
-        dc.DrawTextList(selected_texts, selected_xys,
-                        foregrounds=wx.Colour(30, 30, 30), backgrounds=None)
-
-    def DrawTabPolygon(self, dc):
-        size = 6
-        right_align = 10
-        close_rects = list()
-        for i, rect in enumerate(self.rects[1:]):
-            offset_x = rect.x + rect.width - size - right_align
-            # offset_y = (self.GetSize().height - size) * 0.5 - 1
-            offset_y = rect.y + 8 + 1
-            # print(offset_x, offset_y)
-            # if self.tab_rel_width < 60 and i != self.parent.ListBox.selectedList:
-            #     close_rects.append(wx.Rect(0, 0, 0, 0))
-            #     continue
-            # elif self.cache.tabIdx != i or i != self.parent.ListBox.selectedList:
-            #     close_rects.append(wx.Rect(0, 0, 0, 0))
-            #     continue
-            # else:
-            close_rects.append(wx.Rect(offset_x - 3, offset_y - 3, size + 6, size + 6))
-            if i == self.parent.ListBox.selectedList:
-                dc.DrawBitmap(self.bmp.close, offset_x, offset_y, useMask=True)
-        self.close_rects = close_rects
-        rect = self.rects[0]
-        offset_x = rect.x + rect.width - size - right_align
-        # offset_y = (self.GetSize().height - size) * 0.5 - 1
-        offset_y = 8 + 1
-        if self.IsTabCreationLimited() is False:
-            dc.DrawBitmap(self.bmp.add, offset_x, offset_y, useMask=True)
-
-    # Handle ListBoxTab Event
-
-    def GetRectIdx(self, xy):
-        if self.onClient is False:
-            return None
-        x, y = xy
-        return self.GetTabRectIdx((x, y))
-
-    def ExtendGlobalEvent(self, event):
-        event.tabIdx = self.GetTabRectIdx((event.X, event.Y))
-        event.down.tabIdx, event.drag.tabIdx = (None, None)
-        event.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
-        event.down.closeIdx, event.drag.closeIdx = (None, None)
-        if event.LeftDown or event.RightDown or event.MiddleDown:
-            event.down.tabIdx = self.GetTabRectIdx((event.down.X, event.down.Y))
-            event.down.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
-        if (event.LeftDown is False and event.LeftIsDown)\
-                or (event.RightDown is False and event.RightIsDown)\
-                or (event.MiddleDown is False and event.MiddleIsDown):
-            event.down.tabIdx = self.cache.down.tabIdx
-            event.down.closeIdx = self.cache.down.closeIdx
-        if event.LeftDrag:
-            event.drag.tabIdx = self.GetTabRectIdx((event.drag.X, event.drag.Y))
-            event.drag.closeIdx = self.GetTabCloseRectIdx((event.X, event.Y))
-        if event.LeftDrag is False and event.LeftIsDrag:
-            event.drag.tabIdx = self.cache.drag.tabIdx
-            event.drag.closeIdx = self.cache.drag.closeIdx
-        if event.LeftUp or event.RightUp or event.MiddleUp:
-            event.down.tabIdx = self.cache.down.tabIdx
-            event.drag.tabIdx = self.cache.drag.tabIdx
-            event.down.closeIdx = self.cache.down.closeIdx
-            event.drag.closeIdx = self.cache.drag.closeIdx
-        self.cache.down.tabIdx = event.down.tabIdx
-        self.cache.drag.tabIdx = event.drag.tabIdx
-        self.cache.down.closeIdx = event.down.closeIdx
-        self.cache.drag.closeIdx = event.drag.closeIdx
-        return event
-
-    def CATCH_EVT_MOUSEWHEEL(self, event):
-
-        if self.TextEdit is not None:
-            self.TextEdit.CommitText()
-
-    def CATCH_EVT_GLOBAL(self, event):
-        if self.parent.HasToSkipEvent():
-            return
-        self.HandleEventTabAddDown(event)
-        self.HandleEventTabCloseDown(event)
-        self.HandleEventTabSelectDown(event)
-        self.HandleEventTabShuffleDragPending(event)
-        self.HandleEventTabShuffleDragFinalize(event)
-        self.HandleEventTabDrag(event)
-        self.HandleEventTabPopup(event)
-        self.HandleEventTabAddPopup(event)
-        self.HandleEventTabTextEditOff(event)
-        mouseIsDown = event.LeftIsDown or event.RightIsDown or event.MiddleIsDown
-        if mouseIsDown is False:
-            self.FileDrop.downTabIdx = None
-            self.FileDrop.insertTabIdx = None
-
-    def HandleEventTabTextEditOff(self, event):
-        if self.TextEdit is None:
-            return
-        isInRect = self.IsInRect(self.TextEdit.GetRect(), (event.X, event.Y))
-        if isInRect is False and (event.MiddleDown or event.RightDown):
-            self.TextEdit.CommitText()
-        if self.TextEdit.destroy:
-            self.TextEdit.Destroy()
-            self.TextEdit = None
-            self.DirectDraw()
-
-    def HandleEventTabTextEditOn(self, event):
-        if event.LeftDClick is False:
-            return
-        if self.TextEdit is not None:
-            return
-        if event.tabIdx is None:
-            return
-        if event.tabIdx == -1:
-            return
-        self.TextEdit = TabTextEdit(self)
-        x, y, w, h = self.rects[event.tabIdx]
-        self.TextEdit.SetRect((x + 9, y + 6, w - 17, h - 10))
-        title = self.parent.ListBox.GetTabsTitles()[event.tabIdx]
-        self.TextEdit.SetValue(title)
-        self.reInitBuffer = True
-
-    def SetTabTextEditOn(self):
-        tabIdx = self.text_edit_tabIdx
-        self.TextEdit = TabTextEdit(self)
-        x, y, w, h = self.rects[tabIdx]
-        self.TextEdit.SetRect((x + 9, y + 6, w - 17, h - 10))
-        title = self.GetTabsTitles()[tabIdx]
-        self.TextEdit.SetValue(title)
-        self.reInitBuffer = True
-
-    def HandleEventTabPopup(self, event):
-        if event.RightUp is False:
-            return
-        if event.rectIdx is None:
-            return
-        if event.tabIdx == -1:
-            return
-        if event.down.rectIdx is None:
-            return
-        if self.parent.ListBox.selectedList != event.tabIdx:
-            return
-        self.text_edit_tabIdx = event.tabIdx
-        self.parent.SetPopupMenu(ListBoxPopupTab(self), (event.x, event.y))
-
-    def HandleEventTabAddPopup(self, event):
-        if event.RightUp is False:
-            return
-        if event.rectIdx is None:
-            return
-        if event.tabIdx != -1:
-            return
-        if event.down.rectIdx is None:
-            return
-        self.parent.SetPopupMenu(ListBoxPopupTabAdd(self), (event.x, event.y))
-
-    def HandleEventTabDrag(self, event):
-        if event.LeftUp:
-            self.FileDrop.tabDrag = False
-        if self.FileDrop.tabDrag:
-            return
-        if event.LeftDrag is False:
-            return
-        if event.drag.tabIdx == -1:
-            return
-        if event.drag.tabIdx is None:
-            return
-        if event.drag.closeIdx is not None:
-            return
-        self.FileDrop.tabDrag = True
-        self.ExportPlayList(event.down.tabIdx)
-
-        # self.parent.ListBox.List.FileDrop.dropTimer = 0
-        # self.parent.ListBox.List.FileDrop.itemDrag = False
-        # self.parent.ListBox.List.FileDrop.importing = False
-
-    def ExportPlayList(self, selectedList=None):
-        if selectedList is None:
-            if hasattr(self, 'selectedList') is False:
-                return
-            selectedList = self.selectedList
-        pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path')
-        paths = map(itemgetter(pathIdx),
-                    self.parent.ListBox.innerList[selectedList].items)
-        title = self.parent.ListBox.innerList[selectedList].title
-        filename = os.path.sep.join([get_user_docapp_path(), '%s.m3u' % (title)])
-        audio.generate_m3u(filename, paths)
-        filename = os.path.abspath(filename)
-        self.parent.SetItemDrag((filename,), del_source=True)
-
-    def HandleEventTabShuffleDragPending(self, event):
-        if event.drag.tabIdx == -1:
-            return
-        if event.drag.tabIdx is None:
-            return
-        if event.drag.closeIdx is not None:
-            return
-        # if event.drag.tabIdx == event.tabIdx:
-        #     return
-        self.FileDrop.downTabIdx = event.drag.tabIdx
-        if len(self.parent.ListBox.innerList) == 1:
-            return
-        self.FileDrop.insertTabIdx = self.GetInsertTabRectIdx((event.X, event.Y))
-        self.DirectDraw()
-
-    def HandleEventTabShuffleDragFinalize(self, event):
-        # if event.LeftUpDelayed is False: return
-        if event.LeftUp is False:
-            return
-        if event.drag.tabIdx == -1:
-            return
-        if event.drag.tabIdx is None:
-            return
-        if event.drag.closeIdx is not None:
-            return
-        if self.FileDrop.downTabIdx is None:
-            return
-        if self.FileDrop.insertTabIdx is None:
-            return
-        fromIdx = self.FileDrop.downTabIdx
-        toIdx = self.FileDrop.insertTabIdx
-        self.FileDrop.downTabIdx = None
-        self.FileDrop.insertTabIdx = None
-        self.SetTabShuffle(fromIdx, toIdx)
-        self.reInitBuffer = True
-
-    def HandleEventTabAddDown(self, event):
-        if event.tabIdx != -1:
-            return
-        if event.LeftUp is False:
-            return
-        if event.down.tabIdx != -1:
-            return
-        if self.IsTabCreationLimited():
-            return
-        self.parent.ListBox.AddInnerList()
-        self.parent.ListBox.Header.SetAutoColumnWidth()
-        self.reInitBuffer = True
-
-    def HandleEventTabCloseDown(self, event):
-        if self.cache.tabIdx != event.tabIdx:
-            self.cache.tabIdx = event.tabIdx
-            self.reInitBuffer = True
-        if event.LeftUp is False:
-            return
-        if event.closeIdx is None:
-            return
-        if event.down.closeIdx is None:
-            return
-        self.parent.ListBox.DeleteInnerList(event.down.closeIdx)
-        self.reInitBuffer = True
-
-    def HandleEventTabSelectDown(self, event):
-        if event.tabIdx == -1:
-            return
-        if event.tabIdx is None:
-            return
-        if event.closeIdx is not None:
-            return
-        if event.LeftDown is False:
-            return
-        self.parent.ListBox.SetSelectedList(event.tabIdx)
-        # self.reInitBuffer = True
-        self.parent.DirectDraw()
-        self.DirectDraw()
-
-    # Tab Control
-
-    def SetTabShuffle(self, fromIdx, toIdx):
-        if toIdx < fromIdx:
-            self.parent.ListBox.innerList.insert(
-                toIdx, self.parent.ListBox.innerList.pop(fromIdx))
-            self.parent.ListBox.SetSelectedList(toIdx)
-        elif toIdx > fromIdx:
-            self.parent.ListBox.innerList.insert(
-                toIdx - 1, self.parent.ListBox.innerList.pop(fromIdx))
-            self.parent.ListBox.SetSelectedList(toIdx - 1)
-
-    def SetTabTitle(self, title, selectedList=None):
-        if selectedList is None:
-            selectedList = self.parent.ListBox.selectedList
-        self.parent.ListBox.SetListTitle(title, selectedList)
-
-    def GetTabTitle(self, selectedList=None):
-        if selectedList is None:
-            selectedList = self.parent.ListBox.selectedList
-        return self.parent.ListBox.innerList[selectedList].title
-
-    def GetTabsTitles(self):
-        titles = list()
-        for i in range(len(self.parent.ListBox.innerList)):
-            titles.append(self.parent.ListBox.innerList[i].title)
-        return titles
-
-    def GetTabRectIdx(self, xy):
-        x, y = xy
-        if self.onClient is False:
-            return None
-        xy = wx.Point(x, y)
-        # add_button_size = self.rects[0].height
-
-        add_button = wx.Rect((
-            self.close_rects[0].x,
-            self.close_rects[0].y - self.rects[0].height,
-            self.close_rects[0].width,
-            self.close_rects[0].height,
-        ))
-
-        if self.IsInRect(add_button, xy):
-            return -1
-        for i, rect in enumerate(self.rects[1:]):
-            if self.IsInRect(rect, xy):
-                return i
-        return None
-
-    def GetInsertTabRectIdx(self, xy):
-        if self.onClient is False:
-            return None
-        xy = wx.Point(*xy)
-        for i, r in enumerate(self.rects[1:]):
-            offsetY = 0 if i == 0 else self.rects[i - 1].y + self.rects[i - 1].height * 0.5
-            finishY = r.y + r.height * 0.5
-            rect = wx.Rect(r.x, offsetY, r.width, finishY - offsetY)
-            if self.IsInRect(rect, xy):
-                return i
-        offsetY = self.rects[- 1].y + self.rects[- 1].height * 0.5
-        finishY = self.GetSize().height
-        rect = wx.Rect(r.x, offsetY, r.width, finishY - offsetY)
-        if self.IsInRect(rect, xy):
-            return i + 1
-
-    def GetTabCloseRectIdx(self, xy):
-        if self.onClient is False:
-            return None
-        x, y = xy
-        for i, rect in enumerate(self.close_rects):
-            if self.IsInRect(rect, xy):
-                return i
-        return None
-
-    def OnSize(self, event=None):
-        self.DirectDraw()
-
-
 class ListBoxSliderV(RectBox):
 
     def __init__(self, parent):
@@ -2174,7 +1532,6 @@ class ListBoxSliderV(RectBox):
         self.parent.SetVirtualPositionY(vpy)
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
-
         if self.onClient is False:
             return
         self.parent.ScrollV(event.WheelRotation / 40)
@@ -2315,57 +1672,6 @@ class ListBoxSliderH(RectBox):
         self.DirectDraw()
 
 
-# http://www.blog.pythonlibrary.org/2011/02/10/
-# wxpython-showing-2-filetypes-in-wx-filedialog/
-
-class FileOpenDialog(wx.FileDialog):
-
-    def __init__(self, parent):
-        self.parent = parent
-        message = 'Import Tracks'
-        defaultDir = os.path.expanduser(u'~')
-        defaultDir = os.path.dirname(defaultDir)
-        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
-        wildcard += [u'*.%s' % (v) for v in SUPPORTED_AUDIO_TYPE]
-        wildcard = u';'.join(wildcard)
-        wx.FileDialog.__init__(self, parent,
-                               defaultDir=defaultDir, message=message, wildcard=wildcard,
-                               style=wx.FD_OPEN | wx.FD_MULTIPLE | wx.FD_CHANGE_DIR)
-
-
-class FileSaveDialog(wx.FileDialog):
-
-    def __init__(self, parent):
-        self.parent = parent
-        message = 'Export Tracklist'
-        defaultDir = os.path.expanduser(u'~')
-        defaultDir = os.path.dirname(defaultDir)
-        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
-        wildcard = u';'.join(wildcard)
-        wx.FileDialog.__init__(self, parent,
-                               defaultDir=defaultDir, message=message, wildcard=wildcard,
-                               style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT | wx.FD_CHANGE_DIR)
-        filename = self.parent.parent.ListBox.GetListTitle()
-        self.SetFilename(filename)
-
-
-class TabRenameBox(UserInputDialogBox):
-
-    def __init__(self, parent):
-        UserInputDialogBox.__init__(self, parent)
-        self.parent = parent
-        self.SetTitle('Tab Rename')
-        self.tab_idx = self.parent.parent.ListBox.selectedList
-        self.tab_title = self.parent.parent.ListBox.GetListTitle(self.tab_idx)
-        # string = self.UserInput.SetValue(self.tab_title)
-        self.ApplyButton.SetLabelText('Rename')
-
-    def OnApply(self, event):
-        string = self.UserInput.GetValue()
-        self.parent.parent.ListBox.SetListTitle(string, self.tab_idx)
-        self.OnClose(None)
-
-
 class ItemEditPanel(DialogPanel):
 
     def __init__(self, parent, pos=(0, 0)):
@@ -2411,37 +1717,32 @@ class ItemEditPanel(DialogPanel):
         self.TextCtrls = list()
         self.StaticTexts = list()
 
-        self.StaticTexts += [StaticText(self, label=self.labels[0],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[0], pos=(15, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[1],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[1], pos=(15, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[2],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[2], pos=(15, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[3],
-                                        pos=(15 + 145, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX + 145, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[3], pos=(15 + 145, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX + 145, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[4],
-                                        pos=(15 + 300 - 10, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX + 300 - 10, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[4], pos=(15 + 300 - 10, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX + 300 - 10, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[5],
-                                        pos=(15 + 300 - 10 + 145, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX + 300 - 10 + 145, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[5], pos=(15 + 300 - 10 + 145, posY - 5 + 4),
+                                        size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(posX + 300 - 10 + 145, posY - 5 + 1),
+                                    size=(65, 22), style=wx.ALIGN_RIGHT)]
         posY += 30
 
         self.StaticTexts += [StaticText(self, label=self.labels[6],
@@ -2680,92 +1981,6 @@ class ListBoxPopupSearch(wx.Menu):
         if value == '':
             return
         self.parent.parent.ListBox.FilterItemsAll(query_columnKey, value)
-
-
-class ListBoxPopupTabAdd(wx.Menu):
-
-    def __init__(self, parent):
-        wx.Menu.__init__(self)
-        self.parent = parent
-        self.items = ['Create Playlist']
-        for i, item in enumerate(self.items):
-            if item == '':
-                self.AppendSeparator()
-                continue
-            self.Append(wx.MenuItem(self, i + 1, item, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[i])
-
-    def OnCheck(self, event):
-        if event.GetId() == 1:
-            self.parent.parent.ListBox.AddInnerList()
-            self.parent.parent.ListBox.Header.SetAutoColumnWidth()
-
-
-class ListBoxPopupTab(wx.Menu):
-
-    def __init__(self, parent):
-        wx.Menu.__init__(self)
-        self.parent = parent
-        if self.parent.parent.ListBox.IsFilteredAll():
-            self.items = ['Rename', '', 'Close Playlist']
-        else:
-            self.items = ['Rename', '', 'Close Playlist', 'Import Tracks', 'Export Playlist']
-        for i, item in enumerate(self.items):
-            if item == '':
-                self.AppendSeparator()
-                continue
-            self.Append(wx.MenuItem(self, i + 1, item, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[i])
-
-    def OnCheck(self, event):
-        if event.GetId() == 1:
-            self.parent.parent.DialogBox = TabRenameBox(self.parent)
-            title = self.parent.GetTabTitle()
-            self.parent.parent.DialogBox.UserInput.SetValue(title)
-
-            x, y, w, h = self.parent.parent.parent.GetRect()
-            width, height = self.parent.parent.DialogBox.GetSize()
-            width = 350
-            self.parent.parent.DialogBox.SetRect(
-                (x + (w - width) / 2, y + (h - height) / 2, width, height))
-            self.parent.parent.DialogBox.ShowModal()
-            self.parent.parent.DialogBox.Destroy()
-            self.parent.parent.DialogBox = None
-            self.parent.DirectDraw()
-        if event.GetId() == 3:
-            selectedList = self.parent.parent.ListBox.selectedList
-            self.parent.parent.ListBox.DeleteInnerList(selectedList)
-            # self.parent.parent.ListTab.SetTabTextEditOn()
-        if event.GetId() == 4:
-            cwd = os.getcwd()
-            self.parent.parent.DialogBox = FileOpenDialog(self.parent)
-            x, y, w, h = self.parent.parent.parent.GetRect()
-            # self.parent.parent.DialogBox.SetSize((1024,800))
-            width, height = self.parent.parent.DialogBox.GetSize()
-            self.parent.parent.DialogBox.SetRect(
-                (x + (w - width) / 2, y + (h - height) / 2, width, height))
-            self.parent.parent.DialogBox.ShowModal()
-            os.chdir(cwd)  # only works with windows, linux
-            paths = self.parent.parent.DialogBox.GetPaths()
-            self.parent.parent.ListBox.List.FileDrop.DropFromOutside(paths)
-            self.parent.parent.DialogBox.Destroy()
-            self.parent.parent.DialogBox = None
-        if event.GetId() == 5:
-            cwd = os.getcwd()
-            self.parent.parent.DialogBox = FileSaveDialog(self.parent)
-            self.parent.parent.DialogBox.ShowModal()
-            os.chdir(cwd)  # only works with windows, linux
-            savepath = self.parent.parent.DialogBox.GetPath()
-            self.parent.parent.DialogBox.Destroy()
-            self.parent.parent.DialogBox = None
-            selectedList = self.parent.parent.ListBox.selectedList
-            pathIdx = self.parent.parent.ListBox.GetColumnKeyToIdx('path', selectedList)
-            paths = map(itemgetter(pathIdx),
-                        self.parent.parent.ListBox.innerList[selectedList].items)
-            try:
-                audio.generate_m3u(savepath, paths)
-            except Exception:
-                pass
 
 
 class ListBoxPopupHeader(wx.Menu):

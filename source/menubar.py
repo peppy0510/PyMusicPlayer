@@ -16,7 +16,7 @@ from dialogbox import AboutBox
 from dialogbox import CheckItemsConsistencyConfirmBox
 from dialogbox import DialogBox
 from dialogbox import DialogPanel
-from dialogbox import LicenseBox
+# from dialogbox import LicenseBox
 from dialogbox import UpdateBox
 from listbox import FileOpenDialog
 from listbox import FileSaveDialog
@@ -1504,10 +1504,11 @@ class MacroBoxMenuBar():
     #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnMenuBar(self, event):
-        if self.MainPanel.ListBox.List.TextEdit is not None:
-            self.MainPanel.ListBox.List.TextEdit.destroy = True
-        if self.MainPanel.ListTab.TextEdit is not None:
-            self.MainPanel.ListTab.TextEdit.destroy = True
+        pass
+        # if self.MainPanel.ListBox.List.TextEdit is not None:
+        #     self.MainPanel.ListBox.List.TextEdit.destroy = True
+        # if self.MainPanel.ListTab.TextEdit is not None:
+        #     self.MainPanel.ListTab.TextEdit.destroy = True
         event.Skip()
 
     def OnImportTracks(self, event):
@@ -1617,15 +1618,15 @@ class MacroBoxMenuBar():
         self.DialogBox = None
         self.MainPanel.ListBox.reInitBuffer = True
 
-    def OnLicense(self, event):
-        self.DialogBox = LicenseBox(self)
-        x, y, w, h = self.GetRect()
-        width, height = self.DialogBox.GetSize()
-        self.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
-        self.DialogBox.ShowModal()
-        self.DialogBox = None
-        self.MainPanel.ListBox.reInitBuffer = True
+    # def OnLicense(self, event):
+    #     self.DialogBox = LicenseBox(self)
+    #     x, y, w, h = self.GetRect()
+    #     width, height = self.DialogBox.GetSize()
+    #     self.DialogBox.SetRect(
+    #         (x + (w - width) / 2, y + (h - height) / 2, width, height))
+    #     self.DialogBox.ShowModal()
+    #     self.DialogBox = None
+    #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnUpdate(self, event):
         self.DialogBox = UpdateBox(None)

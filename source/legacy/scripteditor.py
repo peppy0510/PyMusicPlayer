@@ -5,12 +5,20 @@
 # email: peppy0510@hotmail.com
 
 
-from macroboxlib import *
-from listbox import FileOpenDialog
-from listbox import FileSaveDialog
-import wx.stc
-import keyword
+import glob
 import images
+import keyword
+import wx.stc
+
+from macroboxlib import Button
+from macroboxlib import ComboBox
+from macroboxlib import ConfirmDialogBox
+from macroboxlib import StaticText
+from macroboxlib import UserInputDialogBox
+from scriptlib import *  # noqa
+
+# from listbox import FileOpenDialog
+# from listbox import FileSaveDialog
 
 
 class AddNewScriptBox(UserInputDialogBox):
@@ -62,11 +70,11 @@ class AddNewScriptBox(UserInputDialogBox):
 
     def GetTemplateCode(self):
         template = u"""
-			        # MACROBOX Script
-					# CUSTOMFIELD, COUNT
-					# FILENAME, FILETYPE
-					# ALBUM, ARTIST, TITLE, GENRE, KEY, TEMPO
-					"""
+                    # MACROBOX Script
+                    # CUSTOMFIELD, COUNT
+                    # FILENAME, FILETYPE
+                    # ALBUM, ARTIST, TITLE, GENRE, KEY, TEMPO
+                    """
         return template
 
 
@@ -87,11 +95,11 @@ class SetDefaultScript():
 
     def id3tag_to_filename(self):
         template = u"""# MACROBOX Script
-					ARTIST = ARTIST.strip(' ')
-					TITLE = TITLE.strip(' ')
-					FILENAME = ' - '.join([ARTIST, TITLE])
-					FILETYPE = FILETYPE.lower()
-					"""
+                    ARTIST = ARTIST.strip(' ')
+                    TITLE = TITLE.strip(' ')
+                    FILENAME = ' - '.join([ARTIST, TITLE])
+                    FILETYPE = FILETYPE.lower()
+                    """
         return template
 
 
@@ -144,16 +152,16 @@ class SaveScriptConfirmBox(ConfirmDialogBox):
 
 # class ScriptButton(FancyButton):
 #
-# 	def __init__(self, parent, label=''):
-# 		FancyButton.__init__(self, parent, label=label)
-# 		self.parent = parent
+#   def __init__(self, parent, label=''):
+#       FancyButton.__init__(self, parent, label=label)
+#       self.parent = parent
 #
-# 		enabled = Struct(bg=(220,220,220), fg=(30,30,30), pen=(160,160,160))
-# 		disabled = Struct(bg=(240,240,240), fg=(160,160,160), pen=(215,215,215))
-# 		mouseover = Struct(bg=(230,230,255), fg=(30,30,30), pen=(160,160,160))
-# 		colormap = Struct(enabled=enabled, disabled=disabled, mouseover=mouseover)
-# 		self.SetColorMap(colormap)
-# 		self.SetFontPixelSize((5,10))
+#       enabled = Struct(bg=(220,220,220), fg=(30,30,30), pen=(160,160,160))
+#       disabled = Struct(bg=(240,240,240), fg=(160,160,160), pen=(215,215,215))
+#       mouseover = Struct(bg=(230,230,255), fg=(30,30,30), pen=(160,160,160))
+#       colormap = Struct(enabled=enabled, disabled=disabled, mouseover=mouseover)
+#       self.SetColorMap(colormap)
+#       self.SetFontPixelSize((5,10))
 
 class ScriptButton(Button):
 
@@ -451,9 +459,9 @@ class ScriptEditorBox(DialogBox, ScriptControl):
     def OnPreviewToggle(self, event):
         trigger = True
         # if event != None:
-        # 	event.Skip()
-        # 	if hasattr(event, 'CmdDown'):
-        # 		trigger = event.CmdDown() and event.GetRawKeyFlags() == 3145729 # B
+        #   event.Skip()
+        #   if hasattr(event, 'CmdDown'):
+        #       trigger = event.CmdDown() and event.GetRawKeyFlags() == 3145729 # B
         if trigger == False:
             return
         if self.PreviewPanel.IsShown():
@@ -735,7 +743,7 @@ class TextCtrlMaxLineWidthCache():
         tw = self.GetCurrentFontWidth()
         cache = self.TextWidth(wx.stc.STC_STYLE_DEFAULT, string) + tw
         # self.TextWidth(wx.stc.STC_STYLE_DEFAULT,\
-        # 	self.GetLine(i)) for i in range(self.GetLineCount())
+        #   self.GetLine(i)) for i in range(self.GetLineCount())
         # GetStyleAt()
         # GetLinesAdded
         if cache > self.maxlinewidth_cache:
@@ -751,11 +759,11 @@ class TextCtrlMaxLineWidthCache():
         return maxlinewidth * tw
     #
     # def GetMaxLineWidthFixedWidthLineSep(self):
-    #  	tw = self.GetCurrentFontWidth()
-    # 	# text = self.GetValue()
-    # 	text = self.GetTextRaw()
-    # 	maxlinewidth = max([len(v) for v in text.split('\n')])
-    # 	return maxlinewidth*tw
+    #   tw = self.GetCurrentFontWidth()
+    #   # text = self.GetValue()
+    #   text = self.GetTextRaw()
+    #   maxlinewidth = max([len(v) for v in text.split('\n')])
+    #   return maxlinewidth*tw
 
     def GetMaxLineWidthFixedWidthLineSep(self):
         print(self.GetEdgeColumn())
@@ -1205,7 +1213,7 @@ class TextCtrlSliderV(TextCtrlSliderRect):
         th = self.textctrl.TextHeight(0)
         try:
             shownheight = self.textctrl.GetVirtualSize().height
-        except:
+        except Exception:
             shownheight = 0
         linelength = self.textctrl.GetLineCount()
         totalheight = linelength * th

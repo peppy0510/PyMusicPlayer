@@ -1,8 +1,10 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
 import os
@@ -595,7 +597,7 @@ def get_id3(filename, field_keys):
             # try:
             #     value = unicode(value).encode("iso-8859-1")\
             #         .decode(sys.getfilesystemencoding())
-            # except:
+            # except Exception:
             #     pass
             audio_id3[field_key] = value
     del mutagen_id3, field_key, value

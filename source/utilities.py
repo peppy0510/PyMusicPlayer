@@ -30,6 +30,20 @@ import zlib
 from operator import itemgetter
 
 
+def kill_existing_instances():
+    pid = int(os.getpid())
+    cwd = os.path.split(__file__)[0]
+    for p in psutil.process_iter():
+        try:
+            p.cwd()
+        except Exception:
+            continue
+        if p.pid != pid and p.cwd() == cwd and p.name().lower() in ('python.exe', 'pythonw.exe',):
+            # only SIGTERM, CTRL_C_EVENT, CTRL_BREAK_EVENT signals on Windows Platform.
+            # p.send_signal(signal.SIGTERM)
+            p.terminate()
+
+
 def get_hostname():
     return socket.gethostname()
 
@@ -190,8 +204,8 @@ def win32_unicode_argv():
 
 
 def get_most_common_element(values):
-    SL = sorted((x, i) for i, x in enumerate(values))
-    groups = itertools.groupby(SL, key=operator.itemgetter(0))
+    sorted_list = sorted((x, i) for i, x in enumerate(values))
+    groups = itertools.groupby(sorted_list, key=operator.itemgetter(0))
 
     def auxfun(g):
         item, iterable = g

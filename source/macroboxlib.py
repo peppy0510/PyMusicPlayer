@@ -1,14 +1,37 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
+import audio
+import mfeats
+import multiprocessing
+import mutagen
+import mutagen.id3
+import mutagen.mp3
 import os
+import stat
 import sys
+import threading
+import time
+import win32file
+import win32pipe
+import wx
+import wx.lib.newevent
 
+from utilities import PipeMessenger
+from utilities import Struct
+from utilities import compress_object
+from utilities import decompress_object
 from utilities import get_user_docapp_path
+from utilities import open_shelve
+from utilities import open_shelves
+from utilities import save_shelve
+from utilities import save_shelves
 
 
 PRODUCT_PLATFORM = 'Windows'
@@ -36,7 +59,7 @@ PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer'])
 SUPPORTED_PLAYLIST_TYPE = ('m3u',)
 SUPPORTED_AUDIO_TYPE = (
     'mp2', 'mp3', 'mp4', 'wav', 'm4a',
-    'ape', 'flac', 'aac', 'ac3', 'aiff', 'wma', 'ogg')  # wma, ogg
+    'ape', 'flac', 'aac', 'ac3', 'aiff', 'wma', 'ogg')
 MUTAGEN_SUPPORTED_TYPE = ('mp2', 'mp3', 'mpg', 'mpeg')
 # mutagen only works with mp2, mp3, mpg, mpeg ?
 
@@ -69,101 +92,10 @@ elif sys.platform.startswith('darwin'):
 
 try:
     packages = os.path.join(sys._MEIPASS, 'packages')
-except:
+except Exception:
     packages = os.path.join('packages')
 
 sys.path.insert(0, packages)
-
-
-# from ctypes import WinDLL
-# gdi32 = WinDLL('gdi32.dll')
-# fonts = [font for font in os.listdir(packages)\
-#   if font.endswith('otf') or font.endswith('ttf')]
-# for font in fonts: gdi32.AddFontResourceA(os.path.join(packages, font))
-
-
-import audio
-import gc
-import glob
-import mfeats
-import multiprocessing
-import mutagen
-import mutagen.id3
-import mutagen.mp3
-import random
-import stat
-import threading
-import time
-import urllib
-import win32file
-import win32pipe
-import wx
-import wx.lib.newevent
-
-from utilities import PipeMessenger
-from utilities import Struct
-from utilities import compress_object
-from utilities import decompress_object
-from utilities import open_shelve
-from utilities import open_shelves
-from utilities import save_shelve
-from utilities import save_shelves
-# from utilities import get_hostname
-# from utilities import get_external_ip
-# from utilities import get_macaddress
-# import images
-# import subprocess
-# import numpy
-# import win32con
-# import webbrowser
-# import _winreg as winreg
-# import StringIO
-# import cStringIO
-# import re
-# import math
-# import json
-# import socket
-# import urllib2
-# import httplib
-# import platform
-# import win32event
-# import pywintypes
-# import pybass
-# import pickle
-# import zlib
-# import base64
-# from copy import deepcopy
-# from PIL import Image
-# from PIL import ImageDraw
-# import wx.lib.agw.shortcuteditor as ShortcutEditor
-# from operator import attrgetter
-# from operator import itemgetter
-# from license import is_valid_license
-# from license import generate_secretkey
-# from license import generate_code
-# from utilities import is_packaged
-# from utilities import kill_self_process
-# from utilities import run_hidden_subprocess
-# from utilities import win32_unicode_argv
-# from utilities import PipeReceiver
-# from utilities import kill_ghost_process
-# from utilities import is_process_running_by_name
-# from utilities import set_process_priority
-# from utilities import struct_to_dict
-# from utilities import dict_to_struct
-# from utilities import rgb_hex2dec
-# from utilities import rgb_dec2hex
-# from utilities import get_hddserial
-# from utilities import get_macaddress
-# from utilities import get_hostname
-# from utilities import get_external_ip
-# from utilities import send_pipe_message
-# from utilities import SocketReceiver
-# from utilities import SocketMessenger
-# from utilities import send_socket_message
-# from utilities import set_master_path
-# from utilities import get_master_path
-# from utilities import is_ghost_runnung
 
 
 COLOR_STATUS_BG = (240, 240, 240, 255)
@@ -194,13 +126,11 @@ class ListBoxColumn(ColumnDefinition):
     def __init__(self):
         ColumnDefinition.__init__(self)
         self.AddColumn(key='status', title=u'≡', show=False, private=True)
-
         self.AddColumn(key='order', title=u'#', width=58, max_width=58, right_align=True)
         self.AddColumn(key='filename', title='filename', width=300)
         self.AddColumn(key='duration', title='duration', right_align=True, width=65, max_width=65)
         self.AddColumn(key='tempo', title='tempo', right_align=True, id3=u'TBPM', width=55, max_width=55)
         self.AddColumn(key='key', title='key', id3=u'TKEY', width=55, max_width=55)
-
         self.AddColumn(key='type', title='type', show=False, private=True)
         self.AddColumn(key='size', title='size', show=False, private=True)
         self.AddColumn(key='artist', title='artist', id3=u'TPE1', show=False, private=True)
@@ -274,7 +204,7 @@ class FileExecutionMonitor(wx.Timer):
             if data[0] == 0:
                 path = decompress_object(data[1])
             win32file.CloseHandle(self.fileHandle)
-        except:
+        except Exception:
             return
         if path is None:
             return
@@ -382,8 +312,8 @@ class CursorEventCatcher():
             self.SetCursorWAIT()
         # elif self.parent.ListBox.Header.IsSplitterOnSize():
         #   self.SetCursorSIZEWE()
-        elif self.IsInTextEdit(event):
-            pass
+        # elif self.IsInTextEdit(event):
+        #     pass
         elif isInFrameReSize is False and self.parent.pending_item_drag is None:
             self.SetCursorARROW()
 
@@ -417,6 +347,7 @@ class CursorEventCatcher():
         return False
 
     def IsInListBox(self, event):
+        return False
         xy = (event.x, event.y)
         rect = self.parent.ListBox.GetScreenRect()
         if self.parent.IsInRect(rect, xy):
@@ -424,31 +355,31 @@ class CursorEventCatcher():
         rect = self.parent.ListTab.GetScreenRect()
         if self.parent.IsInRect(rect, xy):
             return True
-        rect = self.parent.ListSearch.GetScreenRect()
-        if self.parent.IsInRect(rect, xy):
-            return True
+        # rect = self.parent.ListSearch.GetScreenRect()
+        # if self.parent.IsInRect(rect, xy):
+        #     return True
         return False
 
     def SetCursorARROW(self):
-        self.parent.parent.MainPanel.SetCursor(self.cursor_stock.ARROW)
+        self.parent.SetCursor(self.cursor_stock.ARROW)
         self.SetCursorStatus('ARROW')
 
     def SetCursorWAIT(self):
         if self.cursor_status == 'WAIT':
             return
-        self.parent.parent.MainPanel.SetCursor(self.cursor_stock.WAIT)
+        self.parent.SetCursor(self.cursor_stock.WAIT)
         self.SetCursorStatus('WAIT')
 
     def SetCursorARROWWAIT(self):
         if self.cursor_status == 'ARROWWAIT':
             return
-        self.parent.parent.MainPanel.SetCursor(self.cursor_stock.ARROWWAIT)
+        self.parent.SetCursor(self.cursor_stock.ARROWWAIT)
         self.SetCursorStatus('ARROWWAIT')
 
     def SetCursorSIZEWE(self):
         if self.cursor_status == 'SIZEWE':
             return
-        self.parent.parent.MainPanel.SetCursor(self.cursor_stock.SIZEWE)
+        self.parent.SetCursor(self.cursor_stock.SIZEWE)
         self.SetCursorStatus('SIZEWE')
 
     def SetCursorStatus(self, status):
@@ -1034,6 +965,8 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
             return
         event = self.MakeEvent()
         self.CatchCurserEvent(event)
+        if not hasattr(self.parent, 'StatusBox'):
+            return
         self.parent.DistributeEvent(event)
 
     def InitEvent(self):
@@ -1413,6 +1346,7 @@ class EventCatcher():
 class RectRect():
 
     def __init__(self):
+        self.reInitBuffer = False
         self.buffer = Struct(fps=120, lap=time.time(), bmp=None)
 
     def GetRectIdx(self, xy):
@@ -1745,240 +1679,6 @@ class TabTextEdit(wx.TextCtrl):
         string = self.GetValue()
         self.parent.SetTabTitle(string, self.tabIdx)
         self.destroy = True
-
-
-# https://developer.gracenote.com/web-api
-
-threadCrawlerLock = threading.Lock()
-
-
-def GracenoteCrawler(path, queue):
-    threadCrawlerLock.acquire(0)
-    filename = os.path.basename(path)
-    filename = os.path.splitext(filename)[0].lower()
-    keywords = filename.split(' - ')[0]
-    keywords = keywords.split('pres')[0]
-    keywords = keywords.split('feat')[0]
-    keywords = keywords.split('with')[0]
-    keywords = keywords.split('and')[0]
-    artist = keywords
-    clientID = '104448-DA1673C7F933E828A270DD9EE58C4B8B'
-    userID = pygn.register(clientID)
-    metadata = pygn.searchArtist(clientID, userID, artist)
-    uri = metadata['artist_image_url']
-    artwork = urllib.urlopen(uri).read()
-    metadata['artist_image'] = artwork
-    uri = metadata['album_art_url']
-    artwork = urllib.urlopen(uri).read()
-    metadata['album_art'] = artwork
-    queue.put(metadata)
-    # collected = gc.collect()
-    gc.collect()
-
-
-# http://www.discogs.com/developers/index.html
-
-threadCrawlerLock = threading.Lock()
-
-
-def DiscogsCrawler(path, queue):
-    info = Struct()
-    threadCrawlerLock.acquire(0)
-    filename = os.path.basename(path)
-    filename = os.path.splitext(filename)[0].lower()
-    keywords = filename.split(' - ')[0]
-    keywords = keywords.split('pres')[0]
-    keywords = keywords.split('feat')[0]
-    keywords = keywords.split('with')[0]
-    keywords = keywords.split('and')[0]
-    discogs.user_agent = 'muteklab/1.0 +http://www.muteklab.com'
-    artist = discogs.Artist(keywords)
-    try:
-        keys = artist.data.keys()
-    except Exception:
-        queue.put(None)
-        return
-    if u'id' in keys:
-        info.id = artist.data[u'id']
-    if u'name' in keys:
-        info.name = artist.data[u'name']
-    if u'aliases' in keys:
-        info.aliases = artist.data[u'aliases']
-    if u'namevariations' in keys:
-        info.namevariations = artist.data[u'namevariations']
-    if u'realname' in keys:
-        info.realname = artist.data[u'realname']
-    if u'members' in keys:
-        info.members = artist.data[u'members']
-    collected = gc.collect()
-    info.images = list()
-    info.releases = list()
-    random.randrange(0, len(artist.releases))
-    randomIdx = random.sample(range(len(artist.releases)), len(artist.releases))
-    for i in randomIdx:
-        try:
-            release = artist.releases[i]
-            data = '%s %s' % (release.data['year'], release.data['title'])
-            info.releases.append(data)
-            if 'images' in release.data.keys():
-                # uri = release.data['images'][0]['uri']
-                uri = release.data['images'][0]['uri150']
-                artwork = urllib.urlopen(uri).read()
-                info.images.append(artwork)
-            queue.put(info)
-        except Exception:
-            pass
-    gc.collect()
-
-
-# http://developer.echonest.com/docs/v4
-# https://github.com/echonest/pyechonest
-
-threadCrawlerLock = threading.Lock()
-
-
-def EchonestCrawler(path, queue):
-    threadCrawlerLock.acquire(0)
-    filename = os.path.basename(path)
-    filename = os.path.splitext(filename)[0].lower()
-    keywords = filename.split(' - ')[0]
-    keywords = keywords.split('pres')[0]
-    keywords = keywords.split('feat')[0]
-    keywords = keywords.split('with')[0]
-    keywords = keywords.split('and')[0]
-    keywords = u'%s' % (keywords)
-    echonest_config.ECHO_NEST_API_KEY = '3NUCRNQMMTWBDJCSL'
-    try:
-        bk = echonest_artist.Artist(keywords)
-    except Exception:
-        queue.put(None)
-        return
-    info = Struct()
-    info.artist = bk.name
-    info.similar = list()
-    for v in bk.similar:
-        info.similar.append(v.name)
-    queue.put(info)
-    collected = gc.collect()
-
-
-threadCrawlerLock = threading.Lock()
-
-
-def MetaCrawler(path, queue):
-    threadCrawlerLock.acquire(0)
-    info = Struct()
-    info.google = Struct()
-    info.discogs = Struct(idx=None, name=None, aliases=None,
-                          namevariations=None, realname=None, members=None, releases=None)
-    info.echonest = Struct(artist=None, similar=None)
-    info.gracenote = Struct()
-    filename = os.path.basename(path)
-    filename = os.path.splitext(filename)[0].lower()
-    keywords = filename.split(' - ')[0]
-    keywords = keywords.split('pres')[0]
-    keywords = keywords.split('feat')[0]
-    keywords = keywords.split('with')[0]
-    keywords = keywords.split('and')[0]
-    keywords = u'%s' % (keywords)
-
-    echonest_config.ECHO_NEST_API_KEY = '3NUCRNQMMTWBDJCSL'
-    try:
-        bk = echonest_artist.Artist(keywords)
-        info.echonest.artist = bk.name
-        info.echonest.similar = list()
-        for v in bk.similar:
-            info.echonest.similar.append(v.name)
-    except Exception:
-        pass
-    queue.put(info)
-
-    discogs.user_agent = 'muteklab/1.0 +http://www.muteklab.com'
-    artist = discogs.Artist(keywords)
-    try:
-        keys = artist.data.keys()
-        if u'id' in keys:
-            info.discogs.idx = artist.data[u'id']
-        if u'name' in keys:
-            info.discogs.name = artist.data[u'name']
-        if u'aliases' in keys:
-            info.discogs.aliases = artist.data[u'aliases']
-        if u'namevariations' in keys:
-            info.discogs.namevariations = artist.data[u'namevariations']
-        if u'realname' in keys:
-            info.discogs.realname = artist.data[u'realname']
-        if u'members' in keys:
-            info.discogs.members = artist.data[u'members']
-    except Exception:
-        pass
-    queue.put(info)
-    # info.discogs.images = list()
-    info.discogs.releases = list()
-    try:
-        # random.randrange(0, len(artist.releases))
-        # randomIdx = random.sample(range(len(artist.releases)), len(artist.releases))
-        # for i in randomIdx:
-        for i in range(len(artist.releases)):
-            release = artist.releases[i]
-            data = '%s %s' % (release.data['year'], release.data['title'])
-            info.discogs.releases.append(data)
-            # if 'images' in release.data.keys():
-            #   # uri = release.data['images'][0]['uri']
-            #   uri = release.data['images'][0]['uri150']
-            #   artwork = urllib.urlopen(uri).read()
-            #   info.discogs.images.append(artwork)
-            queue.put(info)
-    except Exception:
-        pass
-    queue.put(info)
-    gc.collect()
-
-
-class CRAWLER_Scheduler():
-
-    def __init__(self, parent):
-        self.parent = parent
-        self.path = None
-        self.last_path = None
-        self.crawler_timer = time.time()
-        self.info = None
-        self.queue = None
-
-    def AddCRAWLERTask(self, path):
-        self.path = path
-
-    def GetCRAWLERInfo(self):
-        if self.queue is None:
-            return
-        if self.cache.timestamp - self.crawler_timer < 0.5:
-            return self.info
-        self.crawler_timer = self.cache.timestamp
-        try:
-            self.info = self.queue.get(False)
-        except Exception:
-            return self.info
-        return self.info
-
-    def RunCRAWLER(self):
-        if self.path is None:
-            return
-        if self.path == self.last_path:
-            return
-        self.last_path = self.path
-        self.info = None
-        self.queue = None
-        if hasattr(self, 'threadCrawler'):
-            if self.threadCrawler.is_alive():
-                self.threadCrawler.terminate()
-        self.queue = Queue()
-        self.threadCrawler = multiprocessing.Process(
-            target=MetaCrawler, args=(self.path, self.queue))
-        self.threadCrawler.daemon = True
-        self.threadCrawler.start()
-
-    def __del__(self):
-        if self.threadCrawler.is_alive():
-            self.threadCrawler.terminate()
 
 
 class DialogBox(wx.Dialog):
@@ -2434,500 +2134,3 @@ class FancyButton(wx.Button):
 
     def OnErase(self, event):
         pass
-
-
-class ScriptControl():
-
-    def __init__(self):
-        self.InitScriptVars()
-        self.InitScriptPath()
-        self.CONTEXT_MENU = '# CONTEXT MENU'
-
-    def SetPlayBox(self, PlayBox):
-        self.PlayBox = PlayBox
-
-    def SetListBox(self, ListBox):
-        self.ListBox = ListBox
-
-    def InitScriptVars(self):
-        self.scriptvars = (('path', 'FILEPATH', False),
-                           ('filename', 'FILENAME', True), ('type', 'FILETYPE', True),
-                           ('album', 'ALBUM', True), ('artist', 'ARTIST', True),
-                           ('title', 'TITLE', True), ('genre', 'GENRE', True),
-                           ('key', 'KEY', True), ('tempo', 'TEMPO', True),
-                           ('bitrate', 'BITRATE', False), ('channel', 'CHANNEL', False),
-                           ('size', 'SIZE', False), ('duration', 'DURATION', False))
-
-    def GetScriptChoices(self):
-        if os.path.isdir(self.scriptpath) is False:
-            os.mkdir(self.scriptpath)
-        paths = glob.glob(os.path.join(self.scriptpath, u'*.py'))
-        choices = [os.path.basename(path)[:-3] for path in paths]
-        if len(choices) == 0:
-            choices.append('')
-        return sorted(choices)
-
-    def GetScriptShortCuts(self):
-        if os.path.isdir(self.scriptpath) is False:
-            os.mkdir(self.scriptpath)
-        paths = glob.glob(os.path.join(self.scriptpath, u'*.py'))
-        shortcutpaths = list()
-        for i in range(len(paths)):
-            f = open(paths[i], 'rb')
-            if self.CONTEXT_MENU in f.read():
-                shortcutpaths.append(paths[i])
-            f.close()
-        choices = [os.path.basename(path)[:-3] for path in shortcutpaths]
-        if len(choices) == 0:
-            choices.append('')
-        return sorted(choices)
-
-    def InitScriptPath(self):
-        self.scriptpath = os.path.join(get_user_docapp_path(), 'script')
-
-    def GetScriptPath(self):
-        return self.scriptpath
-
-    def GetScriptResult(self, script=None):
-        if script is None:
-            script = self.EditorPanel.TextCtrl.GetValue()
-        # scriptpath = self.GetScriptPath()
-        scriptvars = self.GetScriptVars()
-        # listIdx = self.ListBox.GetSelectedListIdx()
-        command = "thisItem.%s = self.ListBox.GetItemValueByColumnKey(itemIdx, '%s', listIdx)"
-        self.preview_result = list()
-        for count, itemIdx in enumerate(self.ListBox.GetSelectedItems()):
-            thisItem = Struct()
-            for v in scriptvars:
-                exec(command % (v[1], v[0]))
-            thisItem.COUNT = count + 1
-            # syspath = sys.path
-            import rename
-            self.preview_result += [rename.rename(
-                thisItem, script, [self.GetScriptPath()])]
-            # syspath = sys.path
-        return self.preview_result
-
-    def GetSelectedScriptPath(self, selected=None):
-        if os.path.isdir(self.GetScriptPath()) is False:
-            os.mkdir(self.GetScriptPath())
-        if selected is None:
-            selected = self.ScriptSelector.GetValue()
-        selected = '.'.join((selected, 'py'))
-        return os.path.join(self.scriptpath, selected)
-
-    def GetScriptVars(self):
-        return self.scriptvars
-
-    def ProcessScript(self, results, preview=None):
-        if results is None:
-            return
-        if len(results) == 0:
-            return
-        if preview == 'ERROR':
-            return
-        scriptvars = [v for v in self.GetScriptVars() if v[2] is True]
-        for i in range(len(results)):
-            oldPath = results[i].FILEPATH
-            listItemsIdx = self.ListBox\
-                .GetListItemsIdxByColumnKeyValue('path', oldPath)
-            itemIdx = listItemsIdx[0][1]
-            selectedList = listItemsIdx[0][0]
-
-            is_playing_item = False
-            path_resp = False
-            if self.PlayBox.IsPlaying():
-                if oldPath == self.PlayBox.GetPlayingItemInfo('path'):
-                    is_playing_item = True
-                    self.PlayBox.OnPause()
-                    # resume = self.PlayBox.cue.resume
-
-            for v in scriptvars:
-                exec('new = results[i].%s' % (v[1]))
-                exec('old = self.originals[i].%s' % (v[1]))
-                if type(old) != unicode:
-                    old = old.decode(sys.getfilesystemencoding())
-                if new == old:
-                    continue
-
-                if v[0] == 'filename':
-                    # new = new.encode(sys.getfilesystemencoding())
-                    newFilename = self.ListBox.LimitFileName(new)
-                    pathBase = os.path.sep.join(oldPath.split(os.path.sep)[:-1])
-                    fileType = os.path.splitext(oldPath)[-1]
-                    newPath = ''.join((os.path.join(pathBase, newFilename), fileType))
-                    if oldPath != newPath:
-                        path_resp = self.ListBox\
-                            .RenameFileByItemIdx(itemIdx, newPath, selectedList)
-
-                columnIdx = self.ListBox\
-                    .GetColumnKeyToIdx(v[0], selectedList)
-                if self.ListBox\
-                        .IsID3TAGColumnByColumnIdx(columnIdx, selectedList):
-                    if v[0] == 'tempo':
-                        try:
-                            new = float(new)
-                            new = u'%05.1f' % (0.1 * round(new * 10))
-                        except Exception:
-                            new = ''
-                    tag_resp = self.parent.MainPanel\
-                        .ListBox.RenameID3TAGByColumnItemIdx(
-                            columnIdx, itemIdx, new, selectedList)
-
-            if is_playing_item:
-                if path_resp:
-                    self.PlayBox.cue.path = newPath
-                    self.PlayBox.cue.mdx\
-                        = self.PlayBox.GetMDX(newPath)
-                    self.PlayBox.cue.item\
-                        = MakeMusicFileItem(newPath, 0, ListBoxColumn())
-                self.PlayBox.OnResume()
-
-    def GetScriptVarsChoices(self):
-        choices = [v[1] for v in self.GetScriptVars() if v[2] is True]
-        return choices + ['CUSTOMFIELD']
-
-
-class ScriptProcessProgressTimer(wx.Timer):
-
-    def __init__(self, parent):
-        wx.Timer.__init__(self)
-        self.parent = parent
-        self.stop = False
-
-    def Notify(self):
-        if self.stop:
-            return
-        self.parent.UpdateProgress()
-
-    def Stop(self, event=None):
-        self.stop = True
-
-
-class ScriptProcessProgressBox(DialogBox, ScriptControl):
-
-    def __init__(self, parent):
-        ScriptControl.__init__(self)
-        DialogBox.__init__(self, parent, size=(250, 105 + 25))
-        self.parent = parent
-        self.Message = StaticText(self, style=wx.ALIGN_CENTER)
-        self.ProgressBar = wx.Gauge(self)
-        self.CloseButton = Button(self, label='Cancel')
-        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        self.interval = 1
-        self.item_count = 0
-        self.item_total = 0
-        self.check_somemore = 5
-        self.cache = list()
-        self.OnSize(None)
-        choices = self.GetScriptVarsChoices()
-        self.selected_field = choices[self.parent.PreviewField.GetSelection()]
-
-    def UpdateProgress(self):
-        result = self.cache
-        self.cache = list()
-        self.parent.process_result += [result]
-        self.parent.PreviewPanel.TextCtrl.SetReadOnly(False)
-        for v in result:
-            exec('preview = unicode(v[1][1].%s)' % (self.selected_field))
-            self.parent.PreviewPanel.TextCtrl.AppendText(preview)
-            self.parent.PreviewPanel.TextCtrl.DocumentEnd()
-            self.parent.PreviewPanel.TextCtrl.NewLine()
-            self.parent.PreviewPanel.TextCtrl.EmptyUndoBuffer()
-        self.parent.PreviewPanel.TextCtrl.SetReadOnly(True)
-        self.parent.PreviewPanel.SliderV.DirectDraw()
-        self.parent.PreviewPanel.SliderH.DirectDraw()
-
-        margin = 10
-        width, height = self.GetClientSize()
-        label = 'Processing script. (%d/%d tracks)'\
-                % (self.item_count, self.item_total)
-        self.Message.SetLabelText(label)
-        self.Message.SetInitialSize((width - margin * 2, 22))
-        self.ProgressBar.SetValue(self.item_count)
-
-        if self.item_count != self.item_total:
-            return
-        if self.check_somemore > 0:
-            self.check_somemore -= 1
-            return
-        self.parent.PreviewField.Disable()
-        self.Timer.Stop()
-        # self.parent.ProcessButton.SetEnable()
-        self.OnClose(None)
-
-    def StartRendering(self):
-        self.item_count = 0
-        self.parent.process_result = list()
-        self.Timer = ScriptProcessProgressTimer(self)
-        self.Timer.Start(self.interval)
-        self.Thread = threading.Thread(
-            target=self.RenderProcess, name='script_process', args=())
-        self.Thread.start()
-
-    def RenderProcess(self):
-        # print self.parent.preview_result
-        # if results is None: return
-        # if len(results) == 0: return
-        # if preview == 'ERROR': return
-        # print dir(self.parent.preview_result[0][0][0])
-
-        allpaths = list()
-        uresults = list()
-        for v in self.parent.preview_result:
-            if v[0].FILEPATH in allpaths:
-                continue
-            allpaths.append(v[0].FILEPATH)
-            uresults.append(v)
-
-        self.item_total = len(allpaths)
-        self.item_duplicated = len(self.parent.preview_result) - self.item_total
-        self.ProgressBar.SetRange(self.item_total)
-        self.parent.PreviewPanel.TextCtrl.SetValue(u'')
-        for result in uresults:
-            if len(result) == 0:
-                continue
-            self.item_count += 1
-            listItemsIdx = self.parent.ListBox\
-                .GetListItemsIdxByColumnKeyValue('path', result[0].FILEPATH)
-            listIdx = listItemsIdx[0][0]
-            itemIdx = listItemsIdx[0][1]
-            time.sleep(0.001)
-            resp = self.ProcessScriptByListItemIdx(listIdx, itemIdx, result)
-            self.cache += [(resp, result)]
-
-    def ProcessScriptByListItemIdx(self, listIdx, itemIdx, result):
-        scriptvars = [v for v in self.GetScriptVars() if v[2] is True]
-        result_old, result_new = result
-        path_resp = False
-        is_playing_item = False
-        oldPath = result_old.FILEPATH
-        if self.parent.PlayBox.IsPlaying():
-            if oldPath == self.parent.PlayBox.GetPlayingItemInfo('path'):
-                is_playing_item = True
-                self.parent.PlayBox.OnPause()
-                resume = self.parent.PlayBox.cue.resume
-
-        for v in scriptvars:
-            exec('old = result_old.%s' % (v[1]))
-            exec('new = result_new.%s' % (v[1]))
-            if type(old) != unicode:
-                old = old.decode(sys.getfilesystemencoding())
-            if new == old:
-                continue
-
-            if v[0] == 'filename':
-                # new = new.encode(sys.getfilesystemencoding())
-                newFilename = self.parent.ListBox.LimitFileName(new)
-                pathBase = os.path.sep.join(oldPath.split(os.path.sep)[:-1])
-                fileType = os.path.splitext(oldPath)[-1]
-                newPath = ''.join((os.path.join(pathBase, newFilename), fileType))
-                if oldPath != newPath:
-                    path_resp = self.parent.ListBox\
-                        .RenameFileByItemIdx(itemIdx, newPath, listIdx)
-
-            columnIdx = self.parent.ListBox.GetColumnKeyToIdx(v[0], listIdx)
-            if self.parent.ListBox.IsID3TAGColumnByColumnIdx(columnIdx, listIdx):
-                if v[0] == 'tempo':
-                    try:
-                        new = float(new)
-                        new = u'%05.1f' % (0.1 * round(new * 10))
-                    except Exception:
-                        new = ''
-                tag_resp = self.parent.parent.MainPanel\
-                    .ListBox.RenameID3TAGByColumnItemIdx(
-                        columnIdx, itemIdx, new, listIdx)
-
-        if is_playing_item:
-            if path_resp:
-                self.parent.PlayBox.cue.path = newPath
-                self.parent.PlayBox.cue.mdx = self.parent.PlayBox.GetMDX(newPath)
-                self.parent.PlayBox.cue.item = MakeMusicFileItem(newPath, 0, ListBoxColumn())
-            self.parent.PlayBox.OnResume()
-
-    def OnSize(self, event):
-        margin = 10
-        width, height = self.GetClientSize()
-        self.Message.SetPosition((margin, 15))
-        self.Message.SetInitialSize((width - margin * 2, 22))
-        self.ProgressBar.SetRect((margin * 2, 45, width - margin * 4, 10))
-        self.CloseButton.SetRect(((width - 75) / 2 + 1, height - 24 - margin, 75, 24))
-
-    def OnApply(self, event):
-        self.OnClose(event)
-
-    def OnClose(self, event):
-        self.Timer.Stop()
-        if self.Thread.is_alive():
-            self.Thread._Thread__stop()
-            # self.Thread.Destroy()
-        if self.IsModal():
-            self.EndModal(0)
-        self.Destroy()
-
-
-class ScriptPreviewProgressTimer(wx.Timer):
-
-    def __init__(self, parent):
-        wx.Timer.__init__(self)
-        self.parent = parent
-        self.stop = False
-
-    def Notify(self):
-        if self.stop:
-            return
-        self.parent.UpdateProgress()
-
-    def Stop(self, event=None):
-        self.stop = True
-
-
-class ScriptPreviewProgressBox(DialogBox, ScriptControl):
-
-    def __init__(self, parent):
-        ScriptControl.__init__(self)
-        DialogBox.__init__(self, parent, size=(250, 105 + 25))
-        self.parent = parent
-        self.Message = StaticText(self, style=wx.ALIGN_CENTER)
-        self.ProgressBar = wx.Gauge(self)
-        self.CloseButton = Button(self, label='Cancel')
-        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        self.interval = 1
-        self.item_count = 0
-        self.item_total = 0
-        self.check_somemore = 5
-        self.cache = list()
-        self.OnSize(None)
-        choices = self.GetScriptVarsChoices()
-        self.selected_field = choices[self.parent.PreviewField.GetSelection()]
-
-    def UpdateProgress(self):
-        result = self.cache
-        self.cache = list()
-        if len(result) > 0:
-            self.parent.preview_result += result
-        self.parent.PreviewPanel.TextCtrl.SetReadOnly(False)
-        for v in result:
-            # preview = unicode(v[1].PREVIEW)
-            try:
-                exec('preview = unicode(v[1].%s)' % (self.selected_field))
-            except:
-                preview = 'ERROR'
-            self.parent.PreviewPanel.TextCtrl.AppendText(preview)
-            self.parent.PreviewPanel.TextCtrl.DocumentEnd()
-            self.parent.PreviewPanel.TextCtrl.NewLine()
-            self.parent.PreviewPanel.TextCtrl.EmptyUndoBuffer()
-        self.parent.PreviewPanel.TextCtrl.SetReadOnly(True)
-        self.parent.PreviewPanel.SliderV.DirectDraw()
-        self.parent.PreviewPanel.SliderH.DirectDraw()
-
-        margin = 10
-        width, height = self.GetClientSize()
-        label = 'Rendering preview. (%d/%d tracks)'\
-                % (self.item_count, self.item_total)
-        self.Message.SetLabelText(label)
-        self.Message.SetInitialSize((width - margin * 2, 22))
-        self.ProgressBar.SetValue(self.item_count)
-
-        if self.item_count != self.item_total:
-            return
-        if self.check_somemore > 0:
-            self.check_somemore -= 1
-            return
-        self.Timer.Stop()
-        self.parent.ProcessButton.SetEnable()
-        self.OnClose(None)
-
-    def StartRendering(self):
-        self.parent.preview_result = list()
-        self.Timer = ScriptPreviewProgressTimer(self)
-        self.Timer.Start(self.interval)
-        self.Thread = threading.Thread(
-            target=self.RenderPreview, name='script_preview', args=())
-        self.Thread.start()
-
-    def RenderPreview(self):
-        self.parent.PreviewPanel.TextCtrl.SetValue(u'')
-        selectedIdx = self.parent.ScopeSelector.GetCurrentSelection()
-        update_time = 0.001
-
-        if selectedIdx == 0:
-            listsIdx = range(len(self.parent.ListBox.innerList))
-            self.item_total = sum([self.parent.ListBox
-                                   .GetItemsLength(listIdx) for listIdx in listsIdx])
-            self.ProgressBar.SetRange(self.item_total)
-            self.item_count = 0
-            for listIdx in listsIdx:
-                itemsIdx = range(self.parent.ListBox.GetItemsLength(listIdx))
-                for itemIdx in itemsIdx:
-                    self.item_count += 1
-                    if self.Timer.stop:
-                        return
-                    old, new = self.GetScriptResultByListItemIdx(
-                        listIdx, itemIdx, self.item_count)
-                    self.cache.append((old, new))
-                    if update_time != 0:
-                        time.sleep(update_time)
-
-        if selectedIdx == 1:
-            listIdx = self.parent.ListBox.GetSelectedListIdx()
-            itemsIdx = range(self.parent.ListBox.GetItemsLength())
-            self.item_total = len(itemsIdx)
-            self.ProgressBar.SetRange(self.item_total)
-            for count, itemIdx in enumerate(itemsIdx):
-                self.item_count = count + 1
-                if self.Timer.stop:
-                    return
-                old, new = self.GetScriptResultByListItemIdx(listIdx, itemIdx, count)
-                self.cache.append((old, new))
-                if update_time != 0:
-                    time.sleep(update_time)
-
-        if selectedIdx == 2:
-            listIdx = self.parent.ListBox.GetSelectedListIdx()
-            itemsIdx = self.parent.ListBox.GetSelectedItems()
-            self.item_total = len(itemsIdx)
-            self.ProgressBar.SetRange(self.item_total)
-            for count, itemIdx in enumerate(itemsIdx):
-                self.item_count = count + 1
-                if self.Timer.stop:
-                    return
-                old, new = self.GetScriptResultByListItemIdx(listIdx, itemIdx, count)
-                self.cache.append((old, new))
-                if update_time != 0:
-                    time.sleep(update_time)
-
-    def GetScriptResultByListItemIdx(self, listIdx, itemIdx, count=0, script=None):
-        if script is None:
-            script = self.parent.EditorPanel.TextCtrl.GetValue()
-        command = "thisItem.%s = self.parent.ListBox.GetItemValueByColumnKey(itemIdx, '%s', listIdx)"
-        thisItem = Struct()
-        for v in self.GetScriptVars():
-            exec(command % (v[1], v[0]))
-        oldpath = thisItem.FILEPATH
-        thisItem.COUNT = count + 1
-        syspath = sys.path
-        import rename
-        result = rename.rename(thisItem, script, [self.GetScriptPath()])
-        syspath = sys.path
-        return thisItem, result
-
-    def OnSize(self, event):
-        margin = 10
-        width, height = self.GetClientSize()
-        self.Message.SetPosition((margin, 15))
-        self.Message.SetInitialSize((width - margin * 2, 22))
-        self.ProgressBar.SetRect((margin * 2, 45, width - margin * 4, 10))
-        self.CloseButton.SetRect(((width - 75) / 2 + 1, height - 24 - margin, 75, 24))
-
-    def OnApply(self, event):
-        self.OnClose(event)
-
-    def OnClose(self, event):
-        self.Timer.Stop()
-        if self.Thread.is_alive():
-            self.Thread._Thread__stop()
-            # self.Thread.Destroy()
-        if self.IsModal():
-            self.EndModal(0)
-        self.Destroy()

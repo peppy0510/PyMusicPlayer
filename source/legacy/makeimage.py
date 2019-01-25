@@ -1,13 +1,16 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
 import os
-from PIL import Image
 import wx.tools.img2py as img2py
+
+from PIL import Image
 
 
 PATH = r'packages/images/a/icon-list-tab-close.png'
@@ -29,6 +32,7 @@ def makeimage(path, write=False):
     f.close()
     if write is False:
         os.remove(python_file)
+
 
 if __name__ == '__main__':
     makeimage(PATH)

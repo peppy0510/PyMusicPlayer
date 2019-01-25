@@ -31,7 +31,7 @@ def rename(ORIGINAL, SCRIPT, SYSPATH):
         for v in '__doc__|__file__|__name__|__package__'.split('|'):
             globals().pop(v)
         del v
-    except:
+    except Exception:
         pass
     KEYWORDS = ORIGINAL.keys()
     NEW = Struct()
@@ -41,7 +41,7 @@ def rename(ORIGINAL, SCRIPT, SYSPATH):
     del v
     try:
         exec(SCRIPT)
-    except:
+    except Exception:
         return
     NEW = Struct()
     for v in KEYWORDS:

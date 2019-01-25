@@ -1,8 +1,11 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+__version__ = '1.0.51'
+__author__ = 'Taehong Kim'
+__email__ = 'peppy0510@hotmail.com'
+__license__ = ''
+__doc__ = ''''''
 
 
 import os
@@ -33,12 +36,13 @@ from macroboxlib import TITLE
 from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
-# from packages import pybass
 from playbox import PlayBox
 from utilities import Struct
+from utilities import kill_existing_instances
 from utilities import kill_self_process
 from utilities import set_master_path
 from utilities import set_process_priority
+# from packages import pybass
 # from utilities import is_ghost_runnung
 # from dialogbox import ProductLogRequest
 # from macroboxlib import FileExecutionMonitor
@@ -65,7 +69,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.cache = Struct(eventskip=0)
         self.buffer = Struct(fps=30, lap=0, bmp=None)
         self.Event = EVENT_Scheduler(self)
-
         if BOOT_NETWORK_SCHEDULER:
             self.MFEATS = MFEATS_Network_Scheduler(self)
         else:
@@ -76,6 +79,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.ListTab = ListBoxTab(self)
         self.ListSearch = ListBoxSearch(self)
         self.StatusBox = StatusBox(self)
+
         # self.BorderBoxHT = BorderBoxH(self)
         # bgcolor = parent.st.PLAYBOX.PLAY_BG_COLOR
         # self.BorderBoxHT.SetBackgroundColour(bgcolor)
@@ -112,7 +116,9 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.Apic.CatchEvent(event)
         self.PlayBox.VolumeSlider.CatchEvent(event)
         if self.ListBox.IsAnyListLocked() is False:
-            self.ListTab.CatchEvent(event)
+            self.ListTab.TabList.CatchEvent(event)
+            self.ListTab.SliderV.CatchEvent(event)
+            self.ListTab.TabHeader.CatchEvent(event)
             # self.ListSearch.CatchEvent(event)
             # self.ListBox.CatchEvent(event) #####
             # self.ListBox.Header.CatchEvent(event)
@@ -200,7 +206,6 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.SetMaxSize((-1, -1))
         # self.SetMaxSize((800, -1))
         # self.toolbar = self.CreateToolBar()
-
         self.MainPanel = MainPanel(self)
         self.MainPanel.MFEATS.AutoAnalyzer()
         MacroBoxMenuBar.__init__(self)
@@ -222,14 +227,10 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.LoadInitFile()
         # ProductLogRequest()
         # self.FileExecutionMonitor = FileExecutionMonitor(self)
-
         # self.OnAbout(None)
         # self.OnPreference(None)
-        # self.OnTutorial(None)
         # self.OnUpdate(None)
         # self.OnLicense(None)
-        # self.OnScriptEditor(self)
-        # self.OnTutorial(None)
         # self.OnCheckItemsConsistency(None)
 
     def LoadInitFile(self):
@@ -273,7 +274,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         pass
 
 
-class MtunesApp(wx.App):
+class MacroBoxApp(wx.App):
 
     # def __init__(self, parent=None, initfile=None):
     def __init__(self, parent=None, initfile=None, *argv, **kwargs):
@@ -310,17 +311,17 @@ def main(initfile=None):
     if BOOT_NETWORK_SCHEDULER:
         mfeats.boot_scheduler(os.getpid(), max_memory=0, max_idletime=0)
     if LOGGING is False:
-        app = MtunesApp(initfile=initfile)
+        app = MacroBoxApp(initfile=initfile)
         # app.SetCallFilterEvent(False)
     elif LOGGING is True:
         filename = '%s.log' % (os.path.splitext(os.path.basename(__file__))[0])
-        app = MtunesApp(initfile=initfile, filename=filename, redirect=True)
+        app = MacroBoxApp(initfile=initfile, filename=filename, redirect=True)
         app.SetCallFilterEvent(True)
     app.MainLoop()
 
 
 if __name__ == '__main__':
-
+    kill_existing_instances()
     initfile = None
 
     # if len(sys.argv) > 1:

@@ -783,6 +783,8 @@ class PlayBoxApic(RectBox):
             w = int(round(w * ratio))
         elif ratio > 1:
             h = int(round(h / ratio))
+        if w <= 0 or h <= 0:
+            return None, path
         bmp = bmp.Rescale(w, h, quality=wx.IMAGE_QUALITY_HIGH)
         bmp = bmp.ConvertToBitmap()
         return bmp, path

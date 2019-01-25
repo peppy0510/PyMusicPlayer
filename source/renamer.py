@@ -1,14 +1,15 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
+import glob
 import os
 import re
-import sys
-import glob
 
 
 class RenameRule():
@@ -35,7 +36,7 @@ class RenameRule():
     def case(self, string, patterns, repl, params=''):
         # print patterns, repl
         # for pattern in patterns:
-        # 	print re.findall(string, pattern)
+        #   print re.findall(string, pattern)
         # print params, patterns
         flags = re.UNICODE
         if 'ignorecase' in params.split('|'):
@@ -52,11 +53,11 @@ class RenameRule():
                 string = u''.join([string[:offset], string[offset:a], replaced, string[b:]])
                 offset = b
         # if 'lower' in params.split('|'):
-        # 	string = string.lower()
+        #   string = string.lower()
         # if 'upper' in params.split('|'):
-        # 	string = string.upper()
+        #   string = string.upper()
         # if 'capitalize' in params.split('|'):
-        # 	string = string.title()
+        #   string = string.title()
         return string
 
 
@@ -69,7 +70,7 @@ def rename(path, script):
     FILENAME = os.path.basename(path)
     try:
         exec(script)
-    except:
+    except Exception:
         'ERROR'
     return FILENAME
     filename = os.path.basename(path)
@@ -93,8 +94,9 @@ def rename(path, script):
         exec(command % (rule[0].lower()))
     return filename
 
-if __name__ == "__main__":
-    filepath = u'D:\DOWNLOAD\+FINISHED\(+PENDING+)\AAAA'
+
+if __name__ == '__main__':
+    filepath = r'D:\DOWNLOAD\+FINISHED\(+PENDING+)\AAAA'
     filepaths = glob.glob(os.path.join(filepath, u'*'))
     # filepaths = [os.path.basename(v) for v in filepaths][:5]
     filepaths = [os.path.splitext(os.path.basename(v))[0] for v in filepaths][:5]
@@ -121,8 +123,8 @@ if __name__ == "__main__":
         # m = re.match(r'^[\t|\s]{0,}(replace:)(.*)>(.*)', line)
         # print m
         # if m != None:
-        # 	print 'xxxxxxxxxxxxx'
-        # 	print m.groups()
+        #   print 'xxxxxxxxxxxxx'
+        #   print m.groups()
 
         # patterns, repl = line.split(u'>')
         # print string
@@ -132,14 +134,14 @@ if __name__ == "__main__":
 
 
 # if wordbase is False:
-# 	if caseignore is False:
-# 		for src in srclist:
-# 			regexp = re.compile(re.escape(src))
-# 			string = regexp.sub(dst, string)
-# 	elif caseignore is True:
-# 		for src in srclist:
-# 			regexp = re.compile(re.escape(src), re.IGNORECASE)
-# 			string = regexp.sub(dst, string)
+#   if caseignore is False:
+#       for src in srclist:
+#           regexp = re.compile(re.escape(src))
+#           string = regexp.sub(dst, string)
+#   elif caseignore is True:
+#       for src in srclist:
+#           regexp = re.compile(re.escape(src), re.IGNORECASE)
+#           string = regexp.sub(dst, string)
 
 # << include >>
 
@@ -171,7 +173,7 @@ if __name__ == "__main__":
 # a = """
 
 # def aaa():
-# 	print 'aaa'
+#   print 'aaa'
 
 # aaa()
 # """

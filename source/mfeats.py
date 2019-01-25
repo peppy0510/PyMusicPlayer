@@ -1,8 +1,10 @@
 # encoding: utf-8
 
 
-# author: Taehong Kim
-# email: peppy0510@hotmail.com
+'''
+author: Taehong Kim
+email: peppy0510@hotmail.com
+'''
 
 
 # from __future__ import division
@@ -778,7 +780,7 @@ def create_mfeats_table(table_name='mfeats', db_name=None):
     #     c.execute(query)
     #     conn.commit()
     #     conn.close()
-    # except:
+    # except Exception:
     #     pass
     # finally:
     #     if conn:
@@ -896,7 +898,7 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None):
     #     mfeats_data = eval('MFEATS(%s)' % (','.join(kwrds)))
     #     print('GET', mfeats_data.mdx, mfeats_data.key, mfeats_data.tempo)
     #     return eval('MFEATS(%s)' % (','.join(kwrds)))
-    # except:
+    # except Exception:
     #     pass
     # finally:
     #     if conn:
@@ -921,7 +923,7 @@ def update_many_key_values(where, key_values, table_name='mfeats', db_name=None)
     #     c.execute(query)
     #     conn.commit()
     #     conn.close()
-    # except:
+    # except Exception:
     #     pass
     # finally:
     #     if conn:
@@ -960,7 +962,7 @@ def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):
     #     c.execute(query)
     #     conn.commit()
     #     conn.close()
-    # except:
+    # except Exception:
     #     pass
     # finally:
     #     if conn:
