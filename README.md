@@ -26,7 +26,7 @@
 
 ![screenshot](/assets/images/screenshot-002.png)
 
-![screenshot](/assets/images/screenshot-002.png)
+![screenshot](/assets/images/screenshot-003.png)
 
 ## How to install
 
