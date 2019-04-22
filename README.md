@@ -20,6 +20,14 @@
 * Analysing is done by multi-processing and analysed music files' information and waveforms are cached with SQLite database.
 * If you see exclamation icon on the left side of the playlist which means that the track has been moved or deleted. In this case, you can perform the Check File Cosistency on the menu.
 
+## Screenshot
+
+![screenshot](/assets/images/screenshot-001.png)
+
+![screenshot](/assets/images/screenshot-002.png)
+
+![screenshot](/assets/images/screenshot-002.png)
+
 ## How to install
 
 * Just download and install the latest release.
