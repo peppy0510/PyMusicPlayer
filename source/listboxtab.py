@@ -42,6 +42,7 @@ from macroboxlib import TextCtrl
 from macroboxlib import UserInputDialogBox
 from operator import itemgetter
 from utilities import Struct
+from utilities import get_user_appdata_path
 from utilities import get_user_docapp_path
 
 

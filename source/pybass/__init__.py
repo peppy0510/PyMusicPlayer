@@ -55,11 +55,11 @@ for name in TRIAL_MODULES:
     #     pass
 
 
-# from .pybass import *
-# from .pybass_vst import *
-# from .pybassmidi import *
-# from .pybassmix import *
-# from .pytags import *
+from .pybass import *  # noqa
+from .pybass_vst import *  # noqa
+from .pybassmidi import *  # noqa
+from .pybassmix import *  # noqa
+from .pytags import *  # noqa
 
 
 if __name__ == '__main__':

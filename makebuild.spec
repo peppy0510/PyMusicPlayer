@@ -11,9 +11,9 @@ import glob
 import os
 
 
-debug = True
+debug = False
 upx = True
-onefile = True
+onefile = False
 
 
 PYZ = PYZ  # noqa
@@ -94,7 +94,7 @@ if onefile:
     # runtime_tmpdir='%HOMEPATH%\\AppData\\Local\\Temp\\' + name
 else:
     exe = EXE(pyz, a.scripts, name=path.output, icon=path.icon,
-              uac_admin=True, uac_uiaccess=True, upx=upx, strip=None,
+              upx=upx, strip=None,
               debug=debug, console=debug, exclude_binaries=1)
     dist = COLLECT(exe, a.binaries, a.zipfiles, a.datas,
                    upx=upx, strip=None, name=__appname__)

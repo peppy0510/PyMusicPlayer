@@ -39,7 +39,7 @@ from utilities import run_hidden_subprocess
 from utilities import set_process_priority
 
 
-MFEATS_DB = os.path.join(get_user_docapp_path(), 'macroboxplayer.mfeats')
+MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
 MFEATS_VERSION = '1.0.1'

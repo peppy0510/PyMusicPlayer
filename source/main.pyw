@@ -2,7 +2,7 @@
 
 
 __appname__ = 'PyMusicPlayer'
-__version__ = '1.0.51'
+__version__ = '1.1.0'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''

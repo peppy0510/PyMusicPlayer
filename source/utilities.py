@@ -302,21 +302,29 @@ def open_shelves(keys, shelve_path):
 
 
 def set_master_path():
-    filename = 'macroboxplayer'
+    filename = 'settings'
+    # filename = 'macroboxplayer'
     # filename = 'macroboxplayer.db'
     shelve_path = os.path.join(get_user_docapp_path(), filename)
     save_shelve('master_path', os.getcwd(), shelve_path)
 
 
 def get_master_path():
-    filename = 'macroboxplayer'
+    filename = 'settings'
+    # filename = 'macroboxplayer'
     # filename = 'macroboxplayer.db'
     shelve_path = os.path.join(get_user_docapp_path(), filename)
     return open_shelve('master_path', shelve_path)
 
 
+# def get_user_docapp_path():
+#     path = os.path.join(get_user_document_path(), 'muteklab')
+#     if os.path.isdir(path) is False:
+#         os.mkdir(path)
+#     return path
+
 def get_user_docapp_path():
-    path = os.path.join(get_user_document_path(), 'muteklab')
+    path = os.path.join(get_user_appdata_path(), 'PyMusicPlayer')
     if os.path.isdir(path) is False:
         os.mkdir(path)
     return path
@@ -330,6 +338,21 @@ def get_user_document_path():
             return path
         path = os.path.abspath(os.path.join(
             os.path.expanduser(r'~'), r'My Documents'))
+        if os.path.isdir(path):
+            return path
+        return None
+    elif sys.platform.startswith('darwin'):
+        path = os.path.abspath(os.path.join(
+            os.path.expanduser(r'~'), r'Documents'))
+        if os.path.isdir(path):
+            return path
+        return None
+
+
+def get_user_appdata_path():
+    if sys.platform.startswith('win'):
+        path = os.path.abspath(os.path.join(
+            os.path.expanduser('~'), 'AppData', 'Local'))
         if os.path.isdir(path):
             return path
         return None

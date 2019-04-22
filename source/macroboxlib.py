@@ -28,6 +28,7 @@ from utilities import Struct
 from utilities import compress_object
 from utilities import decompress_object
 from utilities import get_user_docapp_path
+from utilities import get_user_appdata_path
 from utilities import open_shelve
 from utilities import open_shelves
 from utilities import save_shelve
@@ -54,7 +55,8 @@ PRODUCT_LICENSE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/license/check/req/'
 
 TITLE = '%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer.db'])
-PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer'])
+# PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer'])
+PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'settings'])
 # PREFERENCE_DB = os.path.sep.join([os.path.expanduser(r'~'), 'AppData', 'Local', 'PyMusicPlayer'])
 # PREFERENCE_DB = os.path.join(os.path.expanduser(r'~'), 'AppData', 'Local', 'PyMusicPlayer', 'settings')
 
