@@ -33,7 +33,6 @@
 ## Demo on YouTube
 
 [![Demo on YouTube](https://img.youtube.com/vi/GWXntjblLWw/default.jpg)](https://youtu.be/GWXntjblLWw)
-
 [![Highlight Demo on YouTube](https://img.youtube.com/vi/v57Ro8mnaP4/default.jpg)](https://youtu.be/v57Ro8mnaP4)
 
 ## How to install
