@@ -7,56 +7,14 @@ email: peppy0510@hotmail.com
 '''
 
 
-# from __future__ import division
-
-
-import os
-import sys
-
-from utilities import get_user_docapp_path
-
-
-MFEATS_DB = os.path.join(get_user_docapp_path(), 'macroboxplayer.mfeats')
-
-
-MFEATS_VERSION = '1.0.1'
-# CLIENT_ADDRESS = ('localhost', 12501)
-# SERVER_ADDRESS = ('localhost', 12502)
-CLIENT_ADDRESS = ('127.0.0.1', 12702)
-SERVER_ADDRESS = ('127.0.0.1', 12703)
-
-WORKING_PATH = os.path.abspath(os.path.dirname(__file__))
-try:
-    packages = os.path.join(sys._MEIPASS, 'packages')
-except Exception:
-    packages = os.path.join(WORKING_PATH, 'packages')
-sys.path.insert(0, packages)
-
-PACKAGED = False
-for v in ('27', '35', '36', '37', '38'):
-    if os.path.isfile('python%s.dll' % (v)):
-        PACKAGED = True
-        break
-
-if sys.platform.startswith('win'):
-    if PACKAGED:
-        PROCESS_NAME = 'mfeats.exe'
-    else:
-        PROCESS_NAME = 'python.exe'
-elif sys.platform.startswith('darwin'):
-    if PACKAGED:
-        PROCESS_NAME = 'mfeats'
-    else:
-        PROCESS_NAME = 'python'
-
-
 import ctypes
-import modpybass as pybass
 import multiprocessing
 import mutagen
 import numpy
-# pybass = pybass.load()
+import os
+import pybass
 import sqlite3
+import sys
 import threading
 import time
 
@@ -71,6 +29,7 @@ from utilities import compress_object
 from utilities import decompress_object  # noqa
 from utilities import get_master_path
 from utilities import get_memory_by_pid
+from utilities import get_user_docapp_path
 from utilities import is_process_running_by_name
 from utilities import is_process_running_by_pid
 from utilities import kill_self_process
@@ -78,6 +37,41 @@ from utilities import makemdx
 from utilities import open_shelves
 from utilities import run_hidden_subprocess
 from utilities import set_process_priority
+
+
+MFEATS_DB = os.path.join(get_user_docapp_path(), 'macroboxplayer.mfeats')
+
+
+MFEATS_VERSION = '1.0.1'
+# CLIENT_ADDRESS = ('localhost', 12501)
+# SERVER_ADDRESS = ('localhost', 12502)
+CLIENT_ADDRESS = ('127.0.0.1', 12702)
+SERVER_ADDRESS = ('127.0.0.1', 12703)
+
+# WORKING_PATH = os.path.abspath(os.path.dirname(__file__))
+# try:
+#     packages = os.path.join(sys._MEIPASS, 'packages')
+# except Exception:
+#     packages = os.path.join(WORKING_PATH, 'packages')
+# sys.path.insert(0, packages)
+
+PACKAGED = hasattr(sys, '_MEIPASS')
+# PACKAGED = False
+# for v in ('27', '35', '36', '37', '38'):
+#     if os.path.isfile('python%s.dll' % (v)):
+#         PACKAGED = True
+#         break
+
+if sys.platform.startswith('win'):
+    if PACKAGED:
+        PROCESS_NAME = 'mfeats.exe'
+    else:
+        PROCESS_NAME = 'python.exe'
+elif sys.platform.startswith('darwin'):
+    if PACKAGED:
+        PROCESS_NAME = 'mfeats'
+    else:
+        PROCESS_NAME = 'python'
 
 
 # import multiprocessing.forking

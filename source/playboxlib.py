@@ -8,7 +8,7 @@
 import audio
 import gc
 import mfeats
-import modpybass as pybass
+# import modpybass as pybass
 import numpy
 import os
 import sys
@@ -21,6 +21,9 @@ from macroboxlib import ListBoxColumn
 from macroboxlib import MakeMusicFileItem
 from macroboxlib import SUPPORTED_AUDIO_TYPE
 from macroboxlib import SetPreference
+# from pybass import bass as pybass
+import pybass
+# import pybass
 # from packages import pybass
 from utilities import Struct
 # from macroboxlib import *
@@ -171,7 +174,12 @@ class AudioControl(threading.Thread):
         # from pybass import pybass_vst
         vst_plugin_name = 'LoudMax64.dll'
         vst_plugin_name = 'LoudMaxLite64.dll'
-        vst_plugin_path = os.path.join(os.path.dirname(__file__), 'packages', vst_plugin_name)
+        # vst_plugin_path = os.path.join(os.path.dirname(__file__), 'packages', vst_plugin_name)
+        vst_plugin_path = os.path.join('assets', 'dlls', vst_plugin_name)
+        if hasattr(sys, '_MEIPASS'):
+            vst_plugin_path = os.path.join(sys._MEIPASS, vst_plugin_path)
+        else:
+            vst_plugin_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), vst_plugin_path)
         # BASS_VST_KEEP_CHANS = 0x00000001
         flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
         self.vstHandle = pybass.BASS_VST_ChannelSetDSP(self.hStream, vst_plugin_path, flags, 0)

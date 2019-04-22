@@ -12,6 +12,7 @@ import json
 import socket
 import threading
 import urllib
+# import urllib2
 import webbrowser
 import wx
 
@@ -58,16 +59,20 @@ class AboutPanel(DialogPanel):
 
         x = imgsize + 23 + 10
         offset = 17
-        label = u'%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
+        # label = u'%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
+        label = u'{}'.format(self.parent.parent.__appname__)
         text = StaticText(self, label=label)
         text.SetFont(font)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
 
         offset += 28
-        label = u'%s %s Version %s build %s'
-        label = label % (
-            PRODUCT_NAME, PRODUCT_EDITION, PRODUCT_VERSION, PRODUCT_BUILD)
+        label = u'{} Version {} build {}'.format(
+            self.parent.parent.__appname__,
+            '.'.join(self.parent.parent.__version__.split('.')[:2]),
+            self.parent.parent.__version__.split('.')[-1])
+        # label = label % (
+        #     PRODUCT_NAME, PRODUCT_EDITION, PRODUCT_VERSION, PRODUCT_BUILD)
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
@@ -79,19 +84,20 @@ class AboutPanel(DialogPanel):
         # text.SetPosition((x, offset))
 
         offset += 20
-        label = u'Powered by wxpython, scipy, numpy, un4seen bass.'
+        # label = u'Powered by wxPython, scipy, numpy, un4seen BASS, LoudMax VST.'
+        label = u'Powered by wxPython, scipy, numpy, un4seen BASS.'
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
 
         offset += 20
-        label = u'Author:  Taehong Kim'
+        label = u'Author: {}'.format(self.parent.parent.__author__)
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
 
         offset += 20
-        label = u'Contact:  peppy0510@hotmail.com'
+        label = u'Contact: {}'.format(self.parent.parent.__email__)
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))

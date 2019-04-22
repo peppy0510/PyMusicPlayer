@@ -1,11 +1,13 @@
 # encoding: utf-8
 
 
+__appname__ = 'PyMusicPlayer'
 __version__ = '1.0.51'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''
-__doc__ = ''''''
+__doc__ = '''
+'''
 
 
 import os
@@ -15,7 +17,7 @@ import sys
 # sys.path.insert(0, packages)
 
 import mfeats
-import modpybass as pybass
+# import modpybass as pybass
 import multiprocessing
 import wx
 
@@ -37,6 +39,7 @@ from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
 from playbox import PlayBox
+from pybass import pybass
 from utilities import Struct
 from utilities import kill_existing_instances
 from utilities import kill_self_process
@@ -187,6 +190,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
 class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
 
+    __appname__ = __appname__
+    __version__ = __version__
+    __author__ = __author__
+    __email__ = __email__
+    __license__ = __license__
+    __doc__ = __doc__
+
     def __init__(self, parent=None, initfile=None):
 
         KeymapPreset.__init__(self)
@@ -199,7 +209,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         # style=wx.CLIP_CHILDREN|wx.FRAME_SHAPED|wx.TAB_TRAVERSAL|wx.BORDER_DEFAULT)
 
         self.initfile = initfile
-        self.SetTitle(TITLE)
+        self.SetTitle(self.__appname__)
         self.DialogBox = None
         self.SetTransparent(255)
         self.SetMinSize((600, 450))

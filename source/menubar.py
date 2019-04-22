@@ -16,6 +16,7 @@ from dialogbox import AboutBox
 from dialogbox import CheckItemsConsistencyConfirmBox
 from dialogbox import DialogBox
 from dialogbox import DialogPanel
+from wininstance import get_current_real_cwq
 # from dialogbox import LicenseBox
 from dialogbox import UpdateBox
 from listbox import FileOpenDialog
@@ -519,10 +520,24 @@ class MacroBoxPreference():
         return self.playbox_only
 
     def SetMainFrameIcon(self):
+        icon_path = os.path.join('assets', 'icon', 'icon.ico')
+
+        icon = wx.Icon()
+        import sys
+        if hasattr(sys, '_MEIPASS'):
+            icon_path = os.path.join(sys._MEIPASS, icon_path)
+        else:
+            cwd = os.path.dirname(get_current_real_cwq())
+            icon_path = os.path.join(cwd, icon_path)
+
+        # print(self.icon_path)
+        icon.CopyFromBitmap(wx.Bitmap(icon_path, wx.BITMAP_TYPE_ANY))
+        self.SetIcon(icon)
+
         # path = os.path.join('packages', 'icon-macrobox.ico')
         # icon = wx.Icon(path, wx.BITMAP_TYPE_ICO)
-        icon = images.macrobox_icon64.GetIcon()
-        self.SetIcon(icon)
+        # icon = images.macrobox_icon64.GetIcon()
+        # self.SetIcon(icon)
 
     def RestoreMainFrameRect(self):
         rect = GetPreference('rect')
@@ -1599,7 +1614,7 @@ class MacroBoxMenuBar():
     #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnAbout(self, event):
-        self.DialogBox = AboutBox(None)
+        self.DialogBox = AboutBox(self)
         x, y, w, h = self.GetRect()
         width, height = self.DialogBox.GetSize()
         self.DialogBox.SetRect(
@@ -1812,7 +1827,8 @@ class MenuBar(wx.MenuBar):
 
         self.menuHelp.AppendSeparator()
 
-        self.itemAbout = wx.MenuItem(self.menuHelp, wx.ID_ANY, u'About MACROBOX', wx.EmptyString, wx.ITEM_NORMAL)
+        self.itemAbout = wx.MenuItem(
+            self.menuHelp, wx.ID_ANY, u'About {}'.format(self.parent.__appname__), wx.EmptyString, wx.ITEM_NORMAL)
         self.menuHelp.Append(self.itemAbout)
 
         self.Append(self.menuHelp, u'Help')

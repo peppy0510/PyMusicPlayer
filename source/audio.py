@@ -11,14 +11,6 @@ import os
 import sys
 
 
-# try:
-#     packages = os.path.join(sys._MEIPASS, 'packages')
-# except Exception:
-#     packages = os.path.join('packages')
-
-# sys.path.insert(0, packages)
-
-
 import codecs
 import ctypes
 import math
@@ -26,8 +18,7 @@ import mutagen
 import mutagen.id3
 import mutagen.mp3
 import numpy
-# import packctrl
-import modpybass as pybass
+import pybass
 import struct
 
 from PIL import Image
@@ -35,12 +26,6 @@ from copy import deepcopy
 from scipy import signal
 from scipy import where
 from utilities import makemdx  # noqa
-
-
-# def platform_sign():
-#     if platform.architecture()[0] == '':
-#         return ''
-#     return ''
 
 
 def find_max_point(inlist):
