@@ -28,6 +28,8 @@
 
 ![screenshot](/assets/images/screenshot-003.png)
 
+![screenshot](/assets/images/screenshot-004.png)
+
 ## How to install
 
 * Just download and install the latest release.
