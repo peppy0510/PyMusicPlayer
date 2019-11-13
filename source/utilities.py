@@ -13,6 +13,7 @@ import itertools
 import operator
 import os
 import psutil
+import pywintypes  # noqa # pre-load dll for win32
 import re
 import shelve
 import socket

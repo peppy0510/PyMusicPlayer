@@ -166,7 +166,7 @@ class InnerList():
         self.items = []
         self.lastSortedColumn = [None, None]
         self.focus = Struct(item=-1, shift=-1)
-        self.Id = time.clock()
+        self.Id = time.process_time()
         if self.lastSortedColumn == [None, None]:
             idx = [i for i, v in enumerate(self.columns) if v.key == 'order'][0]
             self.lastSortedColumn = [idx, 1]
