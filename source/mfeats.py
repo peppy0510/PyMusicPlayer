@@ -181,8 +181,8 @@ def mfeats_single(path, queue=None):
     if int(frame_length) % 8 != 0:
         frame_length += (8 - int(frame_length) % 8)
     gap = total_frame_length / frame_length - waveform_length
-    waveform = numpy.linspace(0, 0, waveform_length + gap)
-    highlight_raw_points = numpy.linspace(0, 0, waveform_length + gap)
+    waveform = numpy.linspace(0, 0, int(round(waveform_length + gap)))
+    highlight_raw_points = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
     jump = 1.0 * frame_length / waveform_oversampling
 
