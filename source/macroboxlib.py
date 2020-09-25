@@ -27,8 +27,8 @@ from utilities import PipeMessenger
 from utilities import Struct
 from utilities import compress_object
 from utilities import decompress_object
-from utilities import get_user_docapp_path
 from utilities import get_user_appdata_path
+from utilities import get_user_docapp_path
 from utilities import open_shelve
 from utilities import open_shelves
 from utilities import save_shelve
@@ -1396,13 +1396,13 @@ class RectRect():
         # self.buffer.lap = 0
         self.SetRectPre()
         width, height = self.GetSize()
-        # self.buffer.bmp = wx.EmptyBitmap(width, height)
-        self.buffer.bmp = wx.Bitmap(width, height)
-        dc = wx.BufferedDC(None, self.buffer.bmp)
-        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
-        dc.SetBackgroundMode(wx.TRANSPARENT)
-        dc.Clear()
-        self.SetRectDraw(dc)
+        if width > 0 and height > 0:
+            self.buffer.bmp = wx.Bitmap(width, height)
+            dc = wx.BufferedDC(None, self.buffer.bmp)
+            dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+            dc.SetBackgroundMode(wx.TRANSPARENT)
+            dc.Clear()
+            self.SetRectDraw(dc)
         self.reInitBuffer = False
 
     def OnSize(self, event):
