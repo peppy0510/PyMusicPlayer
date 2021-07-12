@@ -27,7 +27,6 @@ def load(name='bass'):
     filename = name.join(extension)
     # path = os.path.join(lib, 'dlls', architecture, filename)
     path = os.path.join(assets, 'dlls', filename)
-    # print(path)
 
     if os.path.isfile(path):
         try:
