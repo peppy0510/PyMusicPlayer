@@ -142,12 +142,14 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.SetRect((0, 0, w, pbh + sph))
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
-        if w < 740:
+        # if w < 740:
+        left_panel_min_width = 718
+        if w < left_panel_min_width:
             left_panel_width = 0
             right_panel_width = 0
         else:
             import math
-            left_panel_width = math.ceil(160 + (w - 740) * 0.333)
+            left_panel_width = math.ceil(160 + (w - left_panel_min_width) * 0.333)
             right_panel_width = 0
         self.ListBox.SetRect((
             left_panel_width,
