@@ -179,7 +179,8 @@ class AudioControl(threading.Thread):
         if hasattr(sys, '_MEIPASS'):
             vst_plugin_path = os.path.join(sys._MEIPASS, vst_plugin_path)
         else:
-            vst_plugin_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), vst_plugin_path)
+            vst_plugin_path = os.path.join(os.path.dirname(
+                os.path.dirname(__file__)), vst_plugin_path)
         # BASS_VST_KEEP_CHANS = 0x00000001
         flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
         self.vstHandle = pybass.BASS_VST_ChannelSetDSP(self.hStream, vst_plugin_path, flags, 0)
@@ -766,13 +767,19 @@ class PlayBoxControl():
         audio.fforward(self.cue.hStream, fffr)
 
     def OnPrev(self):
+        # is_playing = self.IsPlaying()
         retult = self.PlayAndFocusCueFileAround(-1)
         self.FocusPlayingItem()
+        # if not is_playing:
+        #     self.OnPause()
         return retult
 
     def OnNext(self):
+        # is_playing = self.IsPlaying()
         result = self.PlayAndFocusCueFileAround(1)
         self.FocusPlayingItem()
+        # if not is_playing:
+        #     self.OnPause()
         return result
 
     def FocusPlayingItem(self):

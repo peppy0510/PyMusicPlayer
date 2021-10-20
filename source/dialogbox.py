@@ -12,7 +12,6 @@ import json
 import socket
 import threading
 import urllib
-# import urllib2
 import webbrowser
 import wx
 
@@ -35,6 +34,7 @@ from macroboxlib import PRODUCT_UPDATE_CHECK_URL
 from macroboxlib import PRODUCT_VERSION
 from macroboxlib import SetPreference
 from macroboxlib import StaticText
+# import urllib2
 
 
 class AboutPanel(DialogPanel):
@@ -341,9 +341,11 @@ class UpdateCheckThread(threading.Thread):
         try:
             data = urllib.urlencode(values)
             self.step = 1
-            req = urllib2.Request(url, data)
+            req = urllib.request(url, data)
+            # req = urllib2.Request(url, data)
             self.step = 2
-            response = urllib2.urlopen(req)
+            response = urllib.urlopen(req)
+            # response = urllib2.urlopen(req)
             self.step = 3
             result = response.read()
             self.step = 4
@@ -571,6 +573,7 @@ class UpdateBox(UpdateBoxCommon):
 
     def OnClose(self, event):
         self.stop = True
-        if self.Thread.isAlive():
-            self.Thread._Thread__stop()
+        if self.Thread.is_alive():
+            # self.Thread._Thread__stop()
+            self.Thread._stop()
         self.Destroy()

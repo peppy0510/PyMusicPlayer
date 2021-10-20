@@ -809,6 +809,14 @@ class ListBoxList(RectBox):
         namespace = self.parent.parent.parent.GetNameSpaceByRawKeyFlag(
             event.RawKeyFlags, ctrl, event.ShiftDown)
 
+        if namespace == 'playlist_toggle':
+            if self.parent.parent.parent.IsListTabShowOn():
+                self.parent.parent.parent.SetListTabShowOff()
+                self.parent.parent.parent.MenuBar.itemListTabShow.Check(False)
+            else:
+                self.parent.parent.parent.SetListTabShowOn()
+                self.parent.parent.parent.MenuBar.itemListTabShow.Check()
+
         if namespace == 'open_id3tageditor':
             self.OpenItemEditBox(event)
 

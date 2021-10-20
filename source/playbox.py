@@ -1212,13 +1212,22 @@ class PlayBoxWave(RectBox):
             filled_wave = 1.0 * filled_wave * 0.5 * h / max(filled_wave)
         filled_wave = numpy.round(filled_wave)
         self.wave = [(x, cy)] + list(zip(range(x, x + w, 1), filled_wave + cy))\
-            + [(x + w, cy)] + [(x + w, cy)] + list(zip(range(x, x + w, 1), -filled_wave + cy))[::-1] + [(x, cy)]
+            + [(x + w, cy)] + [(x + w, cy)] + \
+            list(zip(range(x, x + w, 1), -filled_wave + cy))[::-1] + [(x, cy)]
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.parent.HasToSkipEvent() is False:
             self.HandleEventLeftIsDown(event)
             self.HandleEventHighlight(event)
         self.DirectDraw()
+
+    def CATCH_EVT_MOUSEWHEEL(self, event):
+        if self.onClient is False:
+            return
+        if event.WheelRotation > 0:
+            self.parent.OnFastRewind()
+        else:
+            self.parent.OnFastForward()
 
     def HandleEventHighlight(self, event):
         if event.rectIdx is None:

@@ -2,7 +2,7 @@
 
 
 __appname__ = 'PyMusicPlayer'
-__version__ = '1.1.0'
+__version__ = '1.1.1'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''
@@ -16,8 +16,8 @@ import sys
 # packages = os.path.join(os.path.split(os.path.split(os.path.abspath(__file__))[0])[0], 'venv', 'Lib', 'site-packages')
 # sys.path.insert(0, packages)
 
+import math
 import mfeats
-# import modpybass as pybass
 import multiprocessing
 import wx
 
@@ -49,7 +49,7 @@ from utilities import set_process_priority
 # from utilities import is_ghost_runnung
 # from dialogbox import ProductLogRequest
 # from macroboxlib import FileExecutionMonitor
-
+# import modpybass as pybass
 
 LOGGING = False
 
@@ -77,6 +77,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         else:
             self.MFEATS = MFEATS_Scheduler(self)
 
+        self.showListTab = True
         self.PlayBox = PlayBox(self)
         self.ListBox = ListBox(self)
         self.ListTab = ListBoxTab(self)
@@ -143,13 +144,18 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
         # if w < 740:
-        left_panel_min_width = 718
-        if w < left_panel_min_width:
+        if self.parent.IsListTabShowOn():
+            left_panel_min_activate_width = 718
+            left_panel_min_activate_width = 0
+        else:
+            left_panel_min_activate_width = 999999
+
+        if w < left_panel_min_activate_width:
             left_panel_width = 0
             right_panel_width = 0
         else:
-            import math
-            left_panel_width = math.ceil(160 + (w - left_panel_min_width) * 0.333)
+            left_panel_width = math.ceil(160 + (w - left_panel_min_activate_width) * 0.333)
+            left_panel_width = 180
             right_panel_width = 0
         self.ListBox.SetRect((
             left_panel_width,

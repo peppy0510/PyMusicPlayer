@@ -7,6 +7,7 @@
 
 import audio
 import images
+import io
 import macroboxstyle
 import os
 import webbrowser
@@ -143,7 +144,8 @@ class WebLinkEditorPanel(DialogPanel):
             posX = 10
             posY += 30
             self.WebName[idx].SetRect((posX, posY - 5, 100, 22))
-            self.WebLink[idx].SetRect((posX + 100 + 5, posY - 5, width - posX * 2 - 100 + 3 - 180 + 10, 22))
+            self.WebLink[idx].SetRect((posX + 100 + 5, posY - 5, width -
+                                       posX * 2 - 100 + 3 - 180 + 10, 22))
             posX = self.WebLink[idx].GetPosition().x + self.WebLink[idx].GetSize().width
             for i in range(2):
                 self.QueryFields[idx][i].SetRect((posX + 5, posY - 5, 80, 22))
@@ -179,13 +181,18 @@ class KeymapPreset():
 
     def __init__(self):
         preset = GetPreference('keymap_preset')
+        default_preset = self.GetDefaultKeymap()
         if preset is None:
-            self.keymap_preset = self.GetDefaultKeymap()
+            self.keymap_preset = default_preset
         else:
             self.keymap_preset = preset
 
+        if len(preset) != default_preset:
+            self.keymap_preset = default_preset
+
     def GetNameSpaceByRawKeyFlag(self, keyflag, ctrl=False, shift=False):
-        vv = [v for v in self.keymap_preset if v[2] is not None and (v[2][0] == keyflag or v[2][1] == keyflag)]
+        vv = [v for v in self.keymap_preset if v[2] is not None and (
+            v[2][0] == keyflag or v[2][1] == keyflag)]
         if len(vv) == 0:
             return None
         vv = [v for v in vv if v[3] == ctrl and v[4] == shift]
@@ -203,11 +210,17 @@ class KeymapPreset():
         return self.keymap_preset
 
     def GetDefaultKeymap(self):
-        default_keymap = (('play_toggle', 'Spacebar'),
-                          ('previous_track', 'W'), ('next_track', 'E'),
-                          ('loop_toggle', 'R'), ('highlight_toggle', 'Q'),
-                          ('highlight_decrease', '1'), ('highlight_increase', '2'),
-                          ('open_id3tageditor', '`'))
+        default_keymap = (
+            ('play_toggle', 'Spacebar'),
+            ('previous_track', 'W'),
+            ('next_track', 'E'),
+            ('loop_toggle', 'R'),
+            ('highlight_toggle', 'Q'),
+            ('highlight_decrease', '1'),
+            ('highlight_increase', '2'),
+            ('playlist_toggle', 'A'),
+            ('open_id3tageditor', '`')
+        )
 
         keymap_preset = list()
         for i in range(len(default_keymap)):
@@ -226,11 +239,17 @@ class KeymapPreset():
         return keymap_preset
 
     def GetKeymapLabels(self):
-        keymap_labels = (u'Play and Pause', u'Play previous track',
-                         u'Play next track', u'Loop toggle',
-                         u'Highlight toggle',
-                         u'Highlight duration -', u'Highlight duration +',
-                         u'Open ID3Tag Editor')
+        keymap_labels = (
+            u'Play and Pause',
+            u'Play previous track',
+            u'Play next track',
+            u'Loop toggle',
+            u'Highlight toggle',
+            u'Highlight duration -',
+            u'Highlight duration +',
+            u'Playlist toggle',
+            u'Open ID3Tag Editor'
+        )
         return keymap_labels
 
     def String2BaseRawKeyFlag(self, string):
@@ -433,6 +452,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
 class MacroBoxPreference():
 
     def __init__(self):
+        self.listtab_show = False
         self.playbox_only = False
         self.playbox_top_show = False
         self.playbox_side_show = False
@@ -459,6 +479,19 @@ class MacroBoxPreference():
 
     def IsPlayerSideShowOn(self):
         return self.playbox_side_show
+
+    def SetListTabShowOn(self):
+        self.listtab_show = True
+        # self.OnSize()
+        self.MainPanel.OnSize()
+
+    def SetListTabShowOff(self):
+        self.listtab_show = False
+        # self.OnSize()
+        self.MainPanel.OnSize()
+
+    def IsListTabShowOn(self):
+        return self.listtab_show
 
     def SetPlayerTopShowOn(self):
         self.playbox_top_show = True
@@ -507,8 +540,10 @@ class MacroBoxPreference():
     def SetPlayerOnlyModeOff(self):
         self.playbox_only = False
         style = self.GetWindowStyle()
-        self.SetWindowStyle(style ^ wx.SYSTEM_MENU ^ wx.MINIMIZE_BOX ^ wx.MAXIMIZE_BOX ^ wx.CLOSE_BOX ^ wx.CAPTION)
-        self.SetWindowStyle(style | wx.SYSTEM_MENU | wx.MINIMIZE_BOX | wx.MAXIMIZE_BOX | wx.CLOSE_BOX | wx.CAPTION)
+        self.SetWindowStyle(style ^ wx.SYSTEM_MENU ^ wx.MINIMIZE_BOX ^
+                            wx.MAXIMIZE_BOX ^ wx.CLOSE_BOX ^ wx.CAPTION)
+        self.SetWindowStyle(style | wx.SYSTEM_MENU | wx.MINIMIZE_BOX |
+                            wx.MAXIMIZE_BOX | wx.CLOSE_BOX | wx.CAPTION)
         self.MenuBar.Show()
         self.SetMaxSize((-1, -1))
         self.SetMinSize((550, 450))
@@ -560,6 +595,7 @@ class MacroBoxPreference():
             auto_analyzer_on=self.MainPanel.MFEATS.auto_analyzer_on)
         self.MainPanel.ListBox.SetFilterOffAll()
         playbox_show = Struct(top=self.IsPlayerTopShowOn(), side=self.IsPlayerSideShowOn())
+        listtab_show = self.IsListTabShowOn()
 
         SetPreferences(((('rect', self.GetRect()), ('playcue', playcue),
                          ('highlight_duration_type', self.MainPanel.PlayBox.GetHighlightDurationTypeId()),
@@ -569,6 +605,7 @@ class MacroBoxPreference():
                          ('selectedlist', self.MainPanel.ListBox.selectedList),
                          ('innerlist', self.MainPanel.ListBox.innerList),
                          ('mfeats_scheduler', mfeats_scheduler),
+                         ('listtab_show', listtab_show),
                          ('playbox_show', playbox_show))))
 
     def LoadPreferences(self):
@@ -590,6 +627,18 @@ class MacroBoxPreference():
                 self.MenuBar.itemPlayerSideShow.Check()
             else:
                 self.SetPlayerSideShowOff()
+
+        listtab_show = GetPreference('listtab_show')
+        if listtab_show is None:
+            self.SetListTabShowOn()
+            self.MenuBar.itemListTabShow.Check()
+        else:
+            if listtab_show:
+                self.SetListTabShowOn()
+                self.MenuBar.itemListTabShow.Check()
+            else:
+                self.SetListTabShowOff()
+
         if GetPreference('always_on_top'):
             self.MenuBar.itemAlwaysOnTop.Check()
             self.SetAlwaysOnTopOn()
@@ -736,7 +785,8 @@ class AppearancePanel(wx.Panel):
         label = u'Font'
         text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
         text.SetRect((pad + 20, offset + 3, 180, -1))
-        self.TracklistFont = wx.FontPickerCtrl(self, style=wx.FNTP_FONTDESC_AS_LABEL | wx.ALIGN_LEFT)
+        self.TracklistFont = wx.FontPickerCtrl(
+            self, style=wx.FNTP_FONTDESC_AS_LABEL | wx.ALIGN_LEFT)
         self.TracklistFont.SetRect((pad + 200 + 15, offset, 165 + 2, 24))
         self.Bind(wx.EVT_FONTPICKER_CHANGED, self.OnTracklistFont, self.TracklistFont)
 
@@ -1415,7 +1465,8 @@ class TutorialPanel(DialogPanel):
             self.image.Destroy()
         path = os.path.join(packages, self.tutorials[page])
         data = open(path, "rb").read()
-        stream = StringIO.StringIO(data)
+        # stream = StringIO.StringIO(data)
+        stream = io.BytesIO(data)
         bmp = wx.BitmapFromImage(wx.ImageFromStream(stream))
         width, height = self.GetSize()
         self.image = wx.StaticBitmap(self, -1, bmp, pos=(-3, -3), size=(width, height))
@@ -1498,6 +1549,7 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnCheckItemsConsistency, self.MenuBar.itemCheckItemsConsistency)
         self.Bind(wx.EVT_MENU, self.OnPlayerTopShow, self.MenuBar.itemPlayerTopShow)
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
+        self.Bind(wx.EVT_MENU, self.OnListTabShow, self.MenuBar.itemListTabShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
         # self.Bind(wx.EVT_MENU, self.OnScriptEditor, self.MenuBar.itemScriptEditor)
         # self.Bind(wx.EVT_MENU, self.OnHelp, self.MenuBar.itemHelp)
@@ -1590,6 +1642,12 @@ class MacroBoxMenuBar():
                 self.MenuBar.itemColorThemeMenu.MenuItems[i].Check()
             else:
                 self.MenuBar.itemColorThemeMenu.MenuItems[i].Check(False)
+
+    def OnListTabShow(self, event):
+        if event.IsChecked():
+            self.SetListTabShowOn()
+        else:
+            self.SetListTabShowOff()
 
     def OnPlayerTopShow(self, event):
         if event.IsChecked():
@@ -1747,7 +1805,8 @@ class MenuBar(wx.MenuBar):
 
         self.menuFile.AppendSeparator()
 
-        self.itemExit = wx.MenuItem(self.menuFile, wx.ID_ANY, u'Quit', wx.EmptyString, wx.ITEM_NORMAL)
+        self.itemExit = wx.MenuItem(self.menuFile, wx.ID_ANY, u'Quit',
+                                    wx.EmptyString, wx.ITEM_NORMAL)
         self.menuFile.Append(self.itemExit)
 
         self.Append(self.menuFile, u'File')
@@ -1755,15 +1814,25 @@ class MenuBar(wx.MenuBar):
     def InitMenuView(self):
         self.menuView = wx.Menu()
 
-        self.itemPlayerTopShow = wx.MenuItem(self.menuView, wx.ID_ANY, '&Spectrum', wx.EmptyString, wx.ITEM_CHECK)
-        if self.parent.IsPlayerTopShowOn():
-            self.itemPlayerTopShow.check()
-        self.menuView.Append(self.itemPlayerTopShow)
+        self.itemListTabShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, '&Playlist', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuView.Append(self.itemListTabShow)
+        if self.parent.IsListTabShowOn():
+            self.itemListTabShow.Check()
 
-        self.itemPlayerSideShow = wx.MenuItem(self.menuView, wx.ID_ANY, 'Album Image', wx.EmptyString, wx.ITEM_CHECK)
-        if self.parent.IsPlayerSideShowOn():
-            self.itemPlayerSideShow.check()
+        self.menuView.AppendSeparator()
+
+        self.itemPlayerTopShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, '&Spectrum', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuView.Append(self.itemPlayerTopShow)
+        if self.parent.IsPlayerTopShowOn():
+            self.itemPlayerTopShow.Check()
+
+        self.itemPlayerSideShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, 'Album Image', wx.EmptyString, wx.ITEM_CHECK)
         self.menuView.Append(self.itemPlayerSideShow)
+        if self.parent.IsPlayerSideShowOn():
+            self.itemPlayerSideShow.Check()
 
         # self.menuView.AppendSeparator()
 
@@ -1788,13 +1857,15 @@ class MenuBar(wx.MenuBar):
             title = '%2dbar (Approx %2dseconds)' % (item * 2 / 4, item)
             self.itemHighlightDurationMenu.Append(wx.MenuItem(
                 self.itemHighlightDurationMenu, 200 + i + 1, title, wx.EmptyString, wx.ITEM_CHECK))
-            self.parent.Bind(wx.EVT_MENU, self.parent.OnHighlightDuration, self.itemHighlightDurationMenu.MenuItems[i])
+            self.parent.Bind(wx.EVT_MENU, self.parent.OnHighlightDuration,
+                             self.itemHighlightDurationMenu.MenuItems[i])
         # value = self.parent.MainPanel.PlayBox.GetHighlightStaticPeriodTime()
         # idx = [i for i, v in enumerate(self.highlightDurationItems) if value == v][0]
         self.menuOption.Append(wx.ID_ANY, u'Highlight Duration', self.itemHighlightDurationMenu)
         self.menuOption.AppendSeparator()
 
-        self.itemAutoAnalyze = wx.MenuItem(self.menuOption, wx.ID_ANY, u'Auto Analyze', wx.EmptyString, wx.ITEM_CHECK)
+        self.itemAutoAnalyze = wx.MenuItem(
+            self.menuOption, wx.ID_ANY, u'Auto Analyze', wx.EmptyString, wx.ITEM_CHECK)
         self.menuOption.Append(self.itemAutoAnalyze)
         if self.parent.MainPanel.MFEATS.IsAutoAnalyzerOn():
             self.itemAutoAnalyze.Check()
@@ -1805,7 +1876,8 @@ class MenuBar(wx.MenuBar):
 
         self.menuOption.AppendSeparator()
 
-        self.itemPreference = wx.MenuItem(self.menuOption, wx.ID_ANY, u'Preference', wx.EmptyString, wx.ITEM_NORMAL)
+        self.itemPreference = wx.MenuItem(
+            self.menuOption, wx.ID_ANY, u'Preference', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuOption.Append(self.itemPreference)
 
         self.Append(self.menuOption, u"Option")
@@ -1822,7 +1894,8 @@ class MenuBar(wx.MenuBar):
         #   wx.ID_ANY, u'License', wx.EmptyString, wx.ITEM_NORMAL)
         # self.menuHelp.Append(self.itemLicense)
 
-        self.itemUpdate = wx.MenuItem(self.menuHelp, wx.ID_ANY, u'Check for Update', wx.EmptyString, wx.ITEM_NORMAL)
+        self.itemUpdate = wx.MenuItem(self.menuHelp, wx.ID_ANY,
+                                      u'Check for Update', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuHelp.Append(self.itemUpdate)
 
         self.menuHelp.AppendSeparator()

@@ -1023,7 +1023,8 @@ class MFEATS_JOB_Scheduler(threading.Thread):
             return
         for i in range(len(self.proclist) - 1, -1, -1):
             if self.proclist[i].proc.is_alive() is False:
-                self.proclist[i].proc._Thread__stop()
+                # self.proclist[i].proc._Thread__stop()
+                self.proclist[i].proc._stop()
                 this = self.proclist.pop(i)
                 self.Messenger.send_message(this.path, 'macrobox_mfeats')
                 # self.Messenger.send_message(this.path, CLIENT_ADDRESS)
@@ -1086,11 +1087,13 @@ class MFEATS_JOB_Scheduler(threading.Thread):
         self.Messenger.send_message('terminating', 'macrobox_mfeats')
         # self.Messenger.send_message('terminating', CLIENT_ADDRESS)
         self.Messenger.terminate()
-        self.Messenger._Thread__stop()
+        # self.Messenger._Thread__stop()
+        self.Messenger._stop()
         for i in range(len(self.proclist)):
             self.proclist[i].proc.join()
         for i in range(len(self.proclist)):
-            self.proclist[i].proc._Thread__stop()
+            # self.proclist[i].proc._Thread__stop()
+            self.proclist[i].proc._stop()
         pybass.BASS_Free()
         kill_self_process()
 
