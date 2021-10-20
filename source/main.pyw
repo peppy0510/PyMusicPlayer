@@ -19,6 +19,8 @@ import sys
 import math
 import mfeats
 import multiprocessing
+import threading
+import time
 import wx
 
 from dialogbox import AutoCheckUpdate
@@ -29,6 +31,7 @@ from listbox import StatusBox
 from macroboxlib import BorderBoxH
 from macroboxlib import EVENT_Scheduler
 from macroboxlib import EventDistributor
+from macroboxlib import GetPreference
 from macroboxlib import MFEATS_Network_Scheduler
 from macroboxlib import MFEATS_Scheduler
 from macroboxlib import PopupMenuEventCatcher
@@ -243,6 +246,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         # self.LicenseCheckTimer = LicenseCheckTimer(self)
         self.Show()
         self.LoadInitFile()
+        self.GauranteeAlwaysOnTop()
         # ProductLogRequest()
         # self.FileExecutionMonitor = FileExecutionMonitor(self)
         # self.OnAbout(None)

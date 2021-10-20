@@ -170,6 +170,12 @@ class PlayBox(RectBox, PlayBoxControl):
             self.OnNext()
             self.SelectPlayingItem()
 
+        if namespace == 'fast_forward':
+            self.OnFastForward()
+
+        if namespace == 'fast_backward':
+            self.OnFastRewind()
+
         # if isSPKD is False and event.KeyCode in (49, 50, 51, 52, 53): # 1 2 3 4 5
         if namespace == 'highlight_increase' or namespace == 'highlight_decrease':
             dutaionTypeId = self.GetHighlightDurationTypeId()

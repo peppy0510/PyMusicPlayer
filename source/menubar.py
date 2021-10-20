@@ -10,6 +10,8 @@ import images
 import io
 import macroboxstyle
 import os
+import threading
+import time
 import webbrowser
 import wx
 
@@ -214,6 +216,8 @@ class KeymapPreset():
             ('play_toggle', 'Spacebar'),
             ('previous_track', 'W'),
             ('next_track', 'E'),
+            ('fast_forward', 'D'),
+            ('fast_backward', 'S'),
             ('loop_toggle', 'R'),
             ('highlight_toggle', 'Q'),
             ('highlight_decrease', '1'),
@@ -240,15 +244,17 @@ class KeymapPreset():
 
     def GetKeymapLabels(self):
         keymap_labels = (
-            u'Play and Pause',
-            u'Play previous track',
-            u'Play next track',
-            u'Loop toggle',
-            u'Highlight toggle',
-            u'Highlight duration -',
-            u'Highlight duration +',
-            u'Playlist toggle',
-            u'Open ID3Tag Editor'
+            'Play and Pause',
+            'Play previous track',
+            'Play next track',
+            'Fast forward',
+            'Fast backward',
+            'Loop toggle',
+            'Highlight toggle',
+            'Highlight duration -',
+            'Highlight duration +',
+            'Playlist toggle',
+            'Open ID3Tag Editor'
         )
         return keymap_labels
 
@@ -361,7 +367,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         pad = -30
         idx = 1
 
-        for i, label in enumerate(labels[:4]):
+        for i, label in enumerate(labels[:6]):
             self.Labels += [StaticText(self, id=idx, label=label, style=wx.ALIGN_RIGHT)]
             self.Labels[-1].SetRect((pad + 20, offset + 3, 150, -1))
             self.Labels[-1].Bind(wx.EVT_LEFT_DOWN, self.OnRemoveValue)
@@ -374,7 +380,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
 
         offset = 20
         pad = 220
-        for i, label in enumerate(labels[4:]):
+        for i, label in enumerate(labels[6:]):
             self.Labels += [StaticText(self, id=idx, label=label, style=wx.ALIGN_RIGHT)]
             self.Labels[-1].SetRect((pad + 20, offset + 3, 150, -1))
             self.Labels[-1].Bind(wx.EVT_LEFT_DOWN, self.OnRemoveValue)
@@ -392,7 +398,8 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         self.DefaultButton.Bind(wx.EVT_BUTTON, self.OnDefaultButton)
 
     def OnSize(self, event):
-        pass
+        width, height = self.parent.parent.GetClientSize()
+        self.SetSize((width - 16, height - 78))
 
     def OnClose(self, event):
         keymap_preset = list()
@@ -449,6 +456,20 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
                 self.UserInput[i].SetValue('')
 
 
+class GauranteeAlwaysOnTopThread(threading.Thread):
+    def __init__(self, parent):
+        threading.Thread.__init__(self)
+        self.parent = parent
+        self.start()
+
+    def run(self):
+        time.sleep(1)
+        if GetPreference('always_on_top'):
+            self.parent.SetAlwaysOnTopOff()
+            time.sleep(0.1)
+            self.parent.SetAlwaysOnTopOn()
+
+
 class MacroBoxPreference():
 
     def __init__(self):
@@ -468,6 +489,14 @@ class MacroBoxPreference():
         self.SetWindowStyle(style ^ wx.STAY_ON_TOP)
         self.SetWindowStyle(style | wx.STAY_ON_TOP)
         SetPreference('always_on_top', True)
+
+    def SetAlwaysOnTopOff(self):
+        style = self.GetWindowStyle()
+        self.SetWindowStyle(style ^ wx.STAY_ON_TOP)
+        SetPreference('always_on_top', False)
+
+    def GauranteeAlwaysOnTop(self):
+        GauranteeAlwaysOnTopThread(self)
 
     def SetPlayerSideShowOn(self):
         self.playbox_side_show = True
@@ -512,11 +541,6 @@ class MacroBoxPreference():
             self.SetMaxSize((-1, height)) + 10
             self.SetSize((w, height))
         self.OnSize()
-
-    def SetAlwaysOnTopOff(self):
-        style = self.GetWindowStyle()
-        self.SetWindowStyle(style ^ wx.STAY_ON_TOP)
-        SetPreference('always_on_top', False)
 
     def IsPlayerTopShowOn(self):
         return self.playbox_top_show
@@ -642,6 +666,7 @@ class MacroBoxPreference():
         if GetPreference('always_on_top'):
             self.MenuBar.itemAlwaysOnTop.Check()
             self.SetAlwaysOnTopOn()
+
         innerList = GetPreference('innerlist')
         if innerList is not None:
             self.MainPanel.ListBox.innerList = innerList
@@ -1291,10 +1316,12 @@ class PreferenceMFEATSPanel(DialogPanel):
 
     def OnSize(self, event):
         width, height = self.parent.parent.GetClientSize()
+        self.SetSize((width - 16, height - 78))
         # x, y, w, h = self.VectorscopeFPS.GetRect()
         x, y, w, h = self.PlayerTitleFormat[-1].GetRect()
         # x, y, w, h = self.DefaultPlayer.GetRect()
-        self.SetSize((width - 20, y + h))
+        # self.SetSize((width - 20, y + h))
+
 
     def OnThreadNumber(self, event):
         value = event.GetInt()
@@ -1375,7 +1402,6 @@ class PreferenceNotebook(wx.Notebook):
 
         self.ShortcutKeyPanel = ShortcutKeyPanel(self)
         self.AddPage(self.ShortcutKeyPanel, 'Shortcut Key')
-
         # self.WebLinkPanel = WebLinkEditorPanel(self)
         # self.AddPage(self.WebLinkPanel, 'Web Search')
 
@@ -1387,9 +1413,11 @@ class PreferenceNotebook(wx.Notebook):
 
     def OnSize(self, event):
         width, height = self.GetClientSize()
-        self.MFEATSPanel.SetSize((width - 20, height - 40))
+        self.MFEATSPanel.OnSize(None)
+        self.ShortcutKeyPanel.OnSize(None)
+        # self.MFEATSPanel.SetSize((width - 20, height - 40))
         # self.AppearancePanel.SetSize((width-20, height-40))
-        self.ShortcutKeyPanel.SetSize((width - 20, height - 40))
+        # self.ShortcutKeyPanel.SetSize((width - 20, height - 40))
         # self.WebLinkPanel.SetSize((width-20, height-40))
         self.Refresh()
 
@@ -1416,9 +1444,10 @@ class PreferenceNotebook(wx.Notebook):
 class PreferenceBox(DialogBox):
 
     def __init__(self, parent):
-        DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 450))
+        DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 340))
         self.parent = parent
         self.SetTitle('Preference')
+        # self.SetBackgroundColour((240, 240, 240))
         self.SetBackgroundColour((240, 240, 240))
         self.Notebook = PreferenceNotebook(self)
 
@@ -1432,11 +1461,13 @@ class PreferenceBox(DialogBox):
         width, height = self.GetClientSize()
         # x, y, w, h = self.Notebook.WebLinkPanel.WebLink[-1].GetRect()
         # self.SetClientSize((width, y+h+110))
-        self.SetClientSize((width, 350))
+        self.SetClientSize((width, 340))
         self.Notebook.SetRect((5, 5, width - 8, height - 51))
         self.Notebook.OnSize(None)
         w, h = self.CloseButton.GetSize()
         self.CloseButton.SetPosition((width - 85, height - h - 10))
+        # self.Notebook.SetRect((5, 5, width - 8, 360))
+        # print(width, height, self.Notebook.GetClientSize())
 
     def OnClose(self, event):
         self.Hide()
