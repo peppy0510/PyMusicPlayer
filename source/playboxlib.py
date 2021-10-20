@@ -748,9 +748,11 @@ class PlayBoxControl():
             audio.fforward(self.cue.hStream, self.cue.fffr_variable)
 
     def OnFastRewind(self):
+
         if self.AudioControl.pending or self.pending_fffr_prev:
             return
-
+        if not self.IsPlaying():
+            self.OnResume()
         fffr = self.GetFFFRVariableTime()
         if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
             fffr = fffr / 1
@@ -763,7 +765,7 @@ class PlayBoxControl():
                 self.pending_fffr_prev = True
                 result = self.OnPrev()
                 if result is False:
-                    # self.GotoTrackOffsetTime()
+                    self.GotoTrackOffsetTime()
                     self.pending_fffr_prev = False
                 self.SelectPlayingItem()
             return
@@ -783,6 +785,8 @@ class PlayBoxControl():
     def OnFastForward(self):
         if self.AudioControl.pending or self.pending_fffr_next:
             return
+        if not self.IsPlaying():
+            self.OnResume()
         fffr = self.GetFFFRVariableTime()
         if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
             fffr = fffr / 1
@@ -795,10 +799,11 @@ class PlayBoxControl():
                 self.pending_fffr_Next = True
                 result = self.OnNext()
                 if result is False:
+                    # self.GotoTrackOffsetTime()
                     self.pending_fffr_Next = False
-                    # self.OnPause()
-                    # self.SetResumeTime(finish)
-                    # self.Wave.reInitBuffer = True
+                    self.OnPause()
+                    self.SetResumeTime(finish)
+                    self.Wave.reInitBuffer = True
                 self.SelectPlayingItem()
             return
         audio.fforward(self.cue.hStream, fffr)
