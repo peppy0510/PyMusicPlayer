@@ -67,7 +67,7 @@ def has_running_instance():
                 continue
             if cpcwd == get_real_cwd(p):
                 return True
-                
+
     return False
 
 
