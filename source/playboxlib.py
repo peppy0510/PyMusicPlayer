@@ -748,7 +748,6 @@ class PlayBoxControl():
             audio.fforward(self.cue.hStream, self.cue.fffr_variable)
 
     def OnFastRewind(self):
-
         if self.AudioControl.pending or self.pending_fffr_prev:
             return
         if not self.IsPlaying():

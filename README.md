@@ -8,7 +8,7 @@
 * Displays waveform as a seek bar.
 * Displays a real-time log scale mel-frequency spectrum.
 * Displays a real-time vectorscope showing a stereo image.
-* Analyse and display tempo, key, highlight part of the music.
+* Analyze and display tempo, key, highlight part of the music.
 * The highlights part of the music is displayed on the waveform.
 * Only highlights of music can be played continuously.
 * Import and analysis done with multi thread or process.
@@ -16,9 +16,9 @@
 * ID3Tag edit supported.
 * Editable hotkeys supported.
 * Automatic gain control with LoudMax VST plug-in.
-* When you drag and drop audio files or playlists red bar icon will be displayed on the left side of the playlist which means that the track has not been analysed. As soon as the player starts to analyse each track the icon will instantly changed to blue color. Wen the analysis of each track is finished the icon will be disappeared.
-* Analysing is done by multi-processing and analysed music files' information and waveforms are cached with SQLite database.
-* If you see exclamation icon on the left side of the playlist which means that the track has been moved or deleted. In this case, you can perform the Check File Cosistency on the menu.
+* When you drag and drop audio files or playlists red bar icon will be displayed on the left side of the playlist which means that the track has not been analyzed. As soon as the player starts to analyze each track the icon will instantly changed to blue color. Wen the analysis of each track is finished the icon will be disappeared.
+* Analyzing is done by multi-processing and analyzed music files' information and waveforms are cached with SQLite database.
+* If you see exclamation icon on the left side of the playlist which means that the track has been moved or deleted. In this case, you can perform the Check File Consistency on the menu.
 
 ## Screenshot
 
@@ -35,20 +35,38 @@
 [![Demo on YouTube](https://img.youtube.com/vi/GWXntjblLWw/default.jpg)](https://youtu.be/GWXntjblLWw)
 [![Highlight Demo on YouTube](https://img.youtube.com/vi/v57Ro8mnaP4/default.jpg)](https://youtu.be/v57Ro8mnaP4)
 
-## How to install
+## How to Install and Run
 
 * Just download and install the latest release.
-* Alternatively, if you like to build your own, download or clone a repository then execute makebuild.py. Python 3.x, Python packages in the requirements.pip file, and Inno Setup is required.
+
+* Alternatively, if you like to build your own, download or clone a repository then execute makebuild.py. Python 3.x, Python packages in the requirements.pip file, and InnoSetup is required.
+
+  ```bash
+  pip install requirements.pip
+  choco install innosetup
+  ```
+
+* Or just run without build, with following command.
+
+  ```bash
+  pythonw.exe ./source/main.pyw
+  # or run with launcher
+  pymp.exe
+  ```
+  
+* Following argument can be passed while instance is running.
+
+  ```bash
+  pythonw.exe ./source/main.pyw [path/to/track.mp3]
+  # or run with launcher
+  pymp.exe [path/to/track.mp3]
+  ```
 
 ## Supported platforms
 
-* Microsoft Windows 10
+* Microsoft Windows 10, Windows 11
 * Other versions of Windows have not been tested yet.
-
-## MISC
-
-* Variable names `macrobox` or `macroboxplayer` in the source code are legacy name of this project.
-* Supported Mac OSX years ago. Some parts handle for OSX. Some parts has not been implemented handling OSX while many updates has been occured.
+* Mac OSX years ago. Some parts handle for OSX. Some parts has not been implemented handling OSX while many updates has been occured.
 
 ## TODO
 
