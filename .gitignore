@@ -4,7 +4,6 @@
 *.pyc
 *.pyo
 *.tmp
-*.exe
 /venv
 /dist
 /build
