@@ -44,29 +44,30 @@
   ```bash
   pip install requirements.pip
   choco install innosetup
+  python makebuild.py
   ```
 
 * Or just run without build, with following command.
 
   ```bash
-  pythonw.exe ./source/main.pyw
-  # or run with launcher
-  pymp.exe
+  python ./source/main.pyw  # with terminal
+  pythonw ./source/main.pyw  # without terminal
+  pymp.exe  # run main.pyw with launcher
   ```
   
 * Following argument can be passed while instance is running.
 
   ```bash
-  pythonw.exe ./source/main.pyw [path/to/track.mp3]
-  # or run with launcher
-  pymp.exe [path/to/track.mp3]
+  python ./source/main.pyw [path/to/track.mp3]
+  pythonw ./source/main.pyw [path/to/track.mp3]
+  pymp.exe [path/to/track.mp3]  # run main.pyw with launcher
   ```
 
 ## Supported platforms
 
 * Microsoft Windows 10, Windows 11
 * Other versions of Windows have not been tested yet.
-* Mac OSX years ago. Some parts handle for OSX. Some parts has not been implemented handling OSX while many updates has been occured.
+* With some modifications, it can also work on macOS.
 
 ## TODO
 
