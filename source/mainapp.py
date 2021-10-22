@@ -49,6 +49,7 @@ from utilities import kill_existing_instances
 from utilities import kill_self_process
 from utilities import set_master_path
 from utilities import set_process_priority
+# import setproctitle
 # from packages import pybass
 # from utilities import is_ghost_runnung
 # from dialogbox import ProductLogRequest
@@ -289,6 +290,14 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         # self.OnUpdate(None)
         # self.OnLicense(None)
         # self.OnCheckItemsConsistency(None)
+        # print(setproctitle.getproctitle())
+        # print(setproctitle.getthreadtitle())
+        # setproctitle.setproctitle('pymp.exe')
+        # setproctitle.setthreadtitle('pymp.exe')
+        # print(setproctitle.getproctitle())
+        # print(setproctitle.getthreadtitle())
+        # os.environ["PYTHON_HOME"] = "C:\\Users\\tkmix\\WORK\\PyMusicPlayer"
+        # os.environ["PYTHON_NAME"] = "pymp.exe"
 
     def InitMainSocket(self):
         MainSocket(self)

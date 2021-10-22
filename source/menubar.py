@@ -14,13 +14,12 @@ import threading
 import time
 import webbrowser
 import wx
+import wx.adv
 
 from dialogbox import AboutBox
 from dialogbox import CheckItemsConsistencyConfirmBox
 from dialogbox import DialogBox
 from dialogbox import DialogPanel
-from wininstance import get_current_real_cwq
-# from dialogbox import LicenseBox
 from dialogbox import UpdateBox
 from listbox import FileOpenDialog
 from listbox import FileSaveDialog
@@ -38,6 +37,8 @@ from macroboxlib import StaticText
 from macroboxlib import TextCtrl
 from operator import itemgetter
 from utilities import Struct
+from wininstance import get_current_real_cwq
+# from dialogbox import LicenseBox
 # from macroboxlib import *
 # from scripteditor import *
 # from dialogbox import *
@@ -593,6 +594,8 @@ class MacroBoxPreference():
         icon.CopyFromBitmap(wx.Bitmap(icon_path, wx.BITMAP_TYPE_ANY))
         self.SetIcon(icon)
 
+        # self.TaskBarIcon = wx.adv.TaskBarIcon()
+        # self.TaskBarIcon.SetIcon(icon)
         # path = os.path.join('packages', 'icon-macrobox.ico')
         # icon = wx.Icon(path, wx.BITMAP_TYPE_ICO)
         # icon = images.macrobox_icon64.GetIcon()
@@ -1321,7 +1324,6 @@ class PreferenceMFEATSPanel(DialogPanel):
         x, y, w, h = self.PlayerTitleFormat[-1].GetRect()
         # x, y, w, h = self.DefaultPlayer.GetRect()
         # self.SetSize((width - 20, y + h))
-
 
     def OnThreadNumber(self, event):
         value = event.GetInt()
