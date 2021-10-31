@@ -10,7 +10,7 @@ email: peppy0510@hotmail.com
 import os
 import psutil
 import sys
-# from pathlib import Path
+from pathlib import Path
 
 
 def has_process_authority(p):
@@ -31,7 +31,7 @@ def get_current_process():
 
 def get_real_cwd(p):
     # return str(Path('.').resolve().parent.joinpath('source'))
-    # return str(Path(__name__).resolve().parent.joinpath('source'))
+    return str(Path(__file__).resolve().parent.parent.joinpath('source'))
 
     cmdline = p.cmdline()
     split = len(cmdline)
