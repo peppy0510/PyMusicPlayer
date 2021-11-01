@@ -65,7 +65,10 @@ def has_running_instance():
         else:
             if p.name().lower() not in ('python.exe', 'pythonw.exe',):
                 continue
-            if cpcwd == get_real_cwd(p):
+            print(p.cmdline())
+            # if cpcwd == get_real_cwd(p):
+            if [True for v in p.cmdline() if v.startswith(cpcwd)]:
+                print(cpcwd)
                 return True
 
     return False
