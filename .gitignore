@@ -12,3 +12,5 @@ source/dist
 source/build
 source/scipy
 desktop.ini
+.sublime-workspace
+*.sublime-workspace

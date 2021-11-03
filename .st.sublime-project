@@ -1,0 +1,36 @@
+{
+    "folders": [
+        {
+            "path": ".",
+            "file_exclude_patterns": [
+                "*.dll",
+                "*.exe",
+                "*.ai",
+                "*.ttf",
+                "*.ico",
+                "*.png",
+                "*.jpg",
+                "*.jpeg"
+            ],
+            // "follow_symlinks": true,
+            "folder_include_patterns": [],
+            "folder_exclude_patterns": [
+                ".git",
+                ".github",
+                "__pycache__",
+                "log",
+                "assets",
+                "misc",
+                "bin",
+                "venv"
+            ],
+            "binary_file_patterns": []
+        }
+    ],
+    "build_systems": [
+        {
+            "name": "List",
+            "shell_cmd": "ls -l"
+        }
+    ]
+}
