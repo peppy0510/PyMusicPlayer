@@ -665,7 +665,8 @@ class ListBoxTabList(RectBox):
         rects = []
         vpy = self.parent.GetVirtualPositionY()
         for i in range(len(self.parent.parent.ListBox.innerList)):
-            rects += [wx.Rect(1, self.tab_height * i + vpy, width - 1, self.tab_height - 1)]
+            rects += [wx.Rect(1, round(self.tab_height * i + vpy),
+                              round(width - 1), round(self.tab_height - 1))]
         self.rects = rects
 
         def limitcolor(v):
@@ -737,7 +738,8 @@ class ListBoxTabList(RectBox):
                 texts.append(self.LimitTextLength(dc, title, rect.width - margin))
                 xys.append((rect.x + 11, rect.y + 5 + 1))
         dc.DrawTextList(texts, xys, foregrounds=wx.Colour(210, 210, 210), backgrounds=None)
-        dc.DrawTextList(selected_texts, selected_xys, foregrounds=wx.Colour(30, 30, 30), backgrounds=None)
+        dc.DrawTextList(selected_texts, selected_xys,
+                        foregrounds=wx.Colour(30, 30, 30), backgrounds=None)
 
     def DrawTabPolygon(self, dc):
         size = 6
@@ -1034,12 +1036,12 @@ class ListBoxTabList(RectBox):
         for i, r in enumerate(self.rects):
             offsetY = 0 if i == 0 else self.rects[i - 1].y + self.rects[i - 1].height * 0.5
             finishY = r.y + r.height * 0.5
-            rect = wx.Rect(r.x, offsetY, r.width, finishY - offsetY)
+            rect = wx.Rect(round(r.x), round(offsetY), round(r.width), round(finishY - offsetY))
             if self.IsInRect(rect, xy):
                 return i
         offsetY = self.rects[- 1].y + self.rects[- 1].height * 0.5
         finishY = self.GetSize().height
-        rect = wx.Rect(r.x, offsetY, r.width, finishY - offsetY)
+        rect = wx.Rect(round(r.x), round(offsetY), round(r.width), round(finishY - offsetY))
         if self.IsInRect(rect, xy):
             return i + 1
 
