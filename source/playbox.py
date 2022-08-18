@@ -477,6 +477,7 @@ class VolumeSlider(RectBox):
         x = (w - self.width) * 0.5
         volume = self.parent.GetVolume()
         rects = [(x - 2, 0, self.width + 2, h), (x - 1, h - 1, self.width, -volume * (h - 2))]
+        rects = [[int(v) for v in rect] for rect in rects]
         bgcolor = self.parent.st.VOLUME_BG_COLOR
         fgcolor = self.parent.st.VOLUME_FG_COLOR
         pncolor = self.parent.st.VOLUME_PN_COLOR
@@ -825,7 +826,7 @@ class PlayBoxApic(RectBox):
         if self.apic is None:
             dc.SetPen(wx.Pen(cpcolor, 1))
             dc.SetBrush(wx.Brush(fgcolor))
-            dc.DrawCircle(width / 2, height / 2, (width * 0.6 / 2))
+            dc.DrawCircle(round(width / 2), round(height / 2), round(width * 0.6 / 2))
         else:
             w, h = self.apic.GetSize()
             x, y = (0, 0)
@@ -965,8 +966,8 @@ class PlayBoxSpectrum(RectBox):
         spLength = len(spectrum) - 1
         sw = int(1.0 * w / spLength)
         offset = (w - sw * spLength) * 0.5
-        rects = [(sw * i + offset + 1, (h - level * h * scale) * 0.5,
-                  sw - 2, level * h * scale) for i, level in enumerate(spectrum)]
+        rects = [(int(sw * i + offset + 1), int((h - level * h * scale) * 0.5),
+                  int(sw - 2), int(level * h * scale)) for i, level in enumerate(spectrum)]
         stroke = self.parent.st.SPECTRUM_STROKE
         dc.DrawRectangleList(rects, pens=wx.Pen(fgcolor, stroke),
                              brushes=wx.Brush(fgcolor))
@@ -989,14 +990,14 @@ class PlayBoxSpectrum(RectBox):
         wr = self.parent.Wave.GetRect()
         x = wr.x + 0.5 * (wr.width + 12 - self.width) - 33 + 33
         y = y - self.height - 20
-        self.SetRect((x, y, self.width, self.height))
+        self.SetRect((int(x), int(y), int(self.width), int(self.height)))
 
         w, h = self.GetSize()
         len_spectrum = 103 * self.scale
         spLength = len_spectrum - 1
         sw = int(1.0 * w / spLength)
         offset = (w - sw * spLength) * 0.5
-        ground = [wx.Rect(sw * i + offset + 1, h / 2 - 1, sw - 2, 2)
+        ground = [wx.Rect(int(sw * i + offset + 1), int(h / 2 - 1), int(sw - 2), 2)
                   for i in range(len_spectrum)]
         self.ground = ground
         self.DirectDraw()
@@ -1057,8 +1058,9 @@ class PlayBoxVectorScope(RectBox):
         sr = self.parent.Spectrum.GetRect()
         x = sr.x + sr.width + 8 + 5
         y = sr.y - 6
-        self.SetRect(wx.Rect(x, y, w, h))
-        self.polygon = ((0.5 * w, 1), (1, 0.5 * h), (0.5 * w, h - 1), (w - 1, 0.5 * h))
+        self.SetRect(wx.Rect(round(x), round(y), round(w), round(h)))
+        self.polygon = ((round(0.5 * w), 1), (1, round(0.5 * h)),
+                        (round(0.5 * w), round(h - 1)), (round(w - 1), round(0.5 * h)))
         self.DirectDraw()
 
 
@@ -1173,7 +1175,7 @@ class PlayBoxWave(RectBox):
             w = self.GetSize().width - self.margin * 2 - 2
             dc.SetPen(wx.Pen(pncolor, 1))
             # dc.DrawPolygon(((x, y), (x + w, y)), 0, 0, fillStyle=wx.WINDING_RULE)
-            dc.DrawPolygon(((x, y), (x + w, y)), 0, 0)
+            dc.DrawPolygon(((round(x), round(y)), (round(x + w), round(y))), 0, 0)
             return
         dc.SetPen(wx.Pen(pncolor, 1))
         dc.DrawLines(self.wave)
@@ -1200,7 +1202,7 @@ class PlayBoxWave(RectBox):
         dc.SetBrush(wx.Brush(bgcolor))
         dc.SetPen(wx.Pen(fgcolor, stroke))
         x = math.ceil(self.margin + slidable * x_ratio)
-        dc.DrawRectangle(x - self.cursor_width * 0.5, 0, self.cursor_width, h)
+        dc.DrawRectangle(int(x - self.cursor_width * 0.5), 0, int(self.cursor_width), int(h))
 
     def SetRectWave(self):
         w, h = self.GetSize()
@@ -1209,9 +1211,9 @@ class PlayBoxWave(RectBox):
         # cx = w * 0.5 + x
         cy = h * 0.5 + y
         waveform = self.parent.GetWaveform()
-
         if waveform is None:
             self.wave = list(zip(range(x, x + w), numpy.linspace(cy, cy, w)))
+            self.wave = [(int(x), int(y)) for x, y in self.wave]
             return
         filled_wave = audio.max_wide_fill_sym(waveform, w) / 256.0 * h
         if max(filled_wave) != 0 and self.parent.wave_max:
@@ -1220,6 +1222,9 @@ class PlayBoxWave(RectBox):
         self.wave = [(x, cy)] + list(zip(range(x, x + w, 1), filled_wave + cy))\
             + [(x + w, cy)] + [(x + w, cy)] + \
             list(zip(range(x, x + w, 1), -filled_wave + cy))[::-1] + [(x, cy)]
+        self.wave = [(int(x), int(y)) for x, y in self.wave]
+        # print('*' * 100)
+        # print(self.wave)
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.parent.HasToSkipEvent() is False:

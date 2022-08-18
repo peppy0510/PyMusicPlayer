@@ -1094,11 +1094,11 @@ class ListControl():
     def GetVirtualPosition(self):
         x = self.GetVirtualPositionX()
         y = self.GetVirtualPositionY()
-        return wx.Point(x, y)
+        return wx.Point(round(x), round(y))
 
     def SetVirtualPositionX(self, x):
         x = self.LimitVirtualPositionX(x)
-        self.innerList[self.selectedList].rects.offset.x = x
+        self.innerList[self.selectedList].rects.offset.x = round(x)
         self.reInitBuffer = True
 
     def SetVirtualPositionY(self, y, bounce=False):
@@ -1108,7 +1108,7 @@ class ListControl():
         #   vpy_limit = self.GetVirtualPositionYLimit()
         #   if y == vpy_limit: y = y-5
         #   print y
-        self.innerList[self.selectedList].rects.offset.y = y
+        self.innerList[self.selectedList].rects.offset.y = round(y)
         self.reInitBuffer = True
 
     def SetBestVirtualPositionX(self):

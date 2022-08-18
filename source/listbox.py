@@ -183,6 +183,7 @@ class ListBox(RectBox, ListControl):
         rects = self.GetBestRects()
         if rects == self.rects:
             return
+
         self.rects = rects
         body, header, sliderH, sliderV = rects
         self.List.SetRect(body)
@@ -208,6 +209,7 @@ class ListBox(RectBox, ListControl):
         #   rects = ((width-ss, height-ss, ss, ss),)
         #   dc.DrawRectangleList(rects,\
         #       pens=wx.Pen(color, 1), brushes=wx.Brush(color))
+
         self.List.reInitBuffer = True
         self.Header.reInitBuffer = True
         self.SliderH.reInitBuffer = True
@@ -1453,7 +1455,7 @@ class ListBoxSliderV(RectBox):
             self.parent.innerList[self.parent.selectedList].rects.offset.y = -div
         x = slidable.x
         y = slidable.y + math.ceil((slidable.height - h) * posCYRatio)
-        knob = wx.Rect(x, y, width, h)
+        knob = wx.Rect(round(x), round(y), round(width), round(h))
         self.rects = Struct(slider=slider, slidable=slidable,
                             knob=knob, btnup=btnup, btndown=btndown)
 
@@ -1585,7 +1587,7 @@ class ListBoxSliderH(RectBox):
             posCXRatio = 1.0
         x = slidable.x + math.ceil((slidable.width - w) * posCXRatio)
         y = slidable.y
-        knob = wx.Rect(x, y, w, height)
+        knob = wx.Rect(round(x), round(y), round(w), round(height))
         self.rects = Struct(slider=slider, slidable=slidable, knob=knob,
                             btnleft=btnleft, btnright=btnright)
 

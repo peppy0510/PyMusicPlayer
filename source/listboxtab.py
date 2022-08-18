@@ -583,7 +583,7 @@ class ListBoxTabHeader(RectBox):
         size = self.bmp.add.GetWidth()
         offset_x = width - (size + self.parent.scrollbar_size + 12)
         offset_y = (height - size) / 2 + 1
-        dc.DrawBitmap(self.bmp.add, offset_x, offset_y, useMask=True)
+        dc.DrawBitmap(self.bmp.add, round(offset_x), round(offset_y), useMask=True)
         pad = 2
         self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
 
@@ -1113,7 +1113,7 @@ class ListBoxTabSliderV(RectBox):
         #     self.parent.parent.innerList[self.parent.selectedList].rects.offset.y = -div
         # x = slidable.x
         y = slidable.y + math.ceil((slidable.height - h) * posCYRatio)
-        knob = wx.Rect(0, y, width, h)
+        knob = wx.Rect(0, round(y), round(width), round(h))
         self.rects = Struct(slider=slider, slidable=slidable,
                             knob=knob, btnup=btnup, btndown=btndown)
 
