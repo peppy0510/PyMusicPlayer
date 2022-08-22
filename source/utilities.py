@@ -281,7 +281,10 @@ def open_shelve(key, shelve_path):
     if flag is False:
         data = None
     else:
-        data = decompress_object(db[key])
+        try:
+            data = decompress_object(db[key])
+        except Exception:
+            data = None
     db.close()
     return data
 
@@ -294,7 +297,11 @@ def open_shelves(keys, shelve_path):
         if flag is False:
             data += [None]
         else:
-            data += [decompress_object(db[key])]
+            try:
+                _data = decompress_object(db[key])
+            except Exception:
+                _data = None
+            data += [_data]
     db.close()
     return data
 

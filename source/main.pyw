@@ -37,7 +37,6 @@ def check_mainapp():
 
 def send_filepath_to_mainapp(filepath):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     try:
         sock.connect(('127.0.0.1', MAIN_SOCKET_PORT))
     except ConnectionRefusedError:
