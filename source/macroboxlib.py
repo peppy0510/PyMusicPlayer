@@ -63,8 +63,8 @@ PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'settings'])
 SUPPORTED_PLAYLIST_TYPE = ('m3u',)
 SUPPORTED_AUDIO_TYPE = (
     'mp2', 'mp3', 'mp4', 'wav', 'm4a',
-    'ape', 'flac', 'aac', 'ac3', 'aiff', 'wma', 'ogg')
-MUTAGEN_SUPPORTED_TYPE = ('mp2', 'mp3', 'mpg', 'mpeg')
+    'ape', 'flac', 'aac', 'ac3', 'aiff', 'wma', 'ogg', 'webm',)
+MUTAGEN_SUPPORTED_TYPE = ('mp2', 'mp3', 'mpg', 'mpeg', 'webm',)
 # mutagen only works with mp2, mp3, mpg, mpeg ?
 
 
