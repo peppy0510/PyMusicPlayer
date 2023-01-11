@@ -92,7 +92,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.ListTab = ListBoxTab(self)
         self.ListSearch = ListBoxSearch(self)
         self.StatusBox = StatusBox(self)
-
         # self.BorderBoxHT = BorderBoxH(self)
         # bgcolor = parent.st.PLAYBOX.PLAY_BG_COLOR
         # self.BorderBoxHT.SetBackgroundColour(bgcolor)
@@ -243,7 +242,6 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
     __doc__ = __doc__
 
     def __init__(self, parent=None, initfile=None):
-
         KeymapPreset.__init__(self)
         MacroBoxPreference.__init__(self)
         wx.Frame.__init__(self, parent, id=wx.ID_ANY,
@@ -252,7 +250,6 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
                           wx.MAXIMIZE_BOX | wx.SYSTEM_MENU | wx.CLOSE_BOX | wx.CAPTION |
                           wx.RESIZE_BORDER | wx.TAB_TRAVERSAL | wx.BORDER_DEFAULT)
         # style=wx.CLIP_CHILDREN|wx.FRAME_SHAPED|wx.TAB_TRAVERSAL|wx.BORDER_DEFAULT)
-
         self.initfile = initfile
         self.SetTitle(self.__appname__)
         self.DialogBox = None
@@ -361,7 +358,6 @@ class MacroBoxApp(wx.App):
 
 
 def mainapp(initfile=None):
-
     if sys.platform.startswith('win'):
         multiprocessing.freeze_support()
 

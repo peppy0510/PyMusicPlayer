@@ -190,7 +190,7 @@ class KeymapPreset():
         else:
             self.keymap_preset = preset
 
-        if len(preset) != default_preset:
+        if len(preset or []) != default_preset:
             self.keymap_preset = default_preset
 
     def GetNameSpaceByRawKeyFlag(self, keyflag, ctrl=False, shift=False):
