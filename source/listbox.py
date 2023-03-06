@@ -1810,7 +1810,7 @@ class ItemEditPanel(DialogPanel):
 class ItemEditBox(DialogBox):
 
     def __init__(self, parent):
-        DialogBox.__init__(self, parent, size=(600, 315))
+        DialogBox.__init__(self, parent, size=(600, 320))
         self.parent = parent
         self.auto_save = True
         self.SetTitle('Track Information Editor')
@@ -1825,9 +1825,8 @@ class ItemEditBox(DialogBox):
         height -= h + 15
         left = 2
         label = '%d / %d' % (self.selected_idx + 1, self.total_items)
-        self.PageNumber = StaticText(self, label=label,
-                                     pos=(width - 95 - 160 - 120 + left, height + 5),
-                                     size=(80, 20), style=wx.ALIGN_RIGHT)
+        self.PageNumber = StaticText(self, label=label, pos=(
+            width - 95 - 160 - 120 + left, height + 5), size=(80, 20), style=wx.ALIGN_RIGHT)
         self.CloseButton.SetPosition((width - 95 + 3 + left, height))
         self.NextButton = Button(self, label='Next')
         self.NextButton.SetPosition((width - 95 - 80 + 3 + left, height))
