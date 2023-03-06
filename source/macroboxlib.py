@@ -133,7 +133,8 @@ class ListBoxColumn(ColumnDefinition):
         self.AddColumn(key='order', title=u'#', width=58, max_width=58, right_align=True)
         self.AddColumn(key='filename', title='filename', width=300)
         self.AddColumn(key='duration', title='duration', right_align=True, width=65, max_width=65)
-        self.AddColumn(key='tempo', title='tempo', right_align=True, id3=u'TBPM', width=55, max_width=55)
+        self.AddColumn(key='tempo', title='tempo', right_align=True,
+                       id3=u'TBPM', width=55, max_width=55)
         self.AddColumn(key='key', title='key', id3=u'TKEY', width=55, max_width=55)
         self.AddColumn(key='type', title='type', show=False, private=True)
         self.AddColumn(key='size', title='size', show=False, private=True)
@@ -1804,7 +1805,6 @@ class UserInputDialogPanel(DialogPanel):
     def __init__(self, parent):
         DialogPanel.__init__(self, parent)
         self.parent = parent
-
         self.UserInput = TextCtrl(self)
         self.OnSize(None)
 
@@ -1833,15 +1833,18 @@ class UserInputDialogBox(DialogBox):
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CloseButton = Button(self, label='Cancel')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+
+    def ShowModal(self):
         self.OnSize(None)
+        return DialogBox.ShowModal(self)
 
     def OnSize(self, event):
         margin = 10
         width, height = self.GetClientSize()
         self.UserInput.SetRect((0, 0, width, 40))
         self.UserInput.OnSize(None)
-        self.ApplyButton.SetRect((width / 2 - 75 - 3, height - margin - 24, 75, 24))
-        self.CloseButton.SetRect((width / 2 + 3, height - margin - 24, 75, 24))
+        self.ApplyButton.SetRect((int(width / 2 - 75 - 3), height - margin - 24, 75, 24))
+        self.CloseButton.SetRect((int(width / 2 + 3), height - margin - 24, 75, 24))
 
     def OnApply(self, event):
         self.OnClose(event)
@@ -1891,8 +1894,8 @@ class ConfirmDialogBox(DialogBox):
         width, height = self.GetClientSize()
         self.Message.SetRect((0, 0, width, 40))
         self.Message.OnSize(None)
-        self.ApplyButton.SetRect((width / 2 - 75 - 2, height - margin - 24, 75, 24))
-        self.CloseButton.SetRect((width / 2 + 3, height - margin - 24, 75, 24))
+        self.ApplyButton.SetRect((int(width / 2 - 75 - 2), height - margin - 24, 75, 24))
+        self.CloseButton.SetRect((int(width / 2 + 3), height - margin - 24, 75, 24))
         # self.ApplyButton.SetRect((margin, height-margin-24, 75, 24))
         # self.CloseButton.SetRect((width-75-margin, height-margin-24, 75, 24))
 

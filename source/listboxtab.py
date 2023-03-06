@@ -1257,6 +1257,9 @@ class ListBoxPopupTab(wx.Menu):
             width = 350
             self.parent.parent.parent.DialogBox.SetRect(
                 (x + (w - width) / 2, y + (h - height) / 2, width, height))
+            # x, y, w, h = self.parent.parent.parent.DialogBox.ApplyButton.GetRect()
+            # self.parent.parent.parent.DialogBox.ApplyButton.SetRect((
+            #     width - w, 0, w, h))
             self.parent.parent.parent.DialogBox.ShowModal()
             self.parent.parent.parent.DialogBox.Destroy()
             self.parent.parent.parent.DialogBox = None

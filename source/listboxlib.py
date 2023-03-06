@@ -1703,5 +1703,5 @@ class FileSaveDialog(wx.FileDialog):
         wx.FileDialog.__init__(self, parent,
                                defaultDir=defaultDir, message=message, wildcard=wildcard,
                                style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT | wx.FD_CHANGE_DIR)
-        filename = self.parent.parent.ListBox.GetListTitle()
+        filename = self.parent.parent.parent.ListBox.GetListTitle()
         self.SetFilename(filename)

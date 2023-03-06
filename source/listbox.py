@@ -367,14 +367,17 @@ class ListBoxList(RectBox):
             lines.append((rect.x, row_size * row + rect.y - row_offset,
                           width, row_size * row + rect.y - row_offset))
             if self.parent.IsHighlightedItem(item):
-                s_rects.append((rect.x, row_size * row + rect.y - row_offset + 1, width, row_size - 1))
+                s_rects.append((rect.x, row_size * row + rect.y -
+                                row_offset + 1, width, row_size - 1))
             else:
                 n_rects.append((rect.x, row_size * row + rect.y - row_offset, width, row_size))
 
                 if shownItemIdx[row] % 2 == 0:
-                    n_rects_odd.append((rect.x + 1, row_size * row + rect.y - row_offset, width - 1, row_size))
+                    n_rects_odd.append((rect.x + 1, row_size * row + rect.y -
+                                        row_offset, width - 1, row_size))
                 else:
-                    n_rects_even.append((rect.x + 1, row_size * row + rect.y - row_offset, width - 1, row_size))
+                    n_rects_even.append((rect.x + 1, row_size * row + rect.y -
+                                         row_offset, width - 1, row_size))
 
         if shownItemIdx != []:
             lines.append((rect.x, row_size * (row + 1) + rect.y - row_offset,
@@ -422,7 +425,8 @@ class ListBoxList(RectBox):
                 status = self.parent.innerList[listIdx].items[item][statusIdx]
                 # rects = (columns[i].x+1, row_size*row+rect.y-row_offset+1,\
                 #   columns[i].width-2-22, row_size-1)
-                rects = (columns[i].x + 1, row_size * row + rect.y - row_offset + 1, 4, row_size - 1)
+                rects = (columns[i].x + 1, row_size * row +
+                         rect.y - row_offset + 1, 4, row_size - 1)
                 # elif status == 'analyzing':
                 #   dc.DrawRectangleList((rects,), pens=wx.Pen((80,80,255), 0),\
                 #       brushes=wx.Brush(wx.Colour(100,100,255)))
@@ -1691,7 +1695,7 @@ class ItemEditPanel(DialogPanel):
         self.parent = parent
         x, y = pos
         width, height = self.parent.GetSize()
-        self.SetRect((x, y, width, 247))
+        self.SetRect((x, y, width - 4, 247))
         self.labels = ('Path', 'Filename', 'Duration', 'Size', 'Bitrate',
                        'Channel', 'Artist', 'Title', 'Album', 'Genre', 'Key', 'Tempo')
         self.disables = ('Duration', 'Type', 'Size', 'Bitrate', 'Channel', 'Path')
@@ -1725,67 +1729,79 @@ class ItemEditPanel(DialogPanel):
         posX = 76
         posY = 25
         twh = (50, 20)
+        right = 27
         self.TextCtrls = list()
         self.StaticTexts = list()
 
         self.StaticTexts += [StaticText(self, label=self.labels[0], pos=(15, posY - 5 + 4),
                                         size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1),
+                                    size=(width - posX - right, 22))]
         posY += 30
 
         self.StaticTexts += [StaticText(self, label=self.labels[1], pos=(15, posY - 5 + 4),
                                         size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1),
+                                    size=(width - posX - right, 22))]
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[2], pos=(15, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[2], pos=(
+            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[3], pos=(15 + 145, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX + 145, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[3], pos=(
+            15 + 145 - 2, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX + 145 - 2, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[4], pos=(15 + 300 - 10, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX + 300 - 10, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[4], pos=(
+            15 + 300 - 10 - 4, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX + 300 - 10 - 4, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
 
-        self.StaticTexts += [StaticText(self, label=self.labels[5], pos=(15 + 300 - 10 + 145, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX + 300 - 10 + 145, posY - 5 + 1),
-                                    size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[5], pos=(
+            15 + 300 - 10 + 145 - 6, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX + 300 - 10 + 145 - 6, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
+
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[6],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[6], pos=(
+            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX, posY - 5 + 1), size=(width - posX - right, 22))]
+
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[7],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[7], pos=(
+            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX, posY - 5 + 1), size=(width - posX - right, 22))]
+
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[8],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self,
-                                    pos=(posX, posY - 5 + 1), size=(width - posX - 24, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[8], pos=(
+            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX, posY - 5 + 1), size=(width - posX - right, 22))]
+
         posY += 30
 
-        self.StaticTexts += [StaticText(self, label=self.labels[9],
-                                        pos=(15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1), size=(210, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[9], pos=(
+            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX, posY - 5 + 1), size=(210 - 4, 22))]
 
-        self.StaticTexts += [
-            StaticText(self, label=self.labels[10], pos=(15 + 300 - 10, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX + 300 - 10, posY - 5 + 1), size=(65, 22))]
+        self.StaticTexts += [StaticText(self, label=self.labels[10], pos=(
+            15 + 300 - 10 - 4, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX + 300 - 10 - 3 - 4, posY - 5 + 1), size=(65 - 2, 22))]
 
-        self.StaticTexts += [StaticText(
-            self, label=self.labels[11], pos=(15 + 300 - 10 + 145, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(
-            self, pos=(posX + 300 - 10 + 145, posY - 5 + 1), size=(65, 22), style=wx.ALIGN_RIGHT)]
+        self.StaticTexts += [StaticText(self, label=self.labels[11], pos=(
+            15 + 300 - 10 + 145 - 6, posY + 4), size=twh, style=wx.ALIGN_RIGHT)]
+        self.TextCtrls += [TextCtrl(self, pos=(
+            posX + 300 - 10 + 145 - 6, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
 
     def OnClose(self, event):
         self.Destroy()
@@ -1794,7 +1810,7 @@ class ItemEditPanel(DialogPanel):
 class ItemEditBox(DialogBox):
 
     def __init__(self, parent):
-        DialogBox.__init__(self, parent, size=(600, 310))
+        DialogBox.__init__(self, parent, size=(600, 315))
         self.parent = parent
         self.auto_save = True
         self.SetTitle('Track Information Editor')
@@ -1807,19 +1823,20 @@ class ItemEditBox(DialogBox):
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
         w, h = self.CloseButton.GetSize()
         height -= h + 15
-        self.CloseButton.SetPosition((width - 95 + 3, height))
+        left = 2
+        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
+        self.PageNumber = StaticText(self, label=label,
+                                     pos=(width - 95 - 160 - 120 + left, height + 5),
+                                     size=(80, 20), style=wx.ALIGN_RIGHT)
+        self.CloseButton.SetPosition((width - 95 + 3 + left, height))
         self.NextButton = Button(self, label='Next')
-        self.NextButton.SetPosition((width - 95 - 80 + 3, height))
+        self.NextButton.SetPosition((width - 95 - 80 + 3 + left, height))
         self.NextButton.Bind(wx.EVT_BUTTON, self.OnNext)
         self.PrevButton = Button(self, label='Prev')
         self.PrevButton.Bind(wx.EVT_BUTTON, self.OnPrev)
-        self.PrevButton.SetPosition((width - 95 - 80 * 2 + 3, height))
+        self.PrevButton.SetPosition((width - 95 - 80 * 2 + 3 + left, height))
         self.ItemEditPanel = ItemEditPanel(self)
         self.ItemEditPanel.SetPage(self.selectedItems[self.selected_idx])
-        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
-        self.PageNumber = StaticText(self, label=label,
-                                     pos=(width - 95 - 160 - 120, height + 5),
-                                     size=(80, 20), style=wx.ALIGN_RIGHT)
         self.AutoSeButtonState()
         self.ItemEditPanel.Show(True)
 
@@ -1905,7 +1922,8 @@ class ItemEditBox(DialogBox):
                 if oldPath != newPath:
                     path_resp = self.parent.parent.RenameFileByItemIdx(itemIdx, newPath)
                     if path_resp is False:
-                        self.ItemEditPanel.TextCtrls[i].SetValue(self.ItemEditPanel.restore_value[i])
+                        self.ItemEditPanel.TextCtrls[i].SetValue(
+                            self.ItemEditPanel.restore_value[i])
                 else:
                     path_resp = True
             elif self.parent.parent.IsID3TAGColumnByColumnIdx(columnIdx):
@@ -1921,9 +1939,11 @@ class ItemEditBox(DialogBox):
                         newValue = u'%05.1f' % (0.1 * round(newValue * 10))
                     except Exception:
                         newValue = ''
-                tag_resp = self.parent.parent.RenameID3TAGByColumnItemIdx(columnIdx, itemIdx, newValue)
+                tag_resp = self.parent.parent.RenameID3TAGByColumnItemIdx(
+                    columnIdx, itemIdx, newValue)
                 if tag_resp is False:
-                    self.ItemEditPanel.TextCtrls[i].SetValue(self.ItemEditPanel.restore_value[i])
+                    self.ItemEditPanel.TextCtrls[i].SetValue(
+                        self.ItemEditPanel.restore_value[i])
 
         if is_playing_item:
             if path_resp:
@@ -2137,13 +2157,15 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         name = 'Convert to Up Tempo (95bpm~)'
         self.itemConvertTempoRange.Append(wx.MenuItem(
             self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange, self.itemConvertTempoRange.MenuItems[0])
+        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
+                  self.itemConvertTempoRange.MenuItems[0])
 
         idx = 102
         name = 'Convert to Down Tempo (~120bpm)'
         self.itemConvertTempoRange.Append(wx.MenuItem(
             self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange, self.itemConvertTempoRange.MenuItems[1])
+        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
+                  self.itemConvertTempoRange.MenuItems[1])
 
         idx = 8
         name = 'Convert Tempo Range'
