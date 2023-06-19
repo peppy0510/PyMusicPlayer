@@ -10,9 +10,14 @@ email: peppy0510@hotmail.com
 import argparse
 import json
 import socket
+import numpy
 
 from pathlib import Path
 from wininstance import has_running_instance
+
+
+numpy.finfo(numpy.dtype('float32'))
+numpy.finfo(numpy.dtype('float64'))
 
 
 MAIN_SOCKET_PORT = 55557

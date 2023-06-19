@@ -445,7 +445,8 @@ def spectrum_to_note_by_max(spectrum, note_freq_div):
     notes = numpy.zeros(len(note_freq_div))
     for i in range(len(note_freq_div) - 1):
         elem = spectrum[note_freq_div[i]:note_freq_div[i + 1]]
-        if elem != []:
+        # if elem != []:
+        if len(elem):
             notes[i] = max(elem)
     return notes
 
