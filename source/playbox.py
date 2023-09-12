@@ -834,7 +834,7 @@ class PlayBoxApic(RectBox):
                 y = (w - h) * 0.5
             elif h > w:
                 x = (h - w) * 0.5
-            dc.DrawBitmap(self.apic, x + self.margin, y + self.margin, useMask=False)
+            dc.DrawBitmap(self.apic, int(x + self.margin), int(y + self.margin), useMask=False)
         dc.DrawBitmap(self.overlap_mask, 0, 0, useMask=False)
 
     def HandleApicChange(self, forced=False):
