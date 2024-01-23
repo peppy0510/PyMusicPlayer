@@ -22,7 +22,7 @@ import struct
 from PIL import Image
 from copy import deepcopy
 from scipy import signal
-from scipy import where
+from numpy import where
 from utilities import makemdx  # noqa
 
 
