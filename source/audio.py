@@ -7,8 +7,6 @@ email: peppy0510@hotmail.com
 '''
 
 
-import os
-import sys
 import codecs
 import ctypes
 import math
@@ -16,13 +14,15 @@ import mutagen
 import mutagen.id3
 import mutagen.mp3
 import numpy
+import os
 import pybass
 import struct
+import sys
 
 from PIL import Image
 from copy import deepcopy
-from scipy import signal
 from numpy import where
+from scipy import signal
 from utilities import makemdx  # noqa
 
 
