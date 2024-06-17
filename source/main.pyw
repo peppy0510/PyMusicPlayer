@@ -9,8 +9,11 @@ email: peppy0510@hotmail.com
 
 import argparse
 import json
-import socket
+import logging
 import numpy
+import socket
+import sys
+import traceback
 
 from pathlib import Path
 from wininstance import has_running_instance
@@ -54,6 +57,18 @@ def send_filepath_to_mainapp(filepath):
 
 
 def main(initfile=None):
+    # root = Path(__file__).resolve().parent.parent
+    # debug = root.joinpath('log/debug.log')
+    # logging.basicConfig(filename=debug, level=logging.DEBUG)
+
+    class stderr:
+        def write(self, *args, **kwargs):
+            pass
+
+    if not sys.stderr:
+        sys.stderr = stderr()
+
+    # try:
     parser = argparse.ArgumentParser(prog='PyMusicPlayer', add_help=True)
     parser.add_argument(
         'filepath',
@@ -71,6 +86,9 @@ def main(initfile=None):
         # if not check_mainapp:
         if not has_running_instance():
             launch()
+    # except Exception:
+    #     logging.error(traceback.format_exc())
+    #     # logger = logging.getLogger('')
 
 
 if __name__ == '__main__':

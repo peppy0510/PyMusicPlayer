@@ -4,6 +4,7 @@
 *.pyc
 *.pyo
 *.tmp
+/log
 /venv
 /dist
 /build
