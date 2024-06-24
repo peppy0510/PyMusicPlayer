@@ -191,7 +191,8 @@ def mfeats_single(path, queue=None):
     for cnt, frame_position in enumerate(
             numpy.arange(0, total_frame_length - frame_length, frame_length)):
         pybass.BASS_ChannelGetData(
-            hstream, frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
+            hstream, frame_raw.ctypes.data_as(
+                ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
 
         mono_frame = deepcopy(frame_raw[::channel])
         analyze_frame += [mono_frame]
@@ -304,7 +305,8 @@ def mfeats_single(path, queue=None):
             mono_frame = fir_filter(mono_frame, lowcut=5000, highcut=fs / 2, fs=fs, order=5)
             if fs / 2 > 21000:
                 mono_frame = fir_filter(mono_frame, lowcut=0, highcut=20000, fs=fs, order=45)
-                mono_frame += fir_filter(mono_frame, lowcut=15000, highcut=fs / 2, fs=fs, order=5) * 0.5
+                mono_frame += fir_filter(mono_frame, lowcut=15000,
+                                         highcut=fs / 2, fs=fs, order=5) * 0.5
             rms = numpy.mean(mono_frame**2)**0.5 * 3
 
             # spectrum = numpy.fft.fft(mono_frame, fs)
@@ -341,7 +343,8 @@ def mfeats_single(path, queue=None):
                 numpy.arange(0, total_frame_length - frame_length, frame_length)):
 
             pybass.BASS_ChannelGetData(
-                hstream, frame_raw.ctypes.data_as(ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
+                hstream, frame_raw.ctypes.data_as(
+                    ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
 
             mono_frame = frame_raw[::channel] / 32768.0
             spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
@@ -413,10 +416,11 @@ def mfeats_single(path, queue=None):
         mutagen_mp3['TBPM'] = mutagen.id3.TBPM(encoding=3, text=[tempo])
         mutagen_mp3.save()
 
-    mfeats_data = MFEATS(mdx=mdx, path=path, key=key, tempo=tempo,
-                         duration=duration, highlight=highlight, waveform=waveform,
-                         date=time.time(), version=version, channel=channel, bit=bit, error=0,
-                         autogain=autogain)
+    mfeats_data = MFEATS(
+        mdx=mdx, path=path, key=key, tempo=tempo,
+        duration=duration, highlight=highlight, waveform=waveform,
+        date=time.time(), version=version, channel=channel, bit=bit, error=0,
+        autogain=autogain)
 
     # pybass.BASS_Free()
     if pybass.BASS_ChannelIsActive(hstream) == 1:
@@ -867,7 +871,8 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None):
 
     exec('for %s in fetchs: break' % (','.join(field_keys)))
 
-    blob_field_keys = [field_key for field_key, field_type in MFEATS_DEFINITION if field_type == 'BLOB']
+    blob_field_keys = [field_key for field_key,
+                       field_type in MFEATS_DEFINITION if field_type == 'BLOB']
     for field_key in blob_field_keys:
         exec('%s = decompress_object(%s)' % (field_key, field_key))
 

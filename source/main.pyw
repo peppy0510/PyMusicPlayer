@@ -11,12 +11,22 @@ import argparse
 import json
 import logging
 import numpy
+import os
 import socket
 import sys
 import traceback
 
 from pathlib import Path
 from wininstance import has_running_instance
+
+
+class stderr:
+    def write(self, *args, **kwargs):
+        pass
+
+
+if not sys.stderr:
+    sys.stderr = stderr()
 
 
 numpy.finfo(numpy.dtype('float32'))
@@ -59,14 +69,9 @@ def send_filepath_to_mainapp(filepath):
 def main(initfile=None):
     # root = Path(__file__).resolve().parent.parent
     # debug = root.joinpath('log/debug.log')
+    # if not debug.parent.exists():
+    #     os.makedirs(debug.parent)
     # logging.basicConfig(filename=debug, level=logging.DEBUG)
-
-    class stderr:
-        def write(self, *args, **kwargs):
-            pass
-
-    if not sys.stderr:
-        sys.stderr = stderr()
 
     # try:
     parser = argparse.ArgumentParser(prog='PyMusicPlayer', add_help=True)

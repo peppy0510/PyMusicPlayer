@@ -4,6 +4,7 @@
 *.pyc
 *.pyo
 *.tmp
+*.log
 /log
 /venv
 /dist
