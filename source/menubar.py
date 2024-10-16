@@ -478,6 +478,7 @@ class MacroBoxPreference():
         self.playbox_only = False
         self.playbox_top_show = False
         self.playbox_side_show = False
+        # self.maximize_loudness = False
         self.playbox_title_format = None
         self.playbox_title_format = None
         color_scheme = GetPreference('color_scheme')
@@ -623,17 +624,22 @@ class MacroBoxPreference():
         self.MainPanel.ListBox.SetFilterOffAll()
         playbox_show = Struct(top=self.IsPlayerTopShowOn(), side=self.IsPlayerSideShowOn())
         listtab_show = self.IsListTabShowOn()
+        # maximize_loudness = self.IsMaximizeLoudnessOn()
 
-        SetPreferences(((('rect', self.GetRect()), ('playcue', playcue),
-                         ('highlight_duration_type', self.MainPanel.PlayBox.GetHighlightDurationTypeId()),
-                         ('playbox_information', self.MainPanel.PlayBox.Info.information),
-                         ('query_columnKey', self.MainPanel.ListSearch.query_columnKey),
-                         ('listbox_fontinfo', self.MainPanel.ListBox.GetFontInfo()),
-                         ('selectedlist', self.MainPanel.ListBox.selectedList),
-                         ('innerlist', self.MainPanel.ListBox.innerList),
-                         ('mfeats_scheduler', mfeats_scheduler),
-                         ('listtab_show', listtab_show),
-                         ('playbox_show', playbox_show))))
+        SetPreferences(((
+            ('rect', self.GetRect()),
+            ('playcue', playcue),
+            ('highlight_duration_type', self.MainPanel.PlayBox.GetHighlightDurationTypeId()),
+            ('playbox_information', self.MainPanel.PlayBox.Info.information),
+            ('query_columnKey', self.MainPanel.ListSearch.query_columnKey),
+            ('listbox_fontinfo', self.MainPanel.ListBox.GetFontInfo()),
+            ('selectedlist', self.MainPanel.ListBox.selectedList),
+            ('innerlist', self.MainPanel.ListBox.innerList),
+            ('mfeats_scheduler', mfeats_scheduler),
+            ('listtab_show', listtab_show),
+            ('playbox_show', playbox_show),
+            # ('maximize_loudness', maximize_loudness)
+        )))
 
     def LoadPreferences(self):
         query_columnKey = GetPreference('query_columnKey')
@@ -714,6 +720,28 @@ class MacroBoxPreference():
         #   self.OnTutorial(None)
         self.PlayBoxTitleFormat = PlayBoxTitleFormat(self)
         self.WebLinkPreset = WebLinkPreset()
+
+        # maximize_loudness = GetPreference('maximize_loudness')
+        # if maximize_loudness is None:
+        #     self.SetMaximizeLoudnessOn()
+        #     self.MenuBar.itemMaximizeLoudness.Check()
+        # else:
+        #     if maximize_loudness:
+        #         self.SetMaximizeLoudnessOn()
+        #         self.MenuBar.itemMaximizeLoudness.Check()
+        #     else:
+        #         self.SetMaximizeLoudnessOff()
+
+    # def SetMaximizeLoudnessOn(self):
+    #     self.maximize_loudness = True
+    #     self.MainPanel.PlayBox.AudioControl.SetMaximizeLoudnessOn()
+
+    # def SetMaximizeLoudnessOff(self):
+    #     self.maximize_loudness = False
+    #     self.MainPanel.PlayBox.AudioControl.SetMaximizeLoudnessOff()
+
+    # def IsMaximizeLoudnessOn(self):
+    #     return self.maximize_loudness
 
 
 class PlayBoxTitleFormat():
@@ -1584,6 +1612,7 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
         self.Bind(wx.EVT_MENU, self.OnListTabShow, self.MenuBar.itemListTabShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
+        # self.Bind(wx.EVT_MENU, self.OnMaximizeLoudness, self.MenuBar.itemMaximizeLoudness)
         # self.Bind(wx.EVT_MENU, self.OnScriptEditor, self.MenuBar.itemScriptEditor)
         # self.Bind(wx.EVT_MENU, self.OnHelp, self.MenuBar.itemHelp)
         self.Bind(wx.EVT_MENU, self.OnUpdate, self.MenuBar.itemUpdate)
@@ -1762,6 +1791,12 @@ class MacroBoxMenuBar():
         else:
             self.SetAlwaysOnTopOff()
 
+    def OnMaximizeLoudness(self, event):
+        if event.IsChecked():
+            self.SetMaximizeLoudnessOn()
+        else:
+            self.SetMaximizeLoudnessOff()
+
     def OnAutoAnalyze(self, event):
         if event.IsChecked():
             self.MainPanel.MFEATS.SetAutoAnalyzerOn()
@@ -1896,6 +1931,13 @@ class MenuBar(wx.MenuBar):
         # idx = [i for i, v in enumerate(self.highlightDurationItems) if value == v][0]
         self.menuOption.Append(wx.ID_ANY, u'Highlight Duration', self.itemHighlightDurationMenu)
         self.menuOption.AppendSeparator()
+
+        # self.itemMaximizeLoudness = wx.MenuItem(
+        #     self.menuOption, wx.ID_ANY, u'Maximize Loudness', wx.EmptyString, wx.ITEM_CHECK)
+        # self.menuOption.Append(self.itemMaximizeLoudness)
+        # if self.parent.IsMaximizeLoudnessOn():
+        #     self.itemMaximizeLoudness.Check()
+        # self.menuOption.AppendSeparator()
 
         self.itemAutoAnalyze = wx.MenuItem(
             self.menuOption, wx.ID_ANY, u'Auto Analyze', wx.EmptyString, wx.ITEM_CHECK)

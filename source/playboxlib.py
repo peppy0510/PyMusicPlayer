@@ -62,6 +62,8 @@ class AudioControl(threading.Thread):
         self.path = self.parent.cue.path
         self.pending = False
         self.resume = None
+        self.vstHandle = None
+        # self.maximize_loudness = False
         # self._Thread__exc_clear()
         self.start()
 
@@ -137,13 +139,17 @@ class AudioControl(threading.Thread):
         # QWORD = ctypes.c_int64
         # HSTREAM = ctypes.c_ulong
         # BASS_VST_ChannelSetDSP = func_type(
-        #     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_int64, ctypes.c_ulong)(('BASS_VST_ChannelSetDSP', bass_module))
+        #     ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_int64, ctypes.c_ulong
+        # )(('BASS_VST_ChannelSetDSP', bass_module))
         # BASS_VST_GetParam = func_type(
-        #     ctypes.c_bool, HSTREAM, ctypes.c_int64)(('BASS_VST_GetParam', bass_module))
-        # # BASS_VST_SetParam = func_type(
-        # #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float)(('BASS_VST_SetParam', bass_module))
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64
+        # )(('BASS_VST_GetParam', bass_module))
         # BASS_VST_SetParam = func_type(
-        #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float)(('BASS_VST_SetParam', bass_module))
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float
+        # )(('BASS_VST_SetParam', bass_module))
+        # BASS_VST_SetParam = func_type(
+        #     ctypes.c_bool, HSTREAM, ctypes.c_int64, ctypes.c_float
+        # )(('BASS_VST_SetParam', bass_module))
 
         # BASS_VST_EmbedEditor = func_type(
         #     ctypes.c_bool, HSTREAM, ctypes.c_int64)(('BASS_VST_EmbedEditor', bass_module))
@@ -185,13 +191,16 @@ class AudioControl(threading.Thread):
         flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
         self.vstHandle = pybass.BASS_VST_ChannelSetDSP(self.hStream, vst_plugin_path, flags, 0)
         pybass.BASS_VST_SetParam(self.vstHandle, 0, 0.0)
+        # loudness_value = 1.0 if self.maximize_loudness else 0.0
+        # pybass.BASS_VST_SetParam(self.vstHandle, 1, loudness_value)
         pybass.BASS_VST_SetParam(self.vstHandle, 1, 1.0)
         pybass.BASS_VST_SetParam(self.vstHandle, 2, 0.0)
         pybass.BASS_VST_SetParam(self.vstHandle, 3, 0.0)
         # print(os.path.join(os.path.dirname(__file__), 'packages', 'LoudMax64.dll'))
         # self.parent.Show()
         # x = BASS_VST_SetScope(self.vstHandle, 123)
-        # dialog = wx.TextEntryDialog(self.parent.parent.parent, 'Enter Your Name', 'Text Entry Dialog')
+        # dialog = wx.TextEntryDialog(
+        #     self.parent.parent.parent, 'Enter Your Name', 'Text Entry Dialog')
         # BASS_VST_EmbedEditor(self.vstHandle, dialog.GetHandle())
         # dialog.ShowModal()
         # if dialog.ShowModal() == wx.ID_OK:
@@ -230,6 +239,21 @@ class AudioControl(threading.Thread):
         # self.parent.FocusPlayingItem()
         self.parent.parent.ListTab.reInitBuffer = True
         self.parent.parent.ListBox.List.reInitBuffer = True
+
+    # def IsMaximizeLoudnessOn(self):
+    #     pybass.BASS_VST_GetParam(self.vstHandle, 1)
+
+    # def SetMaximizeLoudnessOn(self):
+    #     if not self.vstHandle:
+    #         return
+    #     self.maximize_loudness = True
+    #     pybass.BASS_VST_SetParam(self.vstHandle, 1, 1.0)
+
+    # def SetMaximizeLoudnessOff(self):
+    #     if not self.vstHandle:
+    #         return
+    #     self.maximize_loudness = False
+    #     pybass.BASS_VST_SetParam(self.vstHandle, 1, 0.0)
 
     def Quit(self):
         self.loop = False
