@@ -853,7 +853,7 @@ def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
 def getby_key_value(key, value, table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
-    query = '''SELECT * FROM %s WHERE %s="%s"''' % (table_name, key, value)
+    query = f'''SELECT * FROM {table_name} WHERE {key}="{value}"'''
     conn = None
     # sqlite.connect(':memory:', check_same_thread = False)
     conn = sqlite3.connect(db_name)
@@ -868,17 +868,20 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None):
         conn.close()
         return
     field_keys = [field_key for field_key, _ in MFEATS_DEFINITION]
-
-    exec('for %s in fetchs: break' % (','.join(field_keys)))
+    data = {k: v for k, v in zip(field_keys, fetchs[0])}
+    # exec(f'for {",".join(field_keys)} in fetchs: break')
 
     blob_field_keys = [field_key for field_key,
                        field_type in MFEATS_DEFINITION if field_type == 'BLOB']
+    # data = {}
     for field_key in blob_field_keys:
-        exec('%s = decompress_object(%s)' % (field_key, field_key))
+        data.update(**{field_key: decompress_object(data[field_key])})
+        # exec(f'{field_key} = decompress_object({field_key})')
 
     conn.close()
-    kwrds = ['='.join(v) for v in zip(field_keys, field_keys)]
-    mfeats_data = eval('MFEATS(%s)' % (','.join(kwrds)))
+    mfeats_data = MFEATS(**data)
+    # kwrds = ['='.join(v) for v in zip(field_keys, field_keys)]
+    # mfeats_data = eval('MFEATS(%s)' % (','.join(kwrds)))
     mfeats_data.key = fetchs[0][7]
     return mfeats_data
 
