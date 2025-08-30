@@ -7,6 +7,6 @@ mutagen
 wxpython
 modpybass
 objectlistview
-git+ssh://git@github.com/peppy0510/python-mstr.git
-git+ssh://git@github.com/peppy0510/python-mpath.git
-git+ssh://git@github.com/peppy0510/python-dtruct.git
+git+https://git@github.com/peppy0510/python-mstr.git
+git+https://git@github.com/peppy0510/python-mpath.git
+git+https://git@github.com/peppy0510/python-dtruct.git
