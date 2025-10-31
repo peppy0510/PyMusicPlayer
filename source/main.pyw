@@ -33,7 +33,8 @@ numpy.finfo(numpy.dtype('float32'))
 numpy.finfo(numpy.dtype('float64'))
 
 
-MAIN_SOCKET_PORT = 55557
+# MAIN_SOCKET_PORT = 55557
+MAIN_SOCKET_PORT = 55755
 
 
 def launch(filepath=None):
