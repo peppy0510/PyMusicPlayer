@@ -63,7 +63,8 @@ BOOT_NETWORK_SCHEDULER = False
 
 MULTIPROCESSING_FORK = '--multiprocessing-fork'
 
-MAIN_SOCKET_PORT = 55557
+# MAIN_SOCKET_PORT = 55557
+MAIN_SOCKET_PORT = 55755
 
 
 class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
