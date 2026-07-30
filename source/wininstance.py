@@ -44,7 +44,7 @@ def get_real_cwd(p):
     return os.path.join(p.cwd(), relcwd).rstrip(' ' + os.path.sep)
 
 
-def get_current_real_cwq():
+def get_current_real_cwd():
     cp = get_current_process()
     return get_real_cwd(cp)
 

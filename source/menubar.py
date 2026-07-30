@@ -37,7 +37,7 @@ from macroboxlib import StaticText
 from macroboxlib import TextCtrl
 from operator import itemgetter
 from utilities import Struct
-from wininstance import get_current_real_cwq
+from wininstance import get_current_real_cwd
 # from dialogbox import LicenseBox
 # from macroboxlib import *
 # from scripteditor import *
@@ -588,7 +588,7 @@ class MacroBoxPreference():
         if hasattr(sys, '_MEIPASS'):
             icon_path = os.path.join(sys._MEIPASS, icon_path)
         else:
-            cwd = os.path.dirname(get_current_real_cwq())
+            cwd = os.path.dirname(get_current_real_cwd())
             icon_path = os.path.join(cwd, icon_path)
 
         # print(self.icon_path)

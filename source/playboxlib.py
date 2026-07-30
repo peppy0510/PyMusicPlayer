@@ -36,14 +36,16 @@ class PlayBoxDnD(wx.FileDropTarget):
         self.parent = parent
 
     def OnDropFiles(self, x, y, inpaths):
+        if len(inpaths) == 0:
+            return False
         path = inpaths[0]
-        file_type = os.path.splitext(path)[1][1:]
+        file_type = os.path.splitext(path)[1][1:].lower()
         if file_type not in SUPPORTED_AUDIO_TYPE:
-            return
+            return False
         mfeats.create_mfeats_table()
         self.parent.cue.path = path
         self.parent.OnPlay()
-        return False
+        return True
 
     def __del__(self):
         pass

@@ -22,7 +22,8 @@
                 "assets",
                 "misc",
                 "bin",
-                "venv"
+                "venv",
+                ".venv"
             ],
             "binary_file_patterns": []
         }

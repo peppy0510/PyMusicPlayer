@@ -62,6 +62,7 @@ class ListBoxListDnD(wx.FileDropTarget):
         if self.parent.parent.IsFilteredAll():
             return 0
         fileImport = self.importing
+        itemDrag = self.itemDrag
         insertItemIdx = self.parent.parent.GetInsertItemIdx(y)
         self.importing = False
         # print(self.importing)
@@ -69,9 +70,9 @@ class ListBoxListDnD(wx.FileDropTarget):
         isInsertable = self.parent.parent.GetLastSortedColumn()[0] == orderIdx
         if isInsertable and insertItemIdx is None:
             return 0
-        if fileImport is False:
+        if itemDrag and fileImport is False:
             self.DropFromInside(insertItemIdx)
-        elif fileImport:
+        else:
             self.DropFromOutside(inpaths, insertItemIdx)
         return 0
 
@@ -85,22 +86,27 @@ class ListBoxListDnD(wx.FileDropTarget):
         selectedItemsData = []
         self.parent.parent.SetListLock(selectedList)
 
-        for i in selectedItems[::-1]:
-            if i < insertItemIdx:
-                offset = offset - 1
-            selectedItemsData.insert(0, self.parent.parent.innerList[selectedList].items.pop(i))
+        try:
+            for i in selectedItems[::-1]:
+                if i < 0 or i >= len(self.parent.parent.innerList[selectedList].items):
+                    continue
+                if i < insertItemIdx:
+                    offset = offset - 1
+                selectedItemsData.insert(0, self.parent.parent.innerList[selectedList].items.pop(i))
 
-        self.parent.parent.innerList[selectedList].items\
-            = self.parent.parent.innerList[selectedList].items[:offset] +\
-            selectedItemsData + self.parent.parent.innerList[selectedList].items[offset:]
+            self.parent.parent.innerList[selectedList].items\
+                = self.parent.parent.innerList[selectedList].items[:offset] +\
+                selectedItemsData + self.parent.parent.innerList[selectedList].items[offset:]
 
-        for i, v in enumerate(self.parent.parent.innerList[selectedList].items):
-            v = list(v)
-            v[orderIdx] = i + 1
-            self.parent.parent.innerList[selectedList].items[i] = tuple(v)
+            for i, v in enumerate(self.parent.parent.innerList[selectedList].items):
+                v = list(v)
+                v[orderIdx] = i + 1
+                self.parent.parent.innerList[selectedList].items[i] = tuple(v)
 
-        self.parent.parent.innerList[selectedList].selectedItems = list(range(offset, offset + len(selectedItems)))
-        self.parent.parent.SetListUnLock(selectedList)
+            self.parent.parent.innerList[selectedList].selectedItems\
+                = list(range(offset, offset + len(selectedItemsData)))
+        finally:
+            self.parent.parent.SetListUnLock(selectedList)
 
     def DropFromOutside(self, inpaths, insertItemIdx=-1,
                         selectedList=None, permit_duplicated=False, filtered=False):
@@ -131,127 +137,136 @@ class ListBoxListDnD(wx.FileDropTarget):
         # If blocking is 0, the thread will return
         # If blocking is 1, the thread will block and wait
         threadListLock.acquire(1)
+        isLocked = True
         if selectedList is None:
             selectedList = self.parent.parent.selectedList
         self.parent.parent.SetListLock(selectedList)
 
-        extended_paths = []
-        for path in inpaths:
-            if os.path.isfile(path) is False and os.path.isdir(path) is False:
-                continue
-            stats = os.stat(path)
-            if stats[stat.ST_MODE] == 16895:
-                extended_paths += self.SearchPatternIncludeSub(path, u'*')
-            else:
-                extended_paths.append(path)
-
-        pathIdx = self.parent.parent.GetColumnKeyToIdx('path', selectedList)
-        orderIdx = self.parent.parent.GetColumnKeyToIdx('order', selectedList)
-        sortedColumnIdx = self.parent.parent.GetLastSortedColumn(selectedList)[0]
-
-        isOrdered = sortedColumnIdx == orderIdx
-        # If insertItemIdx is -1, inpaths will be appended
-        # If insertItemIdx is not -1, inpaths will be inserted
-        # print len(extended_paths)
-
-        imported_count = 0
-        already_have_count = 0
-
-        if isOrdered and insertItemIdx != -1:
-            isInsertable = True
-            order = insertItemIdx + 1
-        else:
-            insertItemIdx = 0
-            isInsertable = False
-            order = self.parent.parent.GetItemsLength(selectedList) + 1
-
-        for segcnt in range(0, len(extended_paths), jobsegSize):
-
-            innerListSeg = []
-            for path in extended_paths[segcnt:segcnt + jobsegSize]:
-
-                if permit_duplicated is False:
-                    if list(filter(lambda v: v[pathIdx] == path,
-                                   self.parent.parent.innerList[selectedList].items)) != []:
-                        already_have_count += 1
-                        continue
-                columns = self.parent.parent.innerList[selectedList].columns
-                item = MakeMusicFileItem(path, order, columns)
-                try:
-                    item = MakeMusicFileItem(path, order, columns)
-                except Exception:
-                    item = None
-                if item is None:
-                    continue
-                order += 1
-                imported_count += 1
-
-                innerListSeg.append(tuple(item))
-
-            selectedItems = self.parent.parent.GetSelectedItems(selectedList)
-
-            if isInsertable:
-
-                for i, v in enumerate(self.parent.parent.innerList[selectedList].items[insertItemIdx:]):
-                    v = list(v)
-                    v[orderIdx] = v[orderIdx] + len(innerListSeg)
-                    self.parent.parent.innerList[selectedList].items[insertItemIdx + i] = tuple(v)
-                self.parent.parent.innerList[selectedList].items\
-                    = self.parent.parent.innerList[selectedList]\
-                    .items[:insertItemIdx] + innerListSeg + self.parent.parent\
-                    .innerList[selectedList].items[insertItemIdx:]
-
-                for i in range(len(selectedItems)):
-                    if selectedItems[i] >= insertItemIdx:
-                        selectedItems[i] = selectedItems[i] + len(innerListSeg)
-                self.parent.parent.innerList[selectedList].selectedItems = selectedItems
-
-            else:
-
-                self.parent.parent.innerList[selectedList].items\
-                    = self.parent.parent.innerList[selectedList].items + innerListSeg
-
-            self.parent.parent.SortColumn(sortedColumnIdx, selectedList)
-            self.parent.parent.SortColumn(sortedColumnIdx, selectedList)
-            insertItemIdx = order - 1
-            # imported_count += 1
-            self.parent.parent.reInitBuffer = True
         try:
-            del extended_paths, stats, innerListSeg
-        except Exception:
-            pass
+            extended_paths = []
+            for path in inpaths:
+                if os.path.isfile(path) is False and os.path.isdir(path) is False:
+                    continue
+                stats = os.stat(path)
+                if stat.S_ISDIR(stats[stat.ST_MODE]):
+                    extended_paths += self.SearchPatternIncludeSub(path, u'*')
+                else:
+                    extended_paths.append(path)
 
-        # print(len(self.parent.parent.innerList[0].items))
+            pathIdx = self.parent.parent.GetColumnKeyToIdx('path', selectedList)
+            orderIdx = self.parent.parent.GetColumnKeyToIdx('order', selectedList)
+            sortedColumnIdx = self.parent.parent.GetLastSortedColumn(selectedList)[0]
 
-        threadListLock.release()
-        self.dropTimer = 0
-        self.itemDrag = False
-        self.insertItemIdx = None
-        self.parent.parent.reInitBuffer = True
-        self.parent.parent.SetListUnLock(selectedList)
-        # self.parent.parent.parent.Event.SetCursorARROW()
-        self.parent.parent.parent.MFEATS.AutoAnalyzer()
-        gc.collect(2)
-        # collected = gc.collect(2)
-        message = ['Imported %d tracks' % imported_count]
-        if already_have_count > 0:
-            message += ['%d tracks already in the playlist' % already_have_count]
-            self.parent.parent.parent.StatusBox.alarm_color = 'red'
-        else:
-            self.parent.parent.parent.StatusBox.alarm_color = 'blue'
-        message = ' / '.join(message)
-        self.parent.parent.parent.StatusBox.alarm_timer = 0
-        self.parent.parent.parent.StatusBox.alarm = message
+            isOrdered = sortedColumnIdx == orderIdx
+            # If insertItemIdx is -1, inpaths will be appended
+            # If insertItemIdx is not -1, inpaths will be inserted
+            # print len(extended_paths)
 
-    def SearchPatternIncludeSub(self, filepath, pattern='*'):
+            imported_count = 0
+            already_have_count = 0
+
+            if isOrdered and insertItemIdx != -1:
+                isInsertable = True
+                order = insertItemIdx + 1
+            else:
+                insertItemIdx = 0
+                isInsertable = False
+                order = self.parent.parent.GetItemsLength(selectedList) + 1
+
+            for segcnt in range(0, len(extended_paths), jobsegSize):
+
+                innerListSeg = []
+                for path in extended_paths[segcnt:segcnt + jobsegSize]:
+
+                    if permit_duplicated is False:
+                        if list(filter(lambda v: v[pathIdx] == path,
+                                       self.parent.parent.innerList[selectedList].items)) != []:
+                            already_have_count += 1
+                            continue
+                    columns = self.parent.parent.innerList[selectedList].columns
+                    item = MakeMusicFileItem(path, order, columns)
+                    if item is None:
+                        continue
+                    order += 1
+                    imported_count += 1
+
+                    innerListSeg.append(tuple(item))
+
+                selectedItems = self.parent.parent.GetSelectedItems(selectedList)
+
+                if isInsertable:
+
+                    for i, v in enumerate(self.parent.parent.innerList[selectedList].items[insertItemIdx:]):
+                        v = list(v)
+                        v[orderIdx] = v[orderIdx] + len(innerListSeg)
+                        self.parent.parent.innerList[selectedList].items[insertItemIdx + i] = tuple(v)
+                    self.parent.parent.innerList[selectedList].items\
+                        = self.parent.parent.innerList[selectedList]\
+                        .items[:insertItemIdx] + innerListSeg + self.parent.parent\
+                        .innerList[selectedList].items[insertItemIdx:]
+
+                    for i in range(len(selectedItems)):
+                        if selectedItems[i] >= insertItemIdx:
+                            selectedItems[i] = selectedItems[i] + len(innerListSeg)
+                    self.parent.parent.innerList[selectedList].selectedItems = selectedItems
+
+                else:
+
+                    self.parent.parent.innerList[selectedList].items\
+                        = self.parent.parent.innerList[selectedList].items + innerListSeg
+
+                self.parent.parent.SortColumn(sortedColumnIdx, selectedList)
+                self.parent.parent.SortColumn(sortedColumnIdx, selectedList)
+                insertItemIdx = order - 1
+                # imported_count += 1
+                self.parent.parent.reInitBuffer = True
+            try:
+                del extended_paths, stats, innerListSeg
+            except Exception:
+                pass
+
+            # print(len(self.parent.parent.innerList[0].items))
+
+            threadListLock.release()
+            isLocked = False
+            self.dropTimer = 0
+            self.itemDrag = False
+            self.insertItemIdx = None
+            self.parent.parent.reInitBuffer = True
+            self.parent.parent.SetListUnLock(selectedList)
+            # self.parent.parent.parent.Event.SetCursorARROW()
+            self.parent.parent.parent.MFEATS.AutoAnalyzer()
+            gc.collect(2)
+            # collected = gc.collect(2)
+            message = ['Imported %d tracks' % imported_count]
+            if already_have_count > 0:
+                message += ['%d tracks already in the playlist' % already_have_count]
+                self.parent.parent.parent.StatusBox.alarm_color = 'red'
+            else:
+                self.parent.parent.parent.StatusBox.alarm_color = 'blue'
+            message = ' / '.join(message)
+            self.parent.parent.parent.StatusBox.alarm_timer = 0
+            self.parent.parent.parent.StatusBox.alarm = message
+        finally:
+            if isLocked:
+                threadListLock.release()
+            self.parent.parent.SetListUnLock(selectedList)
+
+    def SearchPatternIncludeSub(self, filepath, pattern='*', visited=None):
         # filepath = unicode(filepath)
         # pattern = unicode(pattern)
+        if visited is None:
+            visited = set()
+        realpath = os.path.realpath(filepath)
+        if realpath in visited:
+            return []
+        visited.add(realpath)
         retlist = glob.glob(os.path.join(filepath, pattern))
         findlist = os.listdir(filepath)
         for f in findlist:
             next = os.path.join(filepath, f)
             if os.path.isdir(next):
-                retlist += self.SearchPatternIncludeSub(next, pattern)
+                retlist += self.SearchPatternIncludeSub(next, pattern, visited)
             # else: retlist += [next]
         return retlist
 

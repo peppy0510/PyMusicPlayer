@@ -111,9 +111,9 @@ class ListBoxTabDnD(wx.FileDropTarget):
             stats = os.stat(path)
             basename = os.path.basename(path)
             file_type = os.path.splitext(basename)[1][1:].lower()
-            if stats[stat.ST_MODE] == 16895:
+            if stat.S_ISDIR(stats[stat.ST_MODE]):
                 title = basename
-            elif stats[stat.ST_MODE] == 33206\
+            elif stat.S_ISREG(stats[stat.ST_MODE])\
                     and file_type in SUPPORTED_PLAYLIST_TYPE:
                 title = os.path.splitext(basename)[0]
                 inpaths = audio.read_m3u(path)
@@ -127,13 +127,12 @@ class ListBoxTabDnD(wx.FileDropTarget):
 
     def DropFromOutside(self, inpaths, tabRectIdx=None):
 
-        kwargs = {}
-        if tabRectIdx:
-            kwargs.update({'selectedList': tabRectIdx})
+        if tabRectIdx is None:
+            tabRectIdx = self.parent.parent.parent.ListBox.selectedList
 
         t = threading.Thread(
             target=self.parent.parent.parent.ListBox.List.FileDrop.DropFromOutside,
-            args=(inpaths,), kwargs=kwargs, daemon=True
+            args=(inpaths,), kwargs={'selectedList': tabRectIdx}, daemon=True
         )
         t.start()
 
@@ -143,15 +142,21 @@ class ListBoxTabDnD(wx.FileDropTarget):
         self.DropFromOutside(inpaths, tabRectIdx)
         self.parent.reInitBuffer = True
 
-    def SearchPatternIncludeSub(self, filepath, pattern='*'):
+    def SearchPatternIncludeSub(self, filepath, pattern='*', visited=None):
         # filepath = unicode(filepath)
         # pattern = unicode(pattern)
+        if visited is None:
+            visited = set()
+        realpath = os.path.realpath(filepath)
+        if realpath in visited:
+            return []
+        visited.add(realpath)
         retlist = glob.glob(os.path.join(filepath, pattern))
         findlist = os.listdir(filepath)
         for f in findlist:
             next = os.path.join(filepath, f)
             if os.path.isdir(next):
-                retlist += self.SearchPatternIncludeSub(next, pattern)
+                retlist += self.SearchPatternIncludeSub(next, pattern, visited)
         return retlist
 
 

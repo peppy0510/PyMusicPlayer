@@ -16,3 +16,4 @@ source/scipy
 desktop.ini
 .sublime-workspace
 *.sublime-workspace
+/CLAUDE.md
