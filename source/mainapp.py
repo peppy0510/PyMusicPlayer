@@ -28,6 +28,7 @@ import wx
 
 from dialogbox import AutoCheckUpdate
 from listbox import ListBox
+from listbox import ListBoxSash
 from listbox import ListBoxSearch
 from listbox import ListBoxTab
 from listbox import StatusBox
@@ -66,6 +67,13 @@ MULTIPROCESSING_FORK = '--multiprocessing-fork'
 # MAIN_SOCKET_PORT = 55557
 MAIN_SOCKET_PORT = 55755
 
+LIST_SASH_WIDTH = 5
+LIST_SASH_GRAB = 1
+LIST_TAB_WIDTH = 180
+LIST_TAB_WIDTH_MIN = 120
+LIST_TAB_WIDTH_RATIO_MAX = 0.5
+LIST_BOX_WIDTH_MIN = 240
+
 
 class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
@@ -88,9 +96,11 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             self.MFEATS = MFEATS_Scheduler(self)
 
         self.showListTab = True
+        self.list_tab_width = LIST_TAB_WIDTH
         self.PlayBox = PlayBox(self)
         self.ListBox = ListBox(self)
         self.ListTab = ListBoxTab(self)
+        self.ListSash = ListBoxSash(self)
         self.ListSearch = ListBoxSearch(self)
         self.StatusBox = StatusBox(self)
         # self.BorderBoxHT = BorderBoxH(self)
@@ -128,7 +138,8 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.VectorScope.CatchEvent(event)
         self.PlayBox.Apic.CatchEvent(event)
         self.PlayBox.VolumeSlider.CatchEvent(event)
-        if self.ListBox.IsAnyListLocked() is False:
+        self.ListSash.CatchEvent(event)
+        if self.ListBox.IsAnyListLocked() is False and self.ListSash.IsOnSize() is False:
             self.ListTab.TabList.CatchEvent(event)
             self.ListTab.SliderV.CatchEvent(event)
             self.ListTab.TabHeader.CatchEvent(event)
@@ -162,10 +173,12 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         if w < left_panel_min_activate_width:
             left_panel_width = 0
             right_panel_width = 0
+            sash_width = 0
         else:
             left_panel_width = math.ceil(160 + (w - left_panel_min_activate_width) * 0.333)
-            left_panel_width = 180
+            left_panel_width = self.LimitListTabWidth(self.list_tab_width)
             right_panel_width = 0
+            sash_width = LIST_SASH_WIDTH
         self.ListBox.SetRect((
             left_panel_width,
             pbh + sph,
@@ -176,6 +189,10 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.StatusBox.SetRect((0, h - 27 - 5, w, 27))
         self.ListTab.SetRect((
             0, pbh + sph, left_panel_width,
+            h - pbh + sph - (26 + 35 + 5) + 26)
+        )
+        self.ListSash.SetRect((
+            left_panel_width - LIST_SASH_GRAB, pbh + sph, sash_width,
             h - pbh + sph - (26 + 35 + 5) + 26)
         )
 
@@ -194,6 +211,30 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.OnSize()
         self.BorderBoxHB.OnSize()
         self.Thaw()
+
+    def GetListTabWidth(self):
+        return self.list_tab_width
+
+    def SetListTabWidth(self, width):
+        width = self.LimitListTabWidth(width)
+        if width == self.list_tab_width:
+            return
+        self.list_tab_width = width
+        self.OnSize()
+
+    def ResetListTabWidth(self):
+        self.SetListTabWidth(LIST_TAB_WIDTH)
+
+    def LimitListTabWidth(self, width):
+        w, h = self.GetSize()
+        limit = math.floor(w * LIST_TAB_WIDTH_RATIO_MAX)
+        if limit > w - LIST_BOX_WIDTH_MIN:
+            limit = w - LIST_BOX_WIDTH_MIN
+        if limit > LIST_TAB_WIDTH_MIN and width > limit:
+            width = limit
+        if width < LIST_TAB_WIDTH_MIN:
+            width = LIST_TAB_WIDTH_MIN
+        return width
 
     def SetRectPre(self):
         pass  # override this method

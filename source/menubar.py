@@ -190,7 +190,7 @@ class KeymapPreset():
         else:
             self.keymap_preset = preset
 
-        if len(preset or []) != default_preset:
+        if len(preset or []) != len(default_preset):
             self.keymap_preset = default_preset
 
     def GetNameSpaceByRawKeyFlag(self, keyflag, ctrl=False, shift=False):
@@ -220,6 +220,7 @@ class KeymapPreset():
             ('fast_forward', 'D'),
             ('fast_backward', 'S'),
             ('loop_toggle', 'R'),
+            ('loud_toggle', 'T'),
             ('highlight_toggle', 'Q'),
             ('highlight_decrease', '1'),
             ('highlight_increase', '2'),
@@ -251,6 +252,7 @@ class KeymapPreset():
             'Fast forward',
             'Fast backward',
             'Loop toggle',
+            'Loud toggle',
             'Highlight toggle',
             'Highlight duration -',
             'Highlight duration +',
@@ -624,6 +626,7 @@ class MacroBoxPreference():
         self.MainPanel.ListBox.SetFilterOffAll()
         playbox_show = Struct(top=self.IsPlayerTopShowOn(), side=self.IsPlayerSideShowOn())
         listtab_show = self.IsListTabShowOn()
+        listtab_width = self.MainPanel.GetListTabWidth()
         # maximize_loudness = self.IsMaximizeLoudnessOn()
 
         SetPreferences(((
@@ -637,6 +640,7 @@ class MacroBoxPreference():
             ('innerlist', self.MainPanel.ListBox.innerList),
             ('mfeats_scheduler', mfeats_scheduler),
             ('listtab_show', listtab_show),
+            ('listtab_width', listtab_width),
             ('playbox_show', playbox_show),
             # ('maximize_loudness', maximize_loudness)
         )))
@@ -660,6 +664,10 @@ class MacroBoxPreference():
                 self.MenuBar.itemPlayerSideShow.Check()
             else:
                 self.SetPlayerSideShowOff()
+
+        listtab_width = GetPreference('listtab_width')
+        if listtab_width is not None:
+            self.MainPanel.SetListTabWidth(listtab_width)
 
         listtab_show = GetPreference('listtab_show')
         if listtab_show is None:

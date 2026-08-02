@@ -198,6 +198,7 @@ class AudioControl(threading.Thread):
         pybass.BASS_VST_SetParam(self.vstHandle, 1, 1.0)
         pybass.BASS_VST_SetParam(self.vstHandle, 2, 0.0)
         pybass.BASS_VST_SetParam(self.vstHandle, 3, 0.0)
+        self.SetVSTBypass()
         # print(os.path.join(os.path.dirname(__file__), 'packages', 'LoudMax64.dll'))
         # self.parent.Show()
         # x = BASS_VST_SetScope(self.vstHandle, 123)
@@ -257,6 +258,11 @@ class AudioControl(threading.Thread):
     #     self.maximize_loudness = False
     #     pybass.BASS_VST_SetParam(self.vstHandle, 1, 0.0)
 
+    def SetVSTBypass(self):
+        if not self.vstHandle:
+            return
+        pybass.BASS_VST_SetBypass(self.vstHandle, self.parent.IsLoudOn() is False)
+
     def Quit(self):
         self.loop = False
         if pybass.BASS_ChannelIsActive(self.hStream) == 1:
@@ -288,7 +294,8 @@ class PlayBoxControl():
                           is_playing=False, hStream=0, tempo=0.0, key='-',
                           offset=0, finish=0, duration=0.0, position=0.0, resume=0,
                           fffrTime=15, fffr_variable=15.0, fffr_static=15, channel=2,
-                          loop_on=False, autogain_on=False, autogain=0.4, volume=1.0,
+                          loop_on=False, loud_on=True, autogain_on=False, autogain=0.4,
+                          volume=1.0,
                           auto_next=True, highlight_on=False, highlight_skip=False,
                           highlight_offset=None, highlight_variable=None, highlight_static=32,
                           order=None, listId=None, item=None, agc_headroom=1.0,)
@@ -565,6 +572,22 @@ class PlayBoxControl():
 
     def SetLoopOff(self):
         self.cue.loop_on = False
+
+    def IsLoudOn(self):
+        return getattr(self.cue, 'loud_on', True)
+
+    def SetLoudOn(self):
+        self.cue.loud_on = True
+        self.UpdateVSTBypass()
+
+    def SetLoudOff(self):
+        self.cue.loud_on = False
+        self.UpdateVSTBypass()
+
+    def UpdateVSTBypass(self):
+        if hasattr(self, 'AudioControl') is False:
+            return
+        self.AudioControl.SetVSTBypass()
 
     def IsHighlightOn(self):
         return self.cue.highlight_on

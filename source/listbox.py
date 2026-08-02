@@ -32,6 +32,7 @@ from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
+from macroboxlib import EVT_GLOBAL
 from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_ITEM_SIZE
 from macroboxlib import GetPreference
@@ -1217,6 +1218,89 @@ class ListBoxHeader(RectBox):
 
     def OnSize(self, event=None):
         self.DirectDraw()
+
+
+class ListBoxSash():
+
+    # sash has no window of its own, it only grabs the ListTab and ListBox border
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.rect = (0, 0, 0, 0)
+        self.cursor_window = None
+        self.cursor_stock = Struct(
+            ARROW=wx.Cursor(wx.CURSOR_ARROW),
+            SIZEWE=wx.Cursor(wx.CURSOR_SIZEWE))
+        self.pending = Struct(drag_offset=None, width_reset=False)
+
+    def SetRect(self, rect):
+        self.rect = rect
+
+    def IsOnSize(self):
+        if self.pending.drag_offset is not None:
+            return True
+        return self.pending.width_reset
+
+    def IsInSash(self, event):
+        if self.rect[2] <= 0:
+            return False
+        xy = self.parent.ScreenToClient((event.x, event.y))
+        return self.parent.IsInRect(self.rect, xy)
+
+    def CatchEvent(self, event):
+        if event.EventType != EVT_GLOBAL.evtType[0]:
+            return
+        if self.IsOnSize() is False and self.parent.HasToSkipEvent():
+            self.SetCursorARROW()
+            return
+        self.HandleEventSashWidthReset(event)
+        self.HandleEventSashDrag(event)
+        self.HandleEventSashCursor(event)
+
+    def HandleEventSashWidthReset(self, event):
+        if event.LeftIsDown is False and event.LeftUp is False:
+            self.pending.width_reset = False
+        if event.LeftDClick is False:
+            return
+        if self.IsInSash(event) is False:
+            return
+        self.pending.width_reset = True
+        self.pending.drag_offset = None
+        self.parent.ResetListTabWidth()
+
+    def HandleEventSashDrag(self, event):
+        if event.LeftIsDown is False:
+            if event.LeftUp is False:
+                self.pending.drag_offset = None
+            return
+        if self.pending.width_reset:
+            return
+        if self.pending.drag_offset is None:
+            if event.LeftDown is False:
+                return
+            if self.IsInSash(event) is False:
+                return
+            x, y = self.parent.ScreenToClient((event.down.x, event.down.y))
+            self.pending.drag_offset = x - self.parent.GetListTabWidth()
+        x, y = self.parent.ScreenToClient((event.x, event.y))
+        self.parent.SetListTabWidth(x - self.pending.drag_offset)
+
+    def HandleEventSashCursor(self, event):
+        if self.IsOnSize() is False and self.IsInSash(event) is False:
+            self.SetCursorARROW()
+            return
+        window = wx.FindWindowAtPoint((event.x, event.y))
+        if window is None or window is self.cursor_window:
+            return
+        self.SetCursorARROW()
+        self.cursor_window = window
+        window.SetCursor(self.cursor_stock.SIZEWE)
+
+    def SetCursorARROW(self):
+        if self.cursor_window is None:
+            return
+        self.cursor_window.SetCursor(self.cursor_stock.ARROW)
+        self.cursor_window = None
 
 
 class SearchText(wx.TextCtrl):

@@ -72,6 +72,12 @@ a.datas += grapdatas(path.assets, 'dlls', 2, 'DATA', [
     'LoudMax.dll', 'LoudMax64.dll', 'LoudMaxLite.dll', 'LoudMaxLite64.dll'])
 a.datas += grapdatas(path.assets, 'dlls', 2, 'DATA', [
     'bass.dll', 'bass_fx.dll', 'bass_vst.dll', 'bassmidi.dll', 'bassmix.dll', 'tags.dll'])
+# licence texts must ship with the build too, not just with the repository
+a.datas += grapdatas(path.home, os.path.join('licenses', 'BASS_VST'), 2, 'DATA')
+a.datas += grapdatas(path.home, os.path.join('licenses', 'Unifont'), 2, 'DATA')
+a.datas += [('LICENSE', os.path.join(path.home, 'LICENSE'), 'DATA')]
+a.datas += [('THIRD-PARTY-NOTICES.md',
+             os.path.join(path.home, 'THIRD-PARTY-NOTICES.md'), 'DATA')]
 # a.datas += grapdatas(path.packages, 1, 'DATA', ['bass.dll'])
 # a.datas += grapdatas(path.packages, 1, 'DATA', ['LoudMax.dll', 'LoudMax64.dll'])
 # a.datas += grapdatas(path.scipydll, 1, 'DATA')

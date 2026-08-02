@@ -1,6 +1,7 @@
 */__pycache__
 */__test__
 *.txt
+!licenses/**/*.txt
 *.pyc
 *.pyo
 *.tmp

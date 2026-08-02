@@ -79,3 +79,13 @@
 * Mac OSX support.
 * Adjustable playlist and tracklist splitter supports.
 
+
+## License
+
+The code in `source/` is released under the MIT license, see [LICENSE](LICENSE).
+
+Third-party binaries and assets bundled in this repository — including BASS (un4seen),
+BASS_VST (GNU LGPL v3), LoudMax and GNU Unifont — are **not** covered by that license and
+remain under their own terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the
+full list, and `licenses/` for the license texts.
+

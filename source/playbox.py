@@ -151,12 +151,12 @@ class PlayBox(RectBox, PlayBoxControl):
                 self.SetLoopOn()
             self.reInitBuffer = True
 
-        # if namespace == 'agc_toggle' and self.cache.oneshotkey is False:
-        #   self.cache.oneshotkey = True
-        #   if self.IsAutoGainOn():
-        #       self.SetAutoGainOff()
-        #   else: self.SetAutoGainOn()
-        #   self.reInitBuffer = True
+        if namespace == 'loud_toggle' and self.cache.oneshotkey is False:
+            self.cache.oneshotkey = True
+            if self.IsLoudOn():
+                self.SetLoudOff()
+            else:
+                self.SetLoudOn()
 
         if namespace == 'previous_track':
             self.ControlButton.SetButtonFlash(1)
@@ -239,12 +239,9 @@ class PlayBoxControlButton(RectBox):
         self.button_color_down = (180, 180, 180)
         self.polygons = Struct(play=None, next=None, prev=None)
         self.downed_button = None
-        self.button_flash = [0.0, 0.0, 0.0, 0.0, 0.0]
-        self.button_status = [False, False, False, False, False]
-        self.toggle_buttons = [True, False, True, False, True]
-        # self.button_flash = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        # self.button_status = [False, False, False, False, False, False]
-        # self.toggle_buttons = [True, False, True, False, True, True]
+        self.button_flash = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.button_status = [False, False, False, False, False, False]
+        self.toggle_buttons = [True, False, True, False, True, True]
         self.SetBackgroundColour((35, 35, 35))
         self.SetPreInitRects()
         self.SetButtonColors()
@@ -257,7 +254,7 @@ class PlayBoxControlButton(RectBox):
         for nv in ('ff', 'fr'):
             for cv in ('black', 'white'):
                 exec(command % (nv, cv, nv, cv))
-        for nv in ('highlight', 'play', 'loop'):
+        for nv in ('highlight', 'play', 'loop', 'loud'):
             for cv in ('red', 'black', 'white'):
                 exec(command % (nv, cv, nv, cv))
 
@@ -316,12 +313,12 @@ class PlayBoxControlButton(RectBox):
         elif self.parent.IsLoopOn() is False and self.button_status[4]:
             self.button_status[4] = False
             self.SetButtonColors()
-        # elif self.parent.IsAutoGainOn() and self.button_status[5] is False:
-        #   self.button_status[5] = True
-        #   self.SetButtonColors()
-        # elif self.parent.IsAutoGainOn() is False and self.button_status[5]:
-        #   self.button_status[5] = False
-        #   self.SetButtonColors()
+        elif self.parent.IsLoudOn() and self.button_status[5] is False:
+            self.button_status[5] = True
+            self.SetButtonColors()
+        elif self.parent.IsLoudOn() is False and self.button_status[5]:
+            self.button_status[5] = False
+            self.SetButtonColors()
 
     def HandleEventPlayControl(self, event):
         if event.LeftDown is False:
@@ -339,10 +336,10 @@ class PlayBoxControlButton(RectBox):
             self.parent.SetLoopOn()
         if downIdx == 4 and status[4] is False:
             self.parent.SetLoopOff()
-        # if downIdx == 5 and status[5]:
-        #   self.parent.SetAutoGainOn()
-        # if downIdx == 5 and status[5] is False:
-        #   self.parent.SetAutoGainOff()
+        if downIdx == 5 and status[5]:
+            self.parent.SetLoudOn()
+        if downIdx == 5 and status[5] is False:
+            self.parent.SetLoudOff()
 
         if downIdx == 1:
             self.parent.OnPrev()
@@ -414,22 +411,23 @@ class PlayBoxControlButton(RectBox):
         # exec('bmp = self.bmp.loop_%s' % (button_colors[4]))
         bmp = getattr(self.bmp, 'loop_%s' % (button_colors[4]))
         dc.DrawBitmap(bmp, 140 + 40, 1, useMask=False)
-        # exec('bmp = self.bmp.agc_%s' % (button_colors[5]))
-        # dc.DrawBitmap(bmp, 140+40*2, 1, useMask=False)
+        # exec('bmp = self.bmp.loud_%s' % (button_colors[5]))
+        bmp = getattr(self.bmp, 'loud_%s' % (button_colors[5]))
+        dc.DrawBitmap(bmp, 140 + 40 * 2, 1, useMask=False)
 
         dc.DrawLineList(self.lines, pens=wx.Pen((0, 0, 0), 1))
 
     # Buffered DC
 
     def OnSize(self, event=None):
-        self.SetRect((5, 5, 220, self.height))
+        self.SetRect((5, 5, 260, self.height))
         self.DirectDraw()
 
     def SetPreInitRects(self):
         # make polygons, rectangles and lines when class starts
         x, y, h = (2, 2, 19)
         rects = ((x, y, 56, h), (59 + x, y, 37, h), (99 + x, y, 37, h),
-                 (139 + x, y, 37, h), (179 + x, y, 37, h),)
+                 (139 + x, y, 37, h), (179 + x, y, 37, h), (219 + x, y, 37, h),)
         self.rects = rects
         rx = rects[-1][0] + rects[-1][2] + 1
         lines = [(0, rects[-1][3] + 3, rx + 1, rects[-1][3] + 3)]
