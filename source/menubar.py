@@ -1719,6 +1719,14 @@ class MacroBoxMenuBar():
         else:
             self.SetListTabShowOff()
 
+    def ToggleListTabShow(self):
+        if self.IsListTabShowOn():
+            self.SetListTabShowOff()
+            self.MenuBar.itemListTabShow.Check(False)
+        else:
+            self.SetListTabShowOn()
+            self.MenuBar.itemListTabShow.Check()
+
     def OnPlayerTopShow(self, event):
         if event.IsChecked():
             self.SetPlayerTopShowOn()

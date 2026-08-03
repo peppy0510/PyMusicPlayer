@@ -817,12 +817,7 @@ class ListBoxList(RectBox):
             event.RawKeyFlags, ctrl, event.ShiftDown)
 
         if namespace == 'playlist_toggle':
-            if self.parent.parent.parent.IsListTabShowOn():
-                self.parent.parent.parent.SetListTabShowOff()
-                self.parent.parent.parent.MenuBar.itemListTabShow.Check(False)
-            else:
-                self.parent.parent.parent.SetListTabShowOn()
-                self.parent.parent.parent.MenuBar.itemListTabShow.Check()
+            self.parent.parent.parent.ToggleListTabShow()
 
         if namespace == 'open_id3tageditor':
             self.OpenItemEditBox(event)
@@ -2380,6 +2375,10 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 
 class StatusBox(RectBox):
 
+    # 왼쪽 재생목록 패널(ListTab)을 여닫는 버튼.
+    TOGGLE_RECT = (8, 8, 14, 12)
+    MESSAGE_LEFT_X = 30
+
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         st = self.parent.parent.st.LISTBOX
@@ -2389,10 +2388,53 @@ class StatusBox(RectBox):
         self.alarm = None
         self.alarm_color = None
         self.alarm_timer = 0
+        self.rects = (self.TOGGLE_RECT,)
+        self.toggle_hovered = False
+        self.toggle_downed = False
         self.InitBuffer()
+
+    def GetRectIdx(self, xy):
+        if self.onClient is False:
+            return None
+        for i in range(len(self.rects)):
+            if self.IsInRect(self.rects[i], xy):
+                return i
+        return None
+
+    def HandleToggleButton(self, event):
+        # event.down.rectIdx 는 직전 클릭 값이 캐시로 남아 클릭 없이도 통과한다.
+        # 눌림 -> 뗌 전이를 직접 들고 있다가 버튼 위에서 뗐을 때만 토글한다.
+        hovered = self.onClient and event.rectIdx == 0
+        if hovered != self.toggle_hovered:
+            self.toggle_hovered = hovered
+            self.reInitBuffer = True
+
+        if event.LeftIsDown:
+            if self.toggle_downed is False and hovered:
+                self.toggle_downed = True
+            return
+
+        if self.toggle_downed:
+            self.toggle_downed = False
+            if hovered:
+                self.parent.parent.ToggleListTabShow()
+                self.reInitBuffer = True
+
+    def DrawToggleButton(self, dc):
+        x, y, w, h = self.TOGGLE_RECT
+        if self.toggle_hovered:
+            r, g, b = (0, 0, 120)
+        elif self.parent.parent.IsListTabShowOn():
+            r, g, b = (0, 0, 0)
+        else:
+            r, g, b = (110, 110, 110)
+        bars = [(x + 2, y + 2 + i * 3, 10, 1) for i in range(3)]
+        dc.DrawRectangleList(bars, pens=wx.Pen(wx.Colour(r, g, b), 1),
+                             brushes=wx.Brush(wx.Colour(r, g, b)))
 
     def CATCH_EVT_GLOBAL(self, event):
         self.HandleMessages()
+        self.HandleToggleButton(event)
         if self.alarm is not None:
             self.alarm_timer += 1
         if self.alarm_timer > 50:
@@ -2441,7 +2483,7 @@ class StatusBox(RectBox):
         font.SetFaceName(FONT_ITEM)
         dc.SetFont(font)
         tw, th = dc.GetTextExtent(message_right)
-        xys = ((10, 7), (w - tw - 10, 7),)
+        xys = ((self.MESSAGE_LEFT_X, 7), (w - tw - 10, 7),)
         if self.alarm_color == 'blue':
             color_left = wx.Colour(0, 0, 120)
         elif self.alarm_color == 'red':
@@ -2453,6 +2495,7 @@ class StatusBox(RectBox):
         else:
             color_right = wx.Colour(0, 0, 0)
         dc.DrawTextList(self.messages, xys, foregrounds=(color_left, color_right))
+        self.DrawToggleButton(dc)
 
     def OnSize(self, event=None):
         self.DirectDraw()

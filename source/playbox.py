@@ -29,6 +29,10 @@ from utilities import Struct
 # from playboxlib import *  # noqa
 
 
+# 재생 정보(템포, 조성, 재생위치, 길이) 구분자
+SEPARATOR = ' | '
+
+
 class PlayBox(RectBox, PlayBoxControl):
 
     def __init__(self, parent):
@@ -222,6 +226,10 @@ class PlayBox(RectBox, PlayBoxControl):
 
 
 class PlayBoxControlButton(RectBox):
+
+    # 버튼 띠는 창 폭과 무관하게 고정이다. PlayBoxInfo 가 남는 폭을 계산할 때 쓴다.
+    STRIP_X = 5
+    STRIP_WIDTH = 260
 
     def __init__(self, parent):
         RectBox.__init__(self, parent)
@@ -420,7 +428,7 @@ class PlayBoxControlButton(RectBox):
     # Buffered DC
 
     def OnSize(self, event=None):
-        self.SetRect((5, 5, 260, self.height))
+        self.SetRect((self.STRIP_X, 5, self.STRIP_WIDTH, self.height))
         self.DirectDraw()
 
     def SetPreInitRects(self):
@@ -645,6 +653,10 @@ class PlayBoxTitle(RectBox):
 
 class PlayBoxInfo(RectBox):
 
+    # 표시는 tempo | key | position | duration 순서지만,
+    # 폭이 모자랄 때는 key -> tempo -> position 순으로 숨긴다. duration 은 항상 남는다.
+    HIDE_ORDER = (1, 0, 2)
+
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
@@ -653,6 +665,7 @@ class PlayBoxInfo(RectBox):
         self.information = GetPreference('playbox_information')
         if self.information is None:
             self.information = '000.0 | - | 00:00:00 | 00:00:00'
+        self.segments = self.information.split(SEPARATOR)
 
         self.SetBackgroundColour(COLOR_TOOLBAR_BG)
         self.InitBuffer()
@@ -660,14 +673,27 @@ class PlayBoxInfo(RectBox):
     def SetRectDraw(self, dc):
         self.DrawInfo(dc)
 
+    def GetFittingInformation(self, dc):
+        # 폭이 모자라면 HIDE_ORDER 순서로 하나씩 뺀다. 표시 순서와는 별개다.
+        width = self.GetSize().width
+        shown = list(self.segments)
+        for index in self.HIDE_ORDER:
+            if index >= len(shown):
+                continue
+            information = SEPARATOR.join([v for v in shown if v is not None])
+            if dc.GetTextExtent(information)[0] + 6 <= width:
+                return information
+            shown[index] = None
+        return SEPARATOR.join([v for v in shown if v is not None])
+
     def DrawInfo(self, dc):
         # w = self.parent.GetSize().width
         width = self.GetSize().width
-        information = self.information
         font = wx.Font(0, wx.MODERN, wx.NORMAL, wx.NORMAL)
         font.SetPixelSize((7, 13))
         font.SetFaceName(FONT_PLAYINFO)
         dc.SetFont(font)
+        information = self.GetFittingInformation(dc)
         tw, th = dc.GetTextExtent(information)
         x, y = ((width - tw - 6), 3)
         r, g, b = (0, 0, 0)
@@ -694,24 +720,27 @@ class PlayBoxInfo(RectBox):
             key = key + ' '
         elif len(key) == 1:
             key = key + '  '
-        multi_feat = '%05.1f | %s' % (tempo, key)
         pos_sec, dur_sec = (
             self.parent.GetPositionTime(), self.parent.cue.duration)
         duration = '%02d:%02d.%02d' % (dur_sec / 60, dur_sec % 60, dur_sec % 1 * 100)
         position = '%02d:%02d.%02d' % (pos_sec / 60, pos_sec % 60, pos_sec % 1 * 100)
-        time_info = '%s | %s' % (position, duration)
-        # information = '%05.2f | %s | %s' % (decibel, multi_feat, time_info)
-        information = '%s | %s' % (multi_feat, time_info)
+        # 왼쪽부터 숨길 수 있도록 조각으로 들고 있는다.
+        segments = ['%05.1f' % tempo, key, position, duration]
+        information = SEPARATOR.join(segments)
         if information == self.information:
             return
+        self.segments = segments
         self.information = information
         self.DirectDraw()
 
     def OnSize(self, event):
         # vol_align = 12
         x, y, w, h = self.parent.GetRect()
-        self.SetRect((w - 255, 5, 250, 23))
-        # self.SetRect((w-255-70, 5, 250+70, 23))
+        # 창이 좁아지면 컨트롤 버튼 띠를 침범하지 않는 만큼만 차지한다.
+        left = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH + 8
+        right = w - 5
+        width = max(0, min(250, right - left))
+        self.SetRect((right - width, 5, width, 23))
         self.DirectDraw()
 
 
