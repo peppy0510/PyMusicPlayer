@@ -45,6 +45,13 @@ from wininstance import get_current_real_cwd
 # from menubar import AppearanceBox
 
 
+DEFAULT_RECT = wx.Rect(0, 0, 800, 600)
+
+# 기억된 위치가 이만큼도 화면에 안 걸리면 사라진 모니터로 본다.
+MIN_VISIBLE_WIDTH = 120
+MIN_VISIBLE_HEIGHT = 32
+
+
 # class wxHTML(wx.html.HtmlWindow):
 #    def OnLinkClicked(self, link):
 #        webbrowser.open(link.GetHref())
@@ -475,6 +482,8 @@ class GauranteeAlwaysOnTopThread(threading.Thread):
 
 class MacroBoxPreference():
 
+    stored_rect = None
+
     def __init__(self):
         self.listtab_show = False
         self.playbox_only = False
@@ -604,12 +613,41 @@ class MacroBoxPreference():
         # icon = images.macrobox_icon64.GetIcon()
         # self.SetIcon(icon)
 
+    def IsRectVisible(self, rect):
+        # 모니터 구성이 바뀌면 기억된 좌표가 아무 화면에도 안 걸릴 수 있다.
+        for index in range(wx.Display.GetCount()):
+            shared = wx.Display(index).GetClientArea().Intersect(rect)
+            if shared.width >= MIN_VISIBLE_WIDTH and shared.height >= MIN_VISIBLE_HEIGHT:
+                return True
+        return False
+
+    def CentreOnPrimary(self):
+        primary = wx.Display(wx.Display.GetFromPoint(wx.Point(0, 0))).GetClientArea()
+        width, height = self.GetSize()
+        self.SetPosition(wx.Point(primary.x + (primary.width - width) // 2,
+                                  primary.y + (primary.height - height) // 2))
+
     def RestoreMainFrameRect(self):
         rect = GetPreference('rect')
         if rect is None:
-            SetPreference('rect', wx.Rect(0, 0, 800, 600))
-        else:
+            SetPreference('rect', DEFAULT_RECT)
+            self.SetSize(DEFAULT_RECT.GetSize())
+        elif self.IsRectVisible(rect):
             self.SetRect(rect)
+            self.stored_rect = wx.Rect(rect)
+            return
+        else:
+            self.SetSize(rect.GetSize())
+        self.CentreOnPrimary()
+        self.stored_rect = wx.Rect(self.GetRect())
+
+    def GetStorableRect(self):
+        # 최소화/최대화 상태의 좌표를 저장하면 다음 실행이 이상해진다.
+        if self.IsIconized() is False and self.IsMaximized() is False:
+            self.stored_rect = wx.Rect(self.GetRect())
+        if self.stored_rect is None:
+            self.stored_rect = wx.Rect(DEFAULT_RECT)
+        return self.stored_rect
 
     def SavePreferences(self):
         procpath = self.MainPanel.MFEATS.GetProcPath()
@@ -630,7 +668,7 @@ class MacroBoxPreference():
         # maximize_loudness = self.IsMaximizeLoudnessOn()
 
         SetPreferences(((
-            ('rect', self.GetRect()),
+            ('rect', self.GetStorableRect()),
             ('playcue', playcue),
             ('highlight_duration_type', self.MainPanel.PlayBox.GetHighlightDurationTypeId()),
             ('playbox_information', self.MainPanel.PlayBox.Info.information),
