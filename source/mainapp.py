@@ -73,6 +73,19 @@ LIST_TAB_WIDTH = 180
 LIST_TAB_WIDTH_MIN = 120
 LIST_TAB_WIDTH_RATIO_MAX = 0.5
 LIST_BOX_WIDTH_MIN = 240
+LIST_TAB_ANIMATION_INTERVAL = 10
+LIST_TAB_ANIMATION_DURATION = 70
+
+
+class ListTabAnimationTimer(wx.Timer):
+
+    def __init__(self, parent):
+        wx.Timer.__init__(self)
+        self.parent = parent
+        self.interval = LIST_TAB_ANIMATION_INTERVAL
+
+    def Notify(self):
+        self.parent.OnListTabAnimation()
 
 
 class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
@@ -97,6 +110,9 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
         self.showListTab = True
         self.list_tab_width = LIST_TAB_WIDTH
+        self.list_tab_ratio = 1.0
+        self.list_tab_ratio_target = 1.0
+        self.ListTabAnimation = ListTabAnimationTimer(self)
         self.PlayBox = PlayBox(self)
         self.ListBox = ListBox(self)
         self.ListTab = ListBoxTab(self)
@@ -164,7 +180,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
         # if w < 740:
-        if self.parent.IsListTabShowOn():
+        if self.parent.IsListTabShowOn() or self.list_tab_ratio > 0.0:
             left_panel_min_activate_width = 718
             left_panel_min_activate_width = 0
         else:
@@ -179,6 +195,14 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             left_panel_width = self.LimitListTabWidth(self.list_tab_width)
             right_panel_width = 0
             sash_width = LIST_SASH_WIDTH
+
+        # 접힘 애니메이션 중에는 탭 패널을 원래 너비 그대로 왼쪽으로 밀어낸다.
+        list_tab_width = left_panel_width
+        left_panel_width = int(round(left_panel_width * self.GetListTabRatio()))
+        if left_panel_width <= 0:
+            left_panel_width = 0
+            sash_width = 0
+
         self.ListBox.SetRect((
             left_panel_width,
             pbh + sph,
@@ -188,7 +212,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.ListSearch.SetRect((0, h - 27 - 5 - 26, w, 0))
         self.StatusBox.SetRect((0, h - 27 - 5, w, 27))
         self.ListTab.SetRect((
-            0, pbh + sph, left_panel_width,
+            left_panel_width - list_tab_width, pbh + sph, list_tab_width,
             h - pbh + sph - (26 + 35 + 5) + 26)
         )
         self.ListSash.SetRect((
@@ -211,6 +235,36 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.OnSize()
         self.BorderBoxHB.OnSize()
         self.Thaw()
+
+    def GetListTabRatio(self):
+        r = self.list_tab_ratio
+        return r * r * (3.0 - 2.0 * r)
+
+    def AnimateListTabShow(self, show):
+        if show:
+            self.list_tab_ratio_target = 1.0
+        else:
+            self.list_tab_ratio_target = 0.0
+        if self.list_tab_ratio == self.list_tab_ratio_target:
+            self.OnSize()
+            return
+        # 최초 실행 중에는 창이 뜨기도 전이라 애니메이션할 자리가 없다.
+        if self.parent.IsShown() is False:
+            self.list_tab_ratio = self.list_tab_ratio_target
+            self.OnSize()
+            return
+        if self.ListTabAnimation.IsRunning() is False:
+            self.ListTabAnimation.Start(LIST_TAB_ANIMATION_INTERVAL)
+
+    def OnListTabAnimation(self):
+        step = float(LIST_TAB_ANIMATION_INTERVAL) / LIST_TAB_ANIMATION_DURATION
+        if self.list_tab_ratio < self.list_tab_ratio_target:
+            self.list_tab_ratio = min(self.list_tab_ratio + step, self.list_tab_ratio_target)
+        else:
+            self.list_tab_ratio = max(self.list_tab_ratio - step, self.list_tab_ratio_target)
+        if self.list_tab_ratio == self.list_tab_ratio_target:
+            self.ListTabAnimation.Stop()
+        self.OnSize()
 
     def GetListTabWidth(self):
         return self.list_tab_width

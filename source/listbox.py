@@ -2376,7 +2376,11 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 class StatusBox(RectBox):
 
     # 왼쪽 재생목록 패널(ListTab)을 여닫는 버튼.
-    TOGGLE_RECT = (8, 8, 14, 12)
+    # 원형 배경과 클릭 영역을 맞춘다. 막대는 이 사각형 한가운데에 그린다.
+    TOGGLE_RECT = (5, 3, 20, 20)
+    TOGGLE_BG_RADIUS = 10
+    TOGGLE_BG_HOVER_COLOR = (198, 198, 198)
+    TOGGLE_BG_DOWN_COLOR = (172, 172, 172)
     MESSAGE_LEFT_X = 30
 
     def __init__(self, parent):
@@ -2412,23 +2416,33 @@ class StatusBox(RectBox):
         if event.LeftIsDown:
             if self.toggle_downed is False and hovered:
                 self.toggle_downed = True
+                self.reInitBuffer = True
             return
 
         if self.toggle_downed:
             self.toggle_downed = False
+            self.reInitBuffer = True
             if hovered:
                 self.parent.parent.ToggleListTabShow()
-                self.reInitBuffer = True
 
     def DrawToggleButton(self, dc):
         x, y, w, h = self.TOGGLE_RECT
+        bgcolor = None
+        if self.toggle_downed:
+            bgcolor = wx.Colour(*self.TOGGLE_BG_DOWN_COLOR)
+        elif self.toggle_hovered:
+            bgcolor = wx.Colour(*self.TOGGLE_BG_HOVER_COLOR)
+        if bgcolor is not None:
+            dc.SetPen(wx.Pen(bgcolor, 1))
+            dc.SetBrush(wx.Brush(bgcolor))
+            dc.DrawCircle(x + w // 2, y + h // 2, self.TOGGLE_BG_RADIUS)
         if self.toggle_hovered:
             r, g, b = (0, 0, 120)
         elif self.parent.parent.IsListTabShowOn():
             r, g, b = (0, 0, 0)
         else:
             r, g, b = (110, 110, 110)
-        bars = [(x + 2, y + 2 + i * 3, 10, 1) for i in range(3)]
+        bars = [(x + 5, y + 7 + i * 3, 11, 1) for i in range(3)]
         dc.DrawRectangleList(bars, pens=wx.Pen(wx.Colour(r, g, b), 1),
                              brushes=wx.Brush(wx.Colour(r, g, b)))
 

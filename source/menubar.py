@@ -525,12 +525,12 @@ class MacroBoxPreference():
     def SetListTabShowOn(self):
         self.listtab_show = True
         # self.OnSize()
-        self.MainPanel.OnSize()
+        self.MainPanel.AnimateListTabShow(True)
 
     def SetListTabShowOff(self):
         self.listtab_show = False
         # self.OnSize()
-        self.MainPanel.OnSize()
+        self.MainPanel.AnimateListTabShow(False)
 
     def IsListTabShowOn(self):
         return self.listtab_show
