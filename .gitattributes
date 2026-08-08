@@ -1,0 +1,16 @@
+* text=auto eol=lf
+*.py   text eol=lf
+*.pyw  text eol=lf
+*.spec text eol=lf
+*.cmd  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.iss  text eol=lf
+*.pip  text eol=lf
+*.sublime-project text eol=lf
+*.dll binary
+*.exe binary
+*.ttf binary
+*.png binary
+*.ico binary
+*.ai  binary

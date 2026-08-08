@@ -224,6 +224,8 @@ class ListBox(RectBox, ListControl):
 
     def OnSize(self, event=None):
         self.Freeze()
+        # 자동 폭은 헤더 크기를 읽으므로 새 크기를 먼저 물려줘야 한 프레임 늦지 않는다.
+        self.SetRectPre()
         self.Header.SetAutoColumnWidth()
         self.DirectDraw()
         self.List.DirectDraw()
