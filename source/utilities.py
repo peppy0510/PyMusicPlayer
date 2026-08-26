@@ -34,10 +34,14 @@ from operator import itemgetter
 def kill_existing_instances():
     pid = int(os.getpid())
     cwd = os.path.split(__file__)[0]
+    # a venv launches through Scripts\python.exe, which shares our name and cwd
+    ancestors = {p.pid for p in psutil.Process(pid).parents()}
     for p in psutil.process_iter():
         try:
             p.cwd()
         except Exception:
+            continue
+        if p.pid in ancestors:
             continue
         if p.pid != pid and p.cwd() == cwd and p.name().lower() in ('python.exe', 'pythonw.exe',):
             # only SIGTERM, CTRL_C_EVENT, CTRL_BREAK_EVENT signals on Windows Platform.

@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import os
+import sys
 
 from shortcut import create_desktop_ini
 from shortcut import create_shortcut
@@ -17,7 +18,9 @@ def main():
     # C:\Users\username\AppData\Roaming\Microsoft\Windows\Start Menu
     # C:\Users\username\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup
 
-    python_path = 'pythonw.exe'
+    python_path = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    if not os.path.exists(python_path):
+        python_path = sys.executable
     shortcut_name = 'PyMusicPlayer'
     cwd = os.path.abspath(os.path.dirname(__file__))
     target_path = os.path.join(cwd, 'main.pyw')

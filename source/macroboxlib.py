@@ -943,6 +943,11 @@ class MFEATS_Network_Scheduler(wx.Timer):
 
 evt_global, EVT_GLOBAL = wx.lib.newevent.NewEvent()
 
+# wx assigns event type ids at runtime, so they shift between wxWidgets builds
+KEY_EVENT_TYPES = (wx.EVT_KEY_DOWN.evtType[0], wx.EVT_KEY_UP.evtType[0],
+                   wx.EVT_CHAR.evtType[0], wx.EVT_CHAR_HOOK.evtType[0])
+MOUSE_EVENT_TYPES = tuple(wx.EVT_MOUSE_EVENTS.evtType)
+
 
 class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
 
@@ -1299,14 +1304,11 @@ class EventCatcher():
         new_event.ShiftDown = event.ShiftDown()
         new_event.ControlDown = event.ControlDown()
 
-        # keyboard up down # darwin 10051, 10054
-        # print event.EventType
-        if event.EventType in (10051, 10054, 10055, 10056, 10057, 10058, 10059):
+        if event.EventType in KEY_EVENT_TYPES:
             new_event.KeyCode = event.KeyCode
             new_event.RawKeyFlags = event.GetRawKeyFlags()
 
-        # wheelrotation # darwin 10042
-        if event.EventType in (10042, 10045, 10046, 10047):
+        if event.EventType in MOUSE_EVENT_TYPES:
             new_event.LeftUp = event.LeftUp()
             new_event.LeftDown = event.LeftDown()
             new_event.LeftIsDown = event.LeftIsDown()

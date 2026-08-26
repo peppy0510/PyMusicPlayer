@@ -33,4 +33,4 @@
 ::978f952a14a936cc963da21a135fa983
 setlocal
 cd /d %~dp0
-pythonw.exe .\source\main.pyw %1
+.\.venv\Scripts\pythonw.exe .\source\main.pyw %1

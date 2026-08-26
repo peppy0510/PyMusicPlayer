@@ -7,7 +7,7 @@
 *.tmp
 *.log
 /log
-/venv
+/.venv
 /dist
 /build
 /scipy

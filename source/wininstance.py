@@ -54,9 +54,11 @@ def has_running_instance():
     cp = get_current_process()
     cpname = cp.name()
     cpcwd = get_real_cwd(cp)
+    # a venv launches through Scripts\python.exe, which shares our name and cwd
+    ancestors = {p.pid for p in cp.parents()}
 
     for p in psutil.process_iter():
-        if p.pid == pid or not has_process_authority(p):
+        if p.pid == pid or p.pid in ancestors or not has_process_authority(p):
             continue
 
         if hasattr(sys, '_MEIPASS'):
