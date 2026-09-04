@@ -47,7 +47,6 @@ from wininstance import get_current_real_cwd
 
 DEFAULT_RECT = wx.Rect(0, 0, 800, 600)
 
-# 기억된 위치가 이만큼도 화면에 안 걸리면 사라진 모니터로 본다.
 MIN_VISIBLE_WIDTH = 120
 MIN_VISIBLE_HEIGHT = 32
 
@@ -614,7 +613,6 @@ class MacroBoxPreference():
         # self.SetIcon(icon)
 
     def IsRectVisible(self, rect):
-        # 모니터 구성이 바뀌면 기억된 좌표가 아무 화면에도 안 걸릴 수 있다.
         for index in range(wx.Display.GetCount()):
             shared = wx.Display(index).GetClientArea().Intersect(rect)
             if shared.width >= MIN_VISIBLE_WIDTH and shared.height >= MIN_VISIBLE_HEIGHT:
@@ -642,7 +640,6 @@ class MacroBoxPreference():
         self.stored_rect = wx.Rect(self.GetRect())
 
     def GetStorableRect(self):
-        # 최소화/최대화 상태의 좌표를 저장하면 다음 실행이 이상해진다.
         if self.IsIconized() is False and self.IsMaximized() is False:
             self.stored_rect = wx.Rect(self.GetRect())
         if self.stored_rect is None:

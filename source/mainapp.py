@@ -68,14 +68,15 @@ MULTIPROCESSING_FORK = '--multiprocessing-fork'
 # MAIN_SOCKET_PORT = 55557
 MAIN_SOCKET_PORT = 55755
 
-LIST_SASH_WIDTH = 5
-LIST_SASH_GRAB = 1
+# GRAB over 2 eats the tab scrollbar
+LIST_SASH_WIDTH = 8
+LIST_SASH_GRAB = 2
 LIST_TAB_WIDTH = 180
 LIST_TAB_WIDTH_MIN = 120
 LIST_TAB_WIDTH_RATIO_MAX = 0.5
 LIST_BOX_WIDTH_MIN = 240
 LIST_TAB_ANIMATION_INTERVAL = 10
-# wx.Timer 가 약 15ms 보다 잘게 통보하지 못해 더 줄이면 프레임이 뚝뚝 끊긴다.
+# wx.Timer will not notify finer than about 15ms
 LIST_TAB_ANIMATION_DURATION = 80
 
 
@@ -171,6 +172,12 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             self.ListBox.SliderV.CatchEvent(event)
         self.StatusBox.CatchEvent(event)
 
+    def SetCursor(self, cursor):
+        ListSash = getattr(self, 'ListSash', None)
+        if ListSash is not None and ListSash.IsHot():
+            return False
+        return wx.Panel.SetCursor(self, cursor)
+
     def GetPlayBoxHeight(self):
         if self.parent.IsPlayerTopShowOn():
             return 193
@@ -198,7 +205,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             right_panel_width = 0
             sash_width = LIST_SASH_WIDTH
 
-        # 접힘 애니메이션 중에는 탭 패널을 원래 너비 그대로 왼쪽으로 밀어낸다.
         list_tab_width = left_panel_width
         left_panel_width = int(round(left_panel_width * self.GetListTabRatio()))
         if left_panel_width <= 0:
@@ -246,7 +252,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.Thaw()
 
     def OnListTabSize(self):
-        # 애니메이션 중에 움직이는 것은 탭과 목록뿐이라 나머지는 건드리지 않는다.
         self.Freeze()
         self.SetListRects()
         self.ListTab.OnSize()
@@ -254,7 +259,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.Thaw()
 
     def GetListTabRatio(self):
-        # 프레임이 몇 장 안 되어 smoothstep 은 가운데서 크게 튄다. 감속만 준다.
         r = self.list_tab_ratio
         return r * (2.0 - r)
 
@@ -266,7 +270,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         if self.list_tab_ratio == self.list_tab_ratio_target:
             self.OnSize()
             return
-        # 최초 실행 중에는 창이 뜨기도 전이라 애니메이션할 자리가 없다.
         if self.parent.IsShown() is False:
             self.list_tab_ratio = self.list_tab_ratio_target
             self.OnSize()
@@ -277,7 +280,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             self.ListTabAnimation.Start(LIST_TAB_ANIMATION_INTERVAL)
 
     def OnListTabAnimation(self):
-        # 타이머 통보 간격이 고르지 않으므로 진행도는 실제 경과 시간으로 잡는다.
         span = self.list_tab_ratio_target - self.list_tab_ratio_start
         duration = LIST_TAB_ANIMATION_DURATION * abs(span)
         elapsed = (time.time() - self.list_tab_lap) * 1000.0

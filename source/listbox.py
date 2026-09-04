@@ -6,6 +6,7 @@
 
 
 import audio
+import ctypes
 import glob
 import images
 import math
@@ -224,7 +225,7 @@ class ListBox(RectBox, ListControl):
 
     def OnSize(self, event=None):
         self.Freeze()
-        # 자동 폭은 헤더 크기를 읽으므로 새 크기를 먼저 물려줘야 한 프레임 늦지 않는다.
+        # auto width reads the header size, so hand it the new rect first
         self.SetRectPre()
         self.Header.SetAutoColumnWidth()
         self.DirectDraw()
@@ -1217,6 +1218,14 @@ class ListBoxHeader(RectBox):
         self.DirectDraw()
 
 
+LIST_SASH_HOT_MARGIN = 4
+
+# a window cursor only reaches the screen on the next WM_SETCURSOR, too late for a 25ms poll
+user32 = ctypes.windll.user32
+user32.SetCursor.argtypes = (ctypes.c_void_p,)
+user32.SetCursor.restype = ctypes.c_void_p
+
+
 class ListBoxSash():
 
     # sash has no window of its own, it only grabs the ListTab and ListBox border
@@ -1224,11 +1233,14 @@ class ListBoxSash():
     def __init__(self, parent):
         self.parent = parent
         self.rect = (0, 0, 0, 0)
-        self.cursor_window = None
+        self.cursor_windows = []
         self.cursor_stock = Struct(
             ARROW=wx.Cursor(wx.CURSOR_ARROW),
             SIZEWE=wx.Cursor(wx.CURSOR_SIZEWE))
         self.pending = Struct(drag_offset=None, width_reset=False)
+        self.last_xy = None
+        self.hot = False
+        self.force_tail = 0
 
     def SetRect(self, rect):
         self.rect = rect
@@ -1238,28 +1250,52 @@ class ListBoxSash():
             return True
         return self.pending.width_reset
 
-    def IsInSash(self, event):
+    def IsInSashPoint(self, xy, margin=0):
         if self.rect[2] <= 0:
             return False
-        xy = self.parent.ScreenToClient((event.x, event.y))
-        return self.parent.IsInRect(self.rect, xy)
+        x, y, w, h = self.rect
+        rect = (x - margin, y, w + margin * 2, h)
+        return self.parent.IsInRect(rect, self.parent.ScreenToClient(xy))
+
+    def IsInSash(self, event):
+        return self.IsInSashPoint((event.x, event.y))
+
+    def WasInSash(self):
+        if self.last_xy is None:
+            return False
+        return self.IsInSashPoint(self.last_xy)
+
+    def IsHot(self):
+        return self.hot
+
+    def SetHot(self, event):
+        if self.IsOnSize():
+            self.hot = True
+        elif self.hot:
+            self.hot = self.IsInSashPoint((event.x, event.y), LIST_SASH_HOT_MARGIN)
+        else:
+            self.hot = self.IsInSash(event) or self.WasInSash()
 
     def CatchEvent(self, event):
         if event.EventType != EVT_GLOBAL.evtType[0]:
             return
         if self.IsOnSize() is False and self.parent.HasToSkipEvent():
-            self.SetCursorARROW()
+            # every drag frame opens a skip window, releasing here would blink
+            self.HandleEventSashCursor(event)
+            self.last_xy = (event.x, event.y)
             return
+        self.SetHot(event)
         self.HandleEventSashWidthReset(event)
         self.HandleEventSashDrag(event)
         self.HandleEventSashCursor(event)
+        self.last_xy = (event.x, event.y)
 
     def HandleEventSashWidthReset(self, event):
         if event.LeftIsDown is False and event.LeftUp is False:
             self.pending.width_reset = False
         if event.LeftDClick is False:
             return
-        if self.IsInSash(event) is False:
+        if self.hot is False:
             return
         self.pending.width_reset = True
         self.pending.drag_offset = None
@@ -1275,29 +1311,74 @@ class ListBoxSash():
         if self.pending.drag_offset is None:
             if event.LeftDown is False:
                 return
-            if self.IsInSash(event) is False:
+            if self.hot is False:
                 return
             x, y = self.parent.ScreenToClient((event.down.x, event.down.y))
-            self.pending.drag_offset = x - self.parent.GetListTabWidth()
+            # a late press sample would make the divider trail the cursor
+            width = self.parent.LimitListTabWidth(self.parent.GetListTabWidth())
+            offset = x - width
+            offset = max(offset, self.rect[0] - width)
+            offset = min(offset, self.rect[0] + self.rect[2] - width)
+            self.pending.drag_offset = offset
         x, y = self.parent.ScreenToClient((event.x, event.y))
         self.parent.SetListTabWidth(x - self.pending.drag_offset)
 
     def HandleEventSashCursor(self, event):
-        if self.IsOnSize() is False and self.IsInSash(event) is False:
+        if self.hot is False:
             self.SetCursorARROW()
             return
-        window = wx.FindWindowAtPoint((event.x, event.y))
-        if window is None or window is self.cursor_window:
+        self.SetCursorSIZEWE()
+        self.ForceCursor(self.cursor_stock.SIZEWE)
+
+    def SetCursorSIZEWE(self):
+        if self.cursor_windows != []:
             return
-        self.SetCursorARROW()
-        self.cursor_window = window
-        window.SetCursor(self.cursor_stock.SIZEWE)
+        self.force_tail = 0
+        self.cursor_windows = self.CollectBandWindows()
+        for window in self.cursor_windows:
+            window.SetCursor(self.cursor_stock.SIZEWE)
+
+    def CollectBandWindows(self):
+        x, y, w, h = self.rect
+        sx, sy = self.parent.ClientToScreen((x, y))
+        band = (sx, sy, w, h)
+        found = []
+        stack = list(self.parent.GetChildren())
+        while stack != []:
+            window = stack.pop()
+            if self.IsRectOverlap(band, tuple(window.GetScreenRect())) is False:
+                continue
+            found.append(window)
+            stack.extend(window.GetChildren())
+        return found
+
+    def IsRectOverlap(self, a, b):
+        if a[2] <= 0 or a[3] <= 0 or b[2] <= 0 or b[3] <= 0:
+            return False
+        if a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]:
+            return False
+        if a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1]:
+            return False
+        return True
 
     def SetCursorARROW(self):
-        if self.cursor_window is None:
+        if self.cursor_windows == []:
+            # a late WM_SETCURSOR can revive the resize cursor after leaving
+            if self.force_tail > 0:
+                self.force_tail -= 1
+                self.ForceCursor(self.cursor_stock.ARROW)
             return
-        self.cursor_window.SetCursor(self.cursor_stock.ARROW)
-        self.cursor_window = None
+        for window in self.cursor_windows:
+            try:
+                window.SetCursor(self.cursor_stock.ARROW)
+            except RuntimeError:
+                pass
+        self.cursor_windows = []
+        self.force_tail = 8
+        self.ForceCursor(self.cursor_stock.ARROW)
+
+    def ForceCursor(self, cursor):
+        user32.SetCursor(ctypes.c_void_p(cursor.GetHandle()))
 
 
 class SearchText(wx.TextCtrl):
@@ -2377,8 +2458,6 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 
 class StatusBox(RectBox):
 
-    # 왼쪽 재생목록 패널(ListTab)을 여닫는 버튼.
-    # 원형 배경과 클릭 영역을 맞춘다. 막대는 이 사각형 한가운데에 그린다.
     TOGGLE_RECT = (5, 3, 20, 20)
     TOGGLE_BG_RADIUS = 10
     TOGGLE_BG_HOVER_COLOR = (198, 198, 198)
@@ -2408,8 +2487,7 @@ class StatusBox(RectBox):
         return None
 
     def HandleToggleButton(self, event):
-        # event.down.rectIdx 는 직전 클릭 값이 캐시로 남아 클릭 없이도 통과한다.
-        # 눌림 -> 뗌 전이를 직접 들고 있다가 버튼 위에서 뗐을 때만 토글한다.
+        # event.down.rectIdx keeps the previous click, it passes without a click
         hovered = self.onClient and event.rectIdx == 0
         if hovered != self.toggle_hovered:
             self.toggle_hovered = hovered
