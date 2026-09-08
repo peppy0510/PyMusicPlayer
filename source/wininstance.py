@@ -7,6 +7,7 @@ email: peppy0510@hotmail.com
 '''
 
 
+import json
 import os
 import psutil
 import sys
@@ -96,3 +97,35 @@ def kill_existing_instances():
                 p.terminate()
             # only SIGTERM, CTRL_C_EVENT, CTRL_BREAK_EVENT signals on Windows Platform.
             # p.send_signal(signal.SIGTERM)
+
+
+def get_instance_file_path():
+    from utilities import get_user_docapp_path
+    return os.path.join(get_user_docapp_path(), 'instance.json')
+
+
+def read_instance_port():
+    try:
+        with open(get_instance_file_path(), 'r') as file:
+            data = json.loads(file.read())
+        if psutil.pid_exists(int(data['pid'])) is False:
+            return None
+        return int(data['port'])
+    except Exception:
+        return None
+
+
+def write_instance_port(port):
+    data = {'pid': os.getpid(), 'port': int(port)}
+    try:
+        with open(get_instance_file_path(), 'w') as file:
+            file.write(json.dumps(data))
+    except Exception:
+        pass
+
+
+def clear_instance_port():
+    try:
+        os.remove(get_instance_file_path())
+    except Exception:
+        pass

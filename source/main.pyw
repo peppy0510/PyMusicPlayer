@@ -18,6 +18,7 @@ import traceback
 
 from pathlib import Path
 from wininstance import has_running_instance
+from wininstance import read_instance_port
 
 
 class stderr:
@@ -45,25 +46,36 @@ def launch(filepath=None):
         pass
 
 
+def get_mainapp_port():
+    port = read_instance_port()
+    if port is None:
+        return MAIN_SOCKET_PORT
+    return port
+
+
 def check_mainapp():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.connect(('127.0.0.1', MAIN_SOCKET_PORT))
-    except ConnectionRefusedError:
+        sock.connect(('127.0.0.1', get_mainapp_port()))
+    except OSError:
         return False
     return True
 
 
 def send_filepath_to_mainapp(filepath):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
     try:
-        sock.connect(('127.0.0.1', MAIN_SOCKET_PORT))
-    except ConnectionRefusedError:
+        sock.connect(('127.0.0.1', get_mainapp_port()))
+    except OSError:
+        sock.close()
         launch(filepath)
         return
 
-    sock.settimeout(0.1)
-    sock.send(json.dumps({'filepath': filepath}).encode('utf-8'))
+    try:
+        sock.send(('%s\n' % (json.dumps({'filepath': filepath}))).encode('utf-8'))
+    except OSError:
+        pass
     sock.close()
 
 

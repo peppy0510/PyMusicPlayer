@@ -51,6 +51,8 @@ from utilities import kill_existing_instances
 from utilities import kill_self_process
 from utilities import set_master_path
 from utilities import set_process_priority
+from wininstance import clear_instance_port
+from wininstance import write_instance_port
 # import setproctitle
 # from packages import pybass
 # from utilities import is_ghost_runnung
@@ -328,28 +330,51 @@ class MainSocketHandler(socketserver.StreamRequestHandler):
 
     def handle(self):
         data = self.rfile.readline().strip()
+        if len(data) == 0:
+            return
         data = json.loads(data)
         filepath = data.get('filepath')
-        self.server.parent.parent.MainPanel.PlayBox.cue.path = filepath
-        self.server.parent.parent.MainPanel.PlayBox.OnPlay()
+        if filepath is None:
+            return
+        # wx is not thread safe
+        wx.CallAfter(self.server.parent.parent.LoadMainSocketFile, filepath)
         # self.wfile.write(self.data.upper())
 
 
 class MainSocket(threading.Thread):
     def __init__(self, parent):
         threading.Thread.__init__(self)
+        self.daemon = True
         self.port = MAIN_SOCKET_PORT
         self.parent = parent
+        self.server = None
         self._quit = False
         self.start()
 
+    def OpenServer(self):
+        # the fixed port is not always available, fall back to any free one
+        for port in (self.port, 0,):
+            try:
+                return socketserver.TCPServer(('127.0.0.1', port), MainSocketHandler)
+            except OSError:
+                continue
+        return None
+
     def run(self):
-        with socketserver.TCPServer(('127.0.0.1', self.port), MainSocketHandler) as server:
+        server = self.OpenServer()
+        if server is None:
+            return
+        self.server = server
+        self.port = server.server_address[1]
+        write_instance_port(self.port)
+        with server:
             server.parent = self
             server.serve_forever()
 
     def Quit(self):
         self._quit = True
+        if self.server is not None:
+            self.server.shutdown()
 
 
 class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
@@ -419,11 +444,18 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
     def InitMainSocket(self):
         MainSocket(self)
 
-    def LoadInitFile(self):
-        initfile = self.initfile
+    def LoadMainSocketFile(self, filepath):
+        self.LoadInitFile(filepath)
+        if self.IsIconized():
+            self.Iconize(False)
+        self.Raise()
+
+    def LoadInitFile(self, initfile=None):
+        if initfile is None:
+            initfile = self.initfile
         if initfile is None:
             return
-        file_type = os.path.splitext(initfile)[1][1:]
+        file_type = os.path.splitext(initfile)[1][1:].lower()
         if file_type not in SUPPORTED_AUDIO_TYPE:
             return
         self.MainPanel.PlayBox.cue.path = initfile
@@ -451,6 +483,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
 
     def OnClose(self, event):
         self.Hide()
+        clear_instance_port()
         self.SavePreferences()
         self.MainPanel.MFEATS.__del__()
         self.Destroy()
