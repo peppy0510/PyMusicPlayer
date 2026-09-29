@@ -3,7 +3,7 @@
 [Setup]
 AppName="PyMusicPlayer"
 AppVerName="PyMusicPlayer 1.1.0"
-DefaultDirName="{pf}\PyMusicPlayer"
+DefaultDirName="{autopf}\PyMusicPlayer"
 DefaultGroupName="PyMusicPlayer"
 AppVersion="1.1.0"
 AppCopyright="Taehong Kim"
@@ -17,7 +17,7 @@ OutputBaseFilename="PyMusicPlayer-1.1.0-Setup"
 VersionInfoProductVersion="1.1.0"
 VersionInfoCompany="Taehong Kim"
 VersionInfoCopyright="Taehong Kim"
-ArchitecturesInstallIn64BitMode="x64"
+ArchitecturesInstallIn64BitMode="x64compatible"
 
 [Files]
 Source: "dist\PyMusicPlayer\*"; DestDir: "{app}"; Flags: recursesubdirs

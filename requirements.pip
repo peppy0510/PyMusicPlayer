@@ -2,6 +2,7 @@ scipy
 numpy
 psutil
 pillow
+pyinstaller
 pywin32
 mutagen
 wxpython

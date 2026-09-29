@@ -9,6 +9,7 @@ email: peppy0510@hotmail.com
 
 import glob
 import os
+import sys
 
 
 debug = False
@@ -22,9 +23,9 @@ COLLECT = COLLECT  # noqa
 Analysis = Analysis  # noqa
 
 
-__default_python_path__ = 'C:\\Program Files\\Python36'
+__default_python_path__ = os.environ.get('DEFAULT_PYTHON_PATH', sys.prefix)
 __appname__ = 'PyMusicPlayer'
-__api_ms_win_crt_path__ = 'C:\\Windows\\WinSxS\\amd64_microsoft-windows-m..namespace-downlevel_31bf3856ad364e35_10.0.17763.1_none_b82ac495d943b9d7'
+__api_ms_win_crt_path__ = os.environ.get('API_MS_WIN_CRT_PATH', '')
 
 
 class Path():
@@ -94,7 +95,7 @@ print('-' * 100)
 if onefile:
     exe = EXE(pyz, a.scripts + [('O', '', 'OPTION')],
               a.binaries, a.zipfiles, a.datas,
-              uac_admin=True, uac_uiaccess=True,
+              uac_admin=True, uac_uiaccess=False,
               icon=path.icon, name=path.output,
               upx=upx, strip=None, debug=debug, console=debug)
     # runtime_tmpdir='%HOMEPATH%\\AppData\\Local\\Temp\\' + name
