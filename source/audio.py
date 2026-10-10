@@ -147,6 +147,106 @@ def max_wide_fill_sym(input_data, output_length):
     return output_data
 
 
+# 3band waveform (rekordbox colours): low=1, mid=2, high=4, and where bands overlap
+WAVEFORM_BAND_COLORS = numpy.array([
+    (0, 0, 0), (0, 85, 225), (255, 166, 0), (180, 105, 10),
+    (255, 255, 255), (210, 220, 250), (255, 240, 215), (245, 235, 215)], dtype=float)
+WAVEFORM_BAND_BITS = numpy.array([1, 2, 4])
+WAVEFORM_BAND_FULL_SHARE = 0.55
+WAVEFORM_BAND_SPREAD = 3
+WAVEFORM_PEAK_DIM = 0.4
+
+
+# a column below this peak (-60 dBFS, square-rooted as stored) is silence
+WAVEFORM_SILENCE_PEAK = 8
+
+
+def get_waveform_sound_time(waveform, duration):
+    # (offset, finish) of the sound: the leading and trailing silence left out
+    sound = numpy.nonzero(waveform[:, 0] >= WAVEFORM_SILENCE_PEAK)[0]
+    if len(sound) == 0 or duration <= 0:
+        return (0.0, duration)
+    seconds = 1.0 * duration / len(waveform)
+    return (sound[0] * seconds, min((sound[-1] + 1) * seconds, duration))
+
+
+def is_waveform_3band(waveform):
+    return isinstance(waveform, numpy.ndarray) and waveform.ndim == 2\
+        and waveform.shape[1] == 5 and len(waveform) > 0
+
+
+def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
+                         start=None, end=None, spread=WAVEFORM_BAND_SPREAD):
+    # waveform: uint8 columns of (sqrt peak, sqrt level, low, mid, high shares)
+    # start, end: the columns drawn across (the whole waveform by default)
+    # ground (3 or width x 3) and dim (scalar or width): per pixel column too
+    # returns an RGB image (height, width, 3)
+    ground = numpy.array(ground, dtype=float)
+    dim = numpy.array(dim, dtype=float)
+    data = waveform / 255.0
+    count = len(data)
+    if start is None:
+        start, end = (0, count)
+    edges = start + (end - start) * numpy.arange(width + 1) / width
+    centres = (edges[:-1] + edges[1:]) * 0.5
+    inside = (centres >= 0) & (centres < count)
+    if (end - start) / width > 1:
+        # columns to a pixel: the loudest peak, the mean level and bands
+        padded = numpy.vstack([data, numpy.zeros((1, 5))])
+        edges = numpy.clip(numpy.floor(edges).astype(int), 0, count)
+        edges[1:] = numpy.maximum(edges[1:], numpy.minimum(edges[:-1] + 1, count))
+        sizes = numpy.maximum(numpy.diff(edges), 1)
+        peaks = numpy.maximum.reduceat(padded[:, 0], edges)[:-1]
+        levels = numpy.add.reduceat(padded[:, 1], edges)[:-1] / sizes
+        shares = numpy.add.reduceat(padded[:, 2:], edges, axis=0)[:-1] / sizes[:, None]
+    else:
+        # a column over pixels: joined to its neighbour, the bands the nearer one's
+        at = numpy.clip(centres - 0.5, 0, count - 1)
+        i = numpy.floor(at).astype(int)
+        j = numpy.minimum(i + 1, count - 1)
+        f = at - i
+        peaks = data[i, 0] + (data[j, 0] - data[i, 0]) * f
+        levels = data[i, 1] + (data[j, 1] - data[i, 1]) * f
+        shares = data[numpy.where(f < 0.5, i, j), 2:]
+    if spread:
+        kernel = numpy.ones(spread * 2 + 1)
+        near = numpy.convolve(numpy.ones(width), kernel, 'same')
+        shares = numpy.column_stack(
+            [numpy.convolve(shares[:, i], kernel, 'same') for i in range(3)]) / near[:, None]
+    levels = numpy.where(inside, levels, 0)
+    peaks = numpy.where(inside, peaks, 0)
+
+    reach = height * 0.5
+    talls = numpy.round(levels[:, None] * reach * numpy.minimum(shares / WAVEFORM_BAND_FULL_SHARE, 1))
+    tallest = numpy.argmax(shares, axis=1)
+    columns = numpy.arange(width)
+    talls[columns, tallest] = numpy.where(inside, numpy.maximum(talls[columns, tallest], 1), 0)
+    peak_talls = numpy.where(inside, numpy.maximum(numpy.round(peaks * reach), 1), 0)
+
+    # per column its colours from the outside in: ground, peak, then the bands from
+    # the tallest down, each the colour of the bands that reach that far
+    order = numpy.argsort(-talls, axis=1, kind='stable')
+    talls = numpy.take_along_axis(talls, order, axis=1)
+    keys = numpy.cumsum(WAVEFORM_BAND_BITS[order], axis=1)
+    palette = numpy.empty((width, 5, 3))
+    palette[:, 0] = ground
+    palette[:, 1] = WAVEFORM_BAND_COLORS[WAVEFORM_BAND_BITS[tallest]] * WAVEFORM_PEAK_DIM\
+        + ground * (1 - WAVEFORM_PEAK_DIM)
+    palette[:, 2:] = WAVEFORM_BAND_COLORS[keys]
+    if dim.ndim:
+        dim = dim[:, None, None]
+    palette = numpy.round(palette * dim + ground[..., None, :] * (1 - dim)).astype(numpy.uint8)
+
+    middle = int(height * 0.5 + 0.5)
+    rows = numpy.arange(height)
+    depth = numpy.maximum(middle - rows, rows + 1 - middle)[:, None]
+    peak_talls = numpy.maximum(peak_talls, talls[:, 0])
+    layer = (depth <= peak_talls).astype(numpy.intp)
+    for i in range(3):
+        layer += depth <= talls[:, i]
+    return numpy.ascontiguousarray(palette[columns[None, :], layer])
+
+
 def wav2img(data, dstpath=None,
             width=1500, height=75, oversampling=1, antialias='ANTIALIAS'):
 

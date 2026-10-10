@@ -154,6 +154,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.EventSkipTimer()
         self.PlayBox.CatchEvent(event)
         self.PlayBox.Wave.CatchEvent(event)
+        self.PlayBox.WaveDetail.CatchEvent(event)
         self.PlayBox.Info.CatchEvent(event)
         self.PlayBox.ControlButton.CatchEvent(event)
         self.PlayBox.Title.CatchEvent(event)
@@ -182,8 +183,8 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
     def GetPlayBoxHeight(self):
         if self.parent.IsPlayerTopShowOn():
-            return 193
-        return 133
+            return 193 + self.parent.GetWaveformDetailHeight()
+        return 133 + self.parent.GetWaveformDetailHeight()
 
     def SetListRects(self):
         w, h = self.GetSize()
@@ -468,10 +469,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.Freeze()
         w, h = self.GetClientSize()
         if self.IsPlayerOnlyModeOn():
-            if self.IsPlayerTopShowOn():
-                height = 242
-            else:
-                height = 186
+            height = self.GetPlayerOnlyHeight()
             self.MainPanel.SetRect((0, 0, w, height))
         else:
             self.MainPanel.SetRect((0, 0, w, h))

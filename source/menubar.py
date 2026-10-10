@@ -488,6 +488,7 @@ class MacroBoxPreference():
         self.playbox_only = False
         self.playbox_top_show = False
         self.playbox_side_show = False
+        self.waveform_detail_show = GetPreference('waveform_detail_show') is not False
         # self.maximize_loudness = False
         self.playbox_title_format = None
         self.playbox_title_format = None
@@ -537,7 +538,7 @@ class MacroBoxPreference():
     def SetPlayerTopShowOn(self):
         self.playbox_top_show = True
         if self.IsPlayerOnlyModeOn():
-            height = 242
+            height = self.GetPlayerOnlyHeight()
             w, _ = self.GetSize()
             self.SetMaxSize((-1, height))
             self.SetMinSize((550, height))
@@ -547,7 +548,7 @@ class MacroBoxPreference():
     def SetPlayerTopShowOff(self):
         self.playbox_top_show = False
         if self.IsPlayerOnlyModeOn():
-            height = 186
+            height = self.GetPlayerOnlyHeight()
             w, _ = self.GetSize()
             self.SetMinSize((550, height))
             self.SetMaxSize((-1, height)) + 10
@@ -557,6 +558,39 @@ class MacroBoxPreference():
     def IsPlayerTopShowOn(self):
         return self.playbox_top_show
 
+    def SetWaveformDetailShowOn(self):
+        self.waveform_detail_show = True
+        SetPreference('waveform_detail_show', True)
+        self.ApplyWaveformDetailShow()
+
+    def SetWaveformDetailShowOff(self):
+        self.waveform_detail_show = False
+        SetPreference('waveform_detail_show', False)
+        self.ApplyWaveformDetailShow()
+
+    def IsWaveformDetailShowOn(self):
+        return self.waveform_detail_show
+
+    def ApplyWaveformDetailShow(self):
+        self.MenuBar.itemWaveformDetailShow.Check(self.waveform_detail_show)
+        if self.IsPlayerOnlyModeOn():
+            height = self.GetPlayerOnlyHeight()
+            w, _ = self.GetSize()
+            self.SetMinSize((550, height))
+            self.SetMaxSize((-1, height))
+            self.SetSize((w, height))
+        self.OnSize()
+
+    def GetWaveformDetailHeight(self):
+        if self.IsWaveformDetailShowOn():
+            return 46
+        return 0
+
+    def GetPlayerOnlyHeight(self):
+        if self.IsPlayerTopShowOn():
+            return 242 + self.GetWaveformDetailHeight()
+        return 186 + self.GetWaveformDetailHeight()
+
     def SetPlayerOnlyModeOn(self):
         self.playbox_only = True
         style = self.GetWindowStyle()
@@ -564,10 +598,7 @@ class MacroBoxPreference():
                             wx.MINIMIZE_BOX ^ wx.MAXIMIZE_BOX ^ wx.CLOSE_BOX ^ wx.CAPTION)
         w, h = self.GetSize()
         self.last_height = h
-        if self.IsPlayerTopShowOn():
-            height = 242
-        else:
-            height = 186
+        height = self.GetPlayerOnlyHeight()
         self.SetMinSize((550, height))
         self.SetMaxSize((-1, height))
         self.SetSize((w, height))
@@ -911,6 +942,15 @@ class AppearancePanel(wx.Panel):
         value = self.parent.parent.parent.MainPanel.ListBox.scrollbar_size
         self.ScrollbarSize.SetValue(value)
 
+        offset += 30
+        label = u'Waveform Detail'
+        text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
+        text.SetRect((pad + 20, offset + 3, 180, -1))
+        self.WaveformDetail = CheckBox(self)
+        self.WaveformDetail.SetPosition((pad + 200 + 15, offset + 4))
+        self.WaveformDetail.Bind(wx.EVT_CHECKBOX, self.OnWaveformDetail)
+        self.WaveformDetail.SetValue(self.parent.parent.parent.IsWaveformDetailShowOn())
+
         # offset += 30
         # label = u'Always show scrollbar'
         # text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
@@ -931,6 +971,12 @@ class AppearancePanel(wx.Panel):
         self.parent.parent.parent.MainPanel.ListBox.scrollbar_size = value
         self.parent.parent.parent.MainPanel.ListBox.reInitBuffer = True
         self.ApplyToScriptEditorBox()
+
+    def OnWaveformDetail(self, event):
+        if event.IsChecked():
+            self.parent.parent.parent.SetWaveformDetailShowOn()
+        else:
+            self.parent.parent.parent.SetWaveformDetailShowOff()
 
     def OnAlwaysShowScrollbar(self, event):
         self.parent.parent.parent.MainPanel\
@@ -1650,9 +1696,11 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnExit, self.MenuBar.itemExit)
         self.Bind(wx.EVT_MENU, self.OnAlwaysOnTop, self.MenuBar.itemAlwaysOnTop)
         self.Bind(wx.EVT_MENU, self.OnAutoAnalyze, self.MenuBar.itemAutoAnalyze)
+        self.Bind(wx.EVT_MENU, self.OnSkipSilence, self.MenuBar.itemSkipSilence)
         self.Bind(wx.EVT_MENU, self.OnCheckItemsConsistency, self.MenuBar.itemCheckItemsConsistency)
         self.Bind(wx.EVT_MENU, self.OnPlayerTopShow, self.MenuBar.itemPlayerTopShow)
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
+        self.Bind(wx.EVT_MENU, self.OnWaveformDetailShow, self.MenuBar.itemWaveformDetailShow)
         self.Bind(wx.EVT_MENU, self.OnListTabShow, self.MenuBar.itemListTabShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
         # self.Bind(wx.EVT_MENU, self.OnMaximizeLoudness, self.MenuBar.itemMaximizeLoudness)
@@ -1718,6 +1766,12 @@ class MacroBoxMenuBar():
             self.SetPlayerSideShowOn()
         else:
             self.SetPlayerSideShowOff()
+
+    def OnWaveformDetailShow(self, event):
+        if event.IsChecked():
+            self.SetWaveformDetailShowOn()
+        else:
+            self.SetWaveformDetailShowOff()
 
     def ColorThemeMap(self):
         color_themes = list()
@@ -1848,6 +1902,12 @@ class MacroBoxMenuBar():
         else:
             self.SetMaximizeLoudnessOff()
 
+    def OnSkipSilence(self, event):
+        if event.IsChecked():
+            self.MainPanel.PlayBox.SetSkipSilenceOn()
+        else:
+            self.MainPanel.PlayBox.SetSkipSilenceOff()
+
     def OnAutoAnalyze(self, event):
         if event.IsChecked():
             self.MainPanel.MFEATS.SetAutoAnalyzerOn()
@@ -1953,6 +2013,12 @@ class MenuBar(wx.MenuBar):
         if self.parent.IsPlayerSideShowOn():
             self.itemPlayerSideShow.Check()
 
+        self.itemWaveformDetailShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, 'Waveform Detail', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuView.Append(self.itemWaveformDetailShow)
+        if self.parent.IsWaveformDetailShowOn():
+            self.itemWaveformDetailShow.Check()
+
         # self.menuView.AppendSeparator()
 
         # self.itemScriptEditor = wx.MenuItem(self.menuView,\
@@ -1981,6 +2047,12 @@ class MenuBar(wx.MenuBar):
         # value = self.parent.MainPanel.PlayBox.GetHighlightStaticPeriodTime()
         # idx = [i for i, v in enumerate(self.highlightDurationItems) if value == v][0]
         self.menuOption.Append(wx.ID_ANY, u'Highlight Duration', self.itemHighlightDurationMenu)
+
+        self.itemSkipSilence = wx.MenuItem(
+            self.menuOption, wx.ID_ANY, u'Skip Silence', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuOption.Append(self.itemSkipSilence)
+        if self.parent.MainPanel.PlayBox.IsSkipSilenceOn():
+            self.itemSkipSilence.Check()
         self.menuOption.AppendSeparator()
 
         # self.itemMaximizeLoudness = wx.MenuItem(

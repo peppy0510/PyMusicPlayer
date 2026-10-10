@@ -6,6 +6,7 @@
 
 
 import audio
+import ctypes
 import images
 import io
 import math
@@ -53,6 +54,7 @@ class PlayBox(RectBox, PlayBoxControl):
         color = self.st.PLAY_BG_COLOR
         self.SetBackgroundColour(color)
         self.Wave = PlayBoxWave(self)
+        self.WaveDetail = PlayBoxWaveDetail(self)
         self.Info = PlayBoxInfo(self)
         # self.InfoR = PlayBoxInfoR(self)
         self.Title = PlayBoxTitle(self)
@@ -61,6 +63,7 @@ class PlayBox(RectBox, PlayBoxControl):
         self.Apic = PlayBoxApic(self)
         self.ControlButton = PlayBoxControlButton(self)
         self.VolumeSlider = VolumeSlider(self)
+        self.VolumeDropdown = VolumeDropdown(self)
         self.AudioControl = AudioControl(self)
         self.InitBuffer()
 
@@ -69,6 +72,11 @@ class PlayBox(RectBox, PlayBoxControl):
         if w >= 840:
             return True
         return False
+
+    def GetWaveTop(self):
+        if self.WaveDetail.IsShown():
+            return self.WaveDetail.GetRect().y
+        return self.Wave.GetRect().y
 
     def SetRectDraw(self, dc):
         width, height = self.GetSize()
@@ -80,6 +88,7 @@ class PlayBox(RectBox, PlayBoxControl):
         self.DirectDraw()
         self.Title.OnSize(None)
         self.Wave.OnSize(None)
+        self.WaveDetail.OnSize(None)
         self.Info.OnSize(None)
         # self.InfoR.OnSize(None)
         self.Spectrum.OnSize(None)
@@ -465,33 +474,50 @@ class PlayBoxControlButton(RectBox):
 
 class VolumeSlider(RectBox):
 
+    # a button beside the control buttons, its slider dropping down under it
+    LENGTH = 40
+
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
-        self.width = 4
         self.volume = 1.0
         self.buffer.fps = 30
         self.muted_volume = None
-        color = self.parent.st.PLAY_BG_COLOR
-        self.SetBackgroundColour(color)
+        self.font = wx.Font(wx.Size(0, 8), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
+                            wx.FONTWEIGHT_BOLD, faceName='Arial')
+        self.SetBackgroundColour((35, 35, 35))
         self.InitBuffer()
 
+    def IsPopupShown(self):
+        # the dropdown is made after the button, which draws itself first
+        dropdown = getattr(self.parent, 'VolumeDropdown', None)
+        return dropdown is not None and dropdown.IsShown()
+
     def SetRectDraw(self, dc):
-        w, h = self.GetClientSize()
-        x = (w - self.width) * 0.5
-        volume = self.parent.GetVolume()
-        rects = [(x - 2, 0, self.width + 2, h), (x - 1, h - 1, self.width, -volume * (h - 2))]
-        rects = [[int(v) for v in rect] for rect in rects]
-        bgcolor = self.parent.st.VOLUME_BG_COLOR
-        fgcolor = self.parent.st.VOLUME_FG_COLOR
-        pncolor = self.parent.st.VOLUME_PN_COLOR
-        pens = [wx.Pen(pncolor, 1), wx.Pen(fgcolor, 1)]
-        brushes = [wx.Brush(bgcolor), wx.Brush(fgcolor)]
-        dc.DrawRectangleList(rects, pens=pens, brushes=brushes)
+        # drawn as the control buttons' bitmaps are: 39x21, a 1px margin, a 1px border
+        # muted: toggled on (red) and named so
+        text = 'VOL'
+        if self.IsMuted():
+            fill, label, text = ((255, 120, 120), (0, 0, 0), 'MUTE')
+        elif self.IsPopupShown():
+            fill, label = ((180, 180, 180), (0, 0, 0))
+        else:
+            fill, label = ((0, 0, 0), (125, 125, 125))
+        dc.SetPen(wx.Pen((10, 10, 10), 1))
+        dc.SetBrush(wx.Brush(fill))
+        dc.DrawRectangle(1, 2, 37, 19)
+        # the strip's black frame carried on: top, bottom and the right end (its
+        # left end is the strip's last line)
+        dc.DrawLineList([(0, 0, 40, 0), (0, 22, 40, 22), (39, 0, 39, 23)],
+                        pens=wx.Pen((0, 0, 0), 1))
+        dc.SetFont(self.font)
+        dc.SetTextForeground(label)
+        w, h = dc.GetTextExtent(text)
+        dc.DrawText(text, int((39 - w) * 0.5), int(1 + (21 - h) * 0.5))
 
     def CATCH_EVT_GLOBAL(self, event):
-        if self.onClient:
-            pass
+        if self.IsPopupShown():
+            self.parent.VolumeDropdown.FollowButton(event)
         if self.parent.parent.HasToSkipEvent():
             return
         self.HandleButtonStatus(event)
@@ -507,6 +533,8 @@ class VolumeSlider(RectBox):
         if volume == self.GetVolume():
             return
         self.parent.SetVolume(volume)
+        if self.IsPopupShown():
+            self.parent.VolumeDropdown.Refresh(False)
         self.reInitBuffer = True
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
@@ -516,19 +544,33 @@ class VolumeSlider(RectBox):
         volume = self.GetVolume()
         diff = event.WheelRotation / 400.0 / 3
         self.SetVolume(volume + diff)
+        self.muted_volume = None
+        self.reInitBuffer = True
 
     def HandleButtonStatus(self, event):
         if event.down.rectIdx is None:
             return
-        if event.LeftDClick:
-            self.ToggleMute()
-            self.reInitBuffer = True
-        elif event.LeftDown:
-            self.down_volume = self.GetVolume()
-        elif event.LeftIsDrag:
-            _, h = self.GetSize()
-            diff = -1.0 * (event.y - event.down.y) / h
-            self.SetVolume(self.down_volume + diff)
+        # a click opens or closes the dropdown, nothing more: a double click
+        # muted, and two quick clicks to open and close it muted by surprise
+        # if event.LeftDClick:
+        #     self.HidePopup()
+        #     self.ToggleMute()
+        #     self.reInitBuffer = True
+        if event.LeftDown:
+            self.ShowPopup()
+
+    def ShowPopup(self):
+        if self.IsPopupShown():
+            self.parent.VolumeDropdown.HideDropdown()
+        else:
+            self.parent.VolumeDropdown.ShowDropdown()
+
+    def HidePopup(self):
+        if self.IsPopupShown():
+            self.parent.VolumeDropdown.HideDropdown()
+
+    def IsMuted(self):
+        return self.muted_volume is not None
 
     def ToggleMute(self):
         if self.muted_volume is None:
@@ -537,11 +579,130 @@ class VolumeSlider(RectBox):
         elif self.muted_volume is not None:
             self.SetVolume(self.muted_volume)
             self.muted_volume = None
+        self.reInitBuffer = True
 
     def OnSize(self, event=None):
-        x, y, w, h = self.parent.Wave.GetRect()
-        self.SetRect((x + w + 4 + 4, y - 1, 10, h))
+        # x, y, w, h = self.parent.Wave.GetRect()
+        # self.SetRect((x + w + 4 + 4, y - 1, 10, h))
+        x = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH
+        self.SetRect((x, 5, self.LENGTH, 23))
         self.DirectDraw()
+
+
+class VolumeDropdown(wx.PopupWindow):
+
+    # the volume slider dropped down under its button, a window of its own so
+    # nothing in the player draws over it; it never takes the mouse, so the
+    # buttons still see their presses let go
+    def __init__(self, parent):
+        wx.PopupWindow.__init__(self, parent, wx.BORDER_NONE)
+        self.parent = parent
+        self.width = 4
+        self.pad = 8
+        self.sliding = False
+        # the slider, and the mute button under it; as wide as the VOL button's
+        # cell, its black frame lines included
+        self.SetSize((41, 134))
+        self.rect_mute = (2, 134 - 3 - 19, 37, 19)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnMouse)
+        self.Bind(wx.EVT_MOTION, self.OnMouse)
+        self.Bind(wx.EVT_MOUSEWHEEL, self.OnMouseWheel)
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        w, h = self.GetClientSize()
+        dc.SetPen(wx.Pen((0, 0, 0), 1))
+        dc.SetBrush(wx.Brush((35, 35, 35)))
+        dc.DrawRectangle(0, 0, w, h)
+        x = (w - self.width) * 0.5
+        top, bottom = self.GetSliderRange()
+        volume = self.parent.GetVolume()
+        rects = [(x - 1, top - 1, self.width + 2, bottom - top + 2),
+                 (x, bottom, self.width, -volume * (bottom - top))]
+        rects = [[int(v) for v in rect] for rect in rects]
+        st = self.parent.st
+        pens = [wx.Pen(st.VOLUME_PN_COLOR, 1), wx.Pen(st.VOLUME_FG_COLOR, 1)]
+        brushes = [wx.Brush(st.VOLUME_BG_COLOR), wx.Brush(st.VOLUME_FG_COLOR)]
+        dc.DrawRectangleList(rects, pens=pens, brushes=brushes)
+        self.DrawMuteButton(dc)
+
+    def GetSliderRange(self):
+        return (self.pad, self.rect_mute[1] - self.pad)
+
+    def DrawMuteButton(self, dc):
+        # drawn as the control buttons are: red while toggled on
+        if self.parent.VolumeSlider.IsMuted():
+            fill, label = ((255, 120, 120), (0, 0, 0))
+        else:
+            fill, label = ((0, 0, 0), (125, 125, 125))
+        x, y, w, h = self.rect_mute
+        dc.SetPen(wx.Pen((10, 10, 10), 1))
+        dc.SetBrush(wx.Brush(fill))
+        dc.DrawRectangle(x, y, w, h)
+        dc.SetFont(self.parent.VolumeSlider.font)
+        dc.SetTextForeground(label)
+        tw, th = dc.GetTextExtent('MUTE')
+        dc.DrawText('MUTE', int(x + (w - tw) * 0.5), int(y + (h - th) * 0.5))
+
+    def OnMouse(self, event):
+        button = self.parent.VolumeSlider
+        if event.LeftDown():
+            if wx.Rect(*self.rect_mute).Contains(event.GetPosition()):
+                self.sliding = False
+                button.ToggleMute()
+                self.Refresh(False)
+                return
+            self.sliding = True
+        if event.LeftIsDown() is False:
+            self.sliding = False
+        if self.sliding is False:
+            return
+        top, bottom = self.GetSliderRange()
+        button.SetVolume(1.0 * (bottom - event.GetY()) / (bottom - top))
+        button.muted_volume = None
+        button.reInitBuffer = True
+
+    def OnMouseWheel(self, event):
+        button = self.parent.VolumeSlider
+        button.SetVolume(self.parent.GetVolume() + event.GetWheelRotation() / 400.0 / 3)
+        button.muted_volume = None
+        button.reInitBuffer = True
+        self.Refresh(False)
+
+    def GetBestPosition(self):
+        button = self.parent.VolumeSlider
+        # from the strip's line left of the button, its top on the strip's bottom line
+        x, y = button.ClientToScreen((-1, 22))
+        return (x, y)
+
+    def ShowDropdown(self):
+        self.SetPosition(self.GetBestPosition())
+        self.Show()
+        self.Refresh(False)
+        self.parent.VolumeSlider.reInitBuffer = True
+
+    def HideDropdown(self):
+        self.Hide()
+        self.parent.VolumeSlider.reInitBuffer = True
+
+    def FollowButton(self, event):
+        # closed by a press anywhere else, or when the player is left; kept
+        # under its button when the player moves
+        if self.IsShown() is False:
+            return
+        foreground = ctypes.windll.user32.GetForegroundWindow()
+        if foreground not in (wx.GetTopLevelParent(self.parent).GetHandle(), self.GetHandle()):
+            self.HideDropdown()
+            return
+        if event.LeftDown and self.GetScreenRect().Contains((event.x, event.y)) is False\
+                and self.parent.VolumeSlider.onClient is False:
+            self.HideDropdown()
+            return
+        position = self.GetBestPosition()
+        if tuple(self.GetPosition()) != tuple(position):
+            self.SetPosition(position)
 
 
 class PlayBoxTitle(RectBox):
@@ -731,7 +892,8 @@ class PlayBoxInfo(RectBox):
     def OnSize(self, event):
         # vol_align = 12
         x, y, w, h = self.parent.GetRect()
-        left = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH + 8
+        left = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH
+        left += VolumeSlider.LENGTH + 8
         right = w - 5
         width = max(0, min(250, right - left))
         self.SetRect((right - width, 5, width, 23))
@@ -924,7 +1086,7 @@ class PlayBoxSpectrum(RectBox):
         RectBox.__init__(self, parent)
         self.parent = parent
         self.scale = 1
-        self.max_scale = 4
+        self.max_scale = 3
         self.width = 320 * self.scale
         self.height = 39
         self.resolution = 1
@@ -985,40 +1147,49 @@ class PlayBoxSpectrum(RectBox):
         w, h = self.GetSize()
         scale = 0.4
         spLength = len(spectrum) - 1
-        sw = int(1.0 * w / spLength)
-        offset = (w - sw * spLength) * 0.5
+        sw, offset = self.GetBarStep(w, spLength)
         rects = [(int(sw * i + offset + 1), int((h - level * h * scale) * 0.5),
-                  int(sw - 2), int(level * h * scale)) for i, level in enumerate(spectrum)]
+                  max(int(sw - 2), 1), int(level * h * scale)) for i, level in enumerate(spectrum)]
         stroke = self.parent.st.SPECTRUM_STROKE
         dc.DrawRectangleList(rects, pens=wx.Pen(fgcolor, stroke),
                              brushes=wx.Brush(fgcolor))
+
+    def GetBarStep(self, w, spLength):
+        # whole pixels a bar, or a fraction when squeezed below that
+        sw = 1.0 * w / spLength
+        if sw >= 3:
+            sw = int(sw)
+        return sw, (w - sw * spLength) * 0.5
 
     def OnSize(self, event=None):
         if self.parent.parent.parent.IsPlayerTopShowOn() is False:
             self.Hide()
             return
         self.Show()
-        _, y, _, _ = self.parent.Wave.GetRect()
+        y = self.parent.GetWaveTop()
         w, _ = self.parent.GetSize()
         scale = int((w - 200) / 320)
         scale = 1 if scale < 1 else scale
         scale = self.max_scale if scale > self.max_scale else scale
-        if self.scale != scale:
+        # the cover's left and the vectorscope's right margins no smaller than
+        # their gaps to the spectrum (cover 45 + 12, vectorscope 13 + 50)
+        width = max(min(320 * scale, w - 152), 103 * 2 * scale)
+        if self.scale != scale or self.width != width:
             self.scale = scale
-            self.width = 320 * self.scale
+            self.width = width
             self.InitGround()
 
         wr = self.parent.Wave.GetRect()
-        x = wr.x + 0.5 * (wr.width + 12 - self.width) - 33 + 33
+        # x = wr.x + 0.5 * (wr.width + 12 - self.width) - 33 + 33
+        x = wr.x + 0.5 * (wr.width - self.width)
         y = y - self.height - 20
         self.SetRect((int(x), int(y), int(self.width), int(self.height)))
 
         w, h = self.GetSize()
         len_spectrum = 103 * self.scale
         spLength = len_spectrum - 1
-        sw = int(1.0 * w / spLength)
-        offset = (w - sw * spLength) * 0.5
-        ground = [wx.Rect(int(sw * i + offset + 1), int(h / 2 - 1), int(sw - 2), 2)
+        sw, offset = self.GetBarStep(w, spLength)
+        ground = [wx.Rect(int(sw * i + offset + 1), int(h / 2 - 1), max(int(sw - 2), 1), 2)
                   for i in range(len_spectrum)]
         self.ground = ground
         self.DirectDraw()
@@ -1095,7 +1266,9 @@ class PlayBoxWave(RectBox):
         self.margin = 5
         self.buffer.fps = 60
         self.cursor_width = 4
-        self.highlight_waveform = None
+        self.highlight_dim = 0.45
+        self.wave_rect = (0, 0, 0, 0)
+        self.wave_bitmaps = None
         self.last_size = self.GetSize()
         self.rectHighlight = (0, 0, 0, 0)
         self.SetDropTarget(PlayBoxDnD(self.parent))
@@ -1118,13 +1291,14 @@ class PlayBoxWave(RectBox):
         # vol_align = 12
         isTopShowOn = self.parent.parent.parent.IsPlayerTopShowOn()
         isSideShowOn = self.parent.parent.parent.IsPlayerSideShowOn()
-        leftPad, rightPad = (13, 25 + 5)
+        # leftPad, rightPad = (13, 25 + 5)
+        leftPad, rightPad = (13, 10)
         if isSideShowOn:
             leftPad = 8
         elif isSideShowOn and isTopShowOn:
             leftPad = 13
 
-        leftPad = 20
+        leftPad = 10
 
         x, y = (leftPad, h - self.height - 15 + 1 - 3)
         # x, y = (leftPad, cy-self.height-15)
@@ -1156,12 +1330,29 @@ class PlayBoxWave(RectBox):
         self.DrawCursor(dc)
 
     def DrawNormalWave(self, dc):
-        fgcolor = self.parent.st.WAVEFORM_FG_COLOR
-        dc.SetPen(wx.Pen(fgcolor, 1))
-        dc.DrawLines(list(self.wave))
+        if self.wave_bitmaps is None:
+            self.DrawFlatWave(dc, self.parent.st.WAVEFORM_FG_COLOR)
+            return
+        x, y, w, h = self.wave_rect
+        dc.DrawBitmap(self.wave_bitmaps[0], x, y)
+
+    def DrawFlatWave(self, dc, color):
+        x, y, w, h = self.wave_rect
+        cy = int(h * 0.5 + y)
+        dc.SetPen(wx.Pen(color, 1))
+        dc.DrawLine(x, cy, x + w, cy)
+
+    def DrawClippedWave(self, dc, bitmap, start, end):
+        x, y, w, h = self.wave_rect
+        start, end = (max(int(start), 0), min(int(end), w))
+        if end <= start:
+            return
+        dc.SetClippingRegion(x + start, y, end - start, h)
+        dc.DrawBitmap(bitmap, x, y)
+        dc.DestroyClippingRegion()
 
     def SetRectHighlight(self):
-        if self.wave is None or self.parent.IsDBRespPending():
+        if self.parent.IsDBRespPending():
             self.rectHighlight = (0, 0, 0, 0)
             return
         duration = self.parent.GetDurationTime()
@@ -1170,42 +1361,33 @@ class PlayBoxWave(RectBox):
         offset, period = self.parent.GetHighlightTime()
         if offset is None or period is None:
             return
-        x = 0.5 * offset * len(self.wave) / duration
-        w = period * 0.5 * len(self.wave) / duration
-        if w == 0:
-            xw = int(0.5 * len(self.wave))
-            w = int(xw - x)
+        _, _, width, _ = self.wave_rect
+        x = int(offset * width / duration)
+        if period == 0:
+            xw = width
         else:
-            xw = int(x + w)
-        x = int(x)
+            xw = min(int(x + period * width / duration), width)
         if x == 0:
             x = 1
-        if xw > len(self.wave):
-            xw = len(self.wave) / 2
-        hiwave = self.wave[x:xw] + self.wave[-xw:-x] + [self.wave[x]]
         _, height = self.GetSize()
-        self.highlight_waveform = hiwave
-        self.rectHighlight = (int(x) + self.margin, 0, int(w), height)
+        self.rectHighlight = (x + self.margin, 0, xw - x, height)
 
     def DrawHighlightWave(self, dc):
-        bgcolor = self.parent.st.HIGHLIGHT_BG_COLOR
-        pncolor = self.parent.st.HIGHLIGHT_PN_COLOR
-        fgcolor = self.parent.st.HIGHLIGHT_FG_COLOR
-        if self.highlight_waveform is None:
-            x, y = (self.margin, self.height * 0.5 - 1)
-            w = self.GetSize().width - self.margin * 2 - 2
-            dc.SetPen(wx.Pen(pncolor, 1))
-            # dc.DrawPolygon(((x, y), (x + w, y)), 0, 0, fillStyle=wx.WINDING_RULE)
-            dc.DrawPolygon(((round(x), round(y)), (round(x + w), round(y))), 0, 0)
+        if self.wave_bitmaps is None:
+            self.DrawFlatWave(dc, self.parent.st.HIGHLIGHT_PN_COLOR)
             return
-        dc.SetPen(wx.Pen(pncolor, 1))
-        dc.DrawLines(self.wave)
-        # ODDEVEN_RULE, WINDING_RULE
-        dc.SetBrush(wx.Brush(bgcolor))
-        # dc.DrawPolygon(self.highlight_waveform, 0, 0, fillStyle=wx.WINDING_RULE)
-        dc.DrawPolygon(self.highlight_waveform, 0, 0)
-        dc.SetPen(wx.Pen(fgcolor, 1))
-        dc.DrawLines(self.highlight_waveform)
+        # outside dimmed, inside in full on the highlight ground
+        x, y, w, h = self.wave_rect
+        dc.DrawBitmap(self.wave_bitmaps[1], x, y)
+        start = max(self.rectHighlight[0] - self.margin, 0)
+        end = min(start + self.rectHighlight[2], w)
+        if end <= start:
+            return
+        color = self.parent.st.HIGHLIGHT_BG_COLOR
+        dc.SetPen(wx.Pen(color, 1))
+        dc.SetBrush(wx.Brush(color))
+        dc.DrawRectangle(int(x + start), 0, int(end - start), self.GetSize().height)
+        self.DrawClippedWave(dc, self.wave_bitmaps[2], start, end)
 
     def DrawCursor(self, dc):
         w, h = self.GetSize()
@@ -1229,23 +1411,18 @@ class PlayBoxWave(RectBox):
         w, h = self.GetSize()
         x, y = (self.margin, 2)
         w, h = (w - x * 2, h - y * 2 - 1)
-        # cx = w * 0.5 + x
-        cy = h * 0.5 + y
+        self.wave_rect = (x, y, w, h)
+        self.wave_bitmaps = None
         waveform = self.parent.GetWaveform()
-        if waveform is None:
-            self.wave = list(zip(range(x, x + w), numpy.linspace(cy, cy, w)))
-            self.wave = [(int(x), int(y)) for x, y in self.wave]
+        if audio.is_waveform_3band(waveform) is False or w <= 0 or h <= 0:
             return
-        filled_wave = audio.max_wide_fill_sym(waveform, w) / 256.0 * h
-        if max(filled_wave) != 0 and self.parent.wave_max:
-            filled_wave = 1.0 * filled_wave * 0.5 * h / max(filled_wave)
-        filled_wave = numpy.round(filled_wave)
-        self.wave = [(x, cy)] + list(zip(range(x, x + w, 1), filled_wave + cy))\
-            + [(x + w, cy)] + [(x + w, cy)] + \
-            list(zip(range(x, x + w, 1), -filled_wave + cy))[::-1] + [(x, cy)]
-        self.wave = [(int(x), int(y)) for x, y in self.wave]
-        # print('*' * 100)
-        # print(self.wave)
+        # normal, dimmed for outside the highlight, and on the highlight ground
+        bgcolor = self.parent.st.PLAY_BG_COLOR
+        hlcolor = self.parent.st.HIGHLIGHT_BG_COLOR
+        self.wave_bitmaps = [
+            wx.Bitmap.FromBuffer(w, h, audio.paint_waveform_3band(
+                waveform, w, h, ground=ground, dim=dim).tobytes())
+            for ground, dim in ((bgcolor, 1.0), (bgcolor, self.highlight_dim), (hlcolor, 1.0))]
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.parent.HasToSkipEvent() is False:
@@ -1297,3 +1474,170 @@ class PlayBoxWave(RectBox):
         else:
             self.parent.SetResumeTime(new_position)
             self.reInitBuffer = True
+
+
+class PlayBoxWaveDetail(RectBox):
+
+    def __init__(self, parent):
+        RectBox.__init__(self, parent)
+        self.parent = parent
+        self.height = 40
+        self.gap = 6
+        self.margin = 5
+        self.buffer.fps = 60
+        # seconds across: at first, the least and how far a wheel notch goes
+        self.span = 12.0
+        self.span_least = 1.5
+        self.span_step = 1.25
+        self.drag_least = 4
+        self.highlight_dim = 0.45
+        self.drag = None
+        self.last_key = None
+        self.last_bitmap = None
+        self.SetDropTarget(PlayBoxDnD(self.parent))
+        color = self.parent.st.PLAY_BG_COLOR
+        self.SetBackgroundColour(color)
+        self.InitBuffer()
+
+    def OnSize(self, event=None):
+        if self.parent.parent.parent.IsWaveformDetailShowOn() is False:
+            self.Hide()
+            return
+        self.Show()
+        x, y, w, h = self.parent.Wave.GetRect()
+        self.SetRect((x, y - self.height - self.gap, w, self.height))
+        self.last_key = None
+        self.DirectDraw()
+
+    def GetSpan(self):
+        duration = self.parent.GetDurationTime()
+        if duration <= 0:
+            return self.span
+        return min(self.span, duration)
+
+    def GetCentre(self):
+        if self.drag is not None and self.drag.moved:
+            return self.drag.time
+        return self.parent.GetPositionTime()
+
+    def IsHighlightDrawn(self):
+        return self.parent.IsDBRespPending() is False\
+            and self.parent.IsHighlightOn()\
+            and self.parent.IsHighlightSkipOn() is False
+
+    def GetHighlightPeriod(self):
+        if self.IsHighlightDrawn() is False:
+            return None
+        offset, period = self.parent.GetHighlightTime()
+        if offset is None or period is None:
+            return None
+        if period == 0:
+            return (offset, self.parent.GetDurationTime())
+        return (offset, offset + period)
+
+    def SetRectDraw(self, dc):
+        w, h = self.GetSize()
+        w -= self.margin * 2
+        if w <= 0 or h <= 0:
+            return
+        waveform = self.parent.GetWaveform()
+        duration = self.parent.GetDurationTime()
+        if audio.is_waveform_3band(waveform) and duration > 0:
+            self.DrawDetailWave(dc, waveform, duration, w, h)
+        else:
+            # the waveform bar's flat line colour
+            if self.IsHighlightDrawn():
+                color = self.parent.st.HIGHLIGHT_PN_COLOR
+            else:
+                color = self.parent.st.WAVEFORM_FG_COLOR
+            dc.SetPen(wx.Pen(color, 1))
+            dc.DrawLine(self.margin, int(h * 0.5), self.margin + w, int(h * 0.5))
+        # the same cursor as the waveform bar's
+        cursor_width = self.parent.Wave.cursor_width
+        dc.SetBrush(wx.Brush(self.parent.st.PLAYCURSOR_BG_COLOR))
+        dc.SetPen(wx.Pen(self.parent.st.PLAYCURSOR_FG_COLOR, self.parent.st.PLAYCURSOR_STROKE))
+        x = math.ceil(self.margin + w * 0.5)
+        dc.DrawRectangle(int(x - cursor_width * 0.5), 0, int(cursor_width), int(h))
+
+    def DrawDetailWave(self, dc, waveform, duration, w, h):
+        span = self.GetSpan()
+        centre = self.GetCentre()
+        period = self.GetHighlightPeriod()
+        key = (id(waveform), duration, centre, span, period, w, h)
+        if key != self.last_key:
+            # the window on whole pixels: the sound moves a pixel at a time and each
+            # pixel keeps its columns, or the picture shimmered as it scrolled
+            pixel = span / w
+            start = round((centre - span * 0.5) / pixel) * pixel
+            times = start + (numpy.arange(w) + 0.5) * span / w
+            bgcolor = numpy.array(self.parent.st.PLAY_BG_COLOR, dtype=float)
+            ground, dim = (bgcolor, 1.0)
+            if period is not None:
+                inside = (times >= period[0]) & (times < period[1])
+                hlcolor = numpy.array(self.parent.st.HIGHLIGHT_BG_COLOR, dtype=float)
+                ground = numpy.where(inside[:, None], hlcolor, bgcolor)
+                dim = numpy.where(inside, 1.0, self.highlight_dim)
+            columns = len(waveform) / duration
+            image = audio.paint_waveform_3band(
+                waveform, w, h, ground=ground, dim=dim,
+                start=start * columns, end=(start + span) * columns, spread=0)
+            self.last_bitmap = wx.Bitmap.FromBuffer(w, h, image.tobytes())
+            self.last_key = key
+        dc.DrawBitmap(self.last_bitmap, self.margin, 0)
+
+    def CATCH_EVT_GLOBAL(self, event):
+        if self.IsShown() is False:
+            return
+        if self.parent.parent.HasToSkipEvent() is False:
+            self.HandleEventDrag(event)
+        self.DirectDraw()
+
+    def CATCH_EVT_MOUSEWHEEL(self, event):
+        if self.onClient is False:
+            return
+        # up narrows, down widens
+        if event.WheelRotation > 0:
+            span = self.span / self.span_step
+        else:
+            span = self.span * self.span_step
+        most = max(self.parent.GetDurationTime(), self.span_least)
+        self.span = min(max(span, self.span_least), most)
+        self.reInitBuffer = True
+
+    def HandleEventDrag(self, event):
+        # a drag moves through the file, let go where it should play; a click
+        # plays from where it is
+        if event.LeftDown and event.rectIdx is not None:
+            centre = self.parent.GetPositionTime()
+            self.drag = Struct(x=event.X, start=centre, time=centre, moved=False)
+            return
+        if self.drag is None:
+            return
+        width = max(self.GetSize().width - self.margin * 2, 1)
+        if event.LeftIsDown:
+            dx = event.X - self.drag.x
+            if abs(dx) >= self.drag_least:
+                self.drag.moved = True
+            if self.drag.moved:
+                self.drag.time = self.drag.start - 1.0 * dx / width * self.GetSpan()
+            return
+        drag = self.drag
+        self.drag = None
+        if drag.moved:
+            position = drag.time
+        else:
+            position = drag.start + (1.0 * (drag.x - self.margin) / width - 0.5) * self.GetSpan()
+        self.SeekTo(position)
+
+    def SeekTo(self, position):
+        duration = self.parent.GetDurationTime()
+        position = min(max(position, 0.0), duration * 0.999999)
+        period = self.GetHighlightPeriod()
+        if period is not None and (position < period[0] or position >= period[1]):
+            self.parent.SetHighlightSkipOn()
+        if self.parent.IsPlaying():
+            self.parent.SetPositionTime(position)
+        else:
+            self.parent.SetResumeTime(position)
+            self.parent.Wave.reInitBuffer = True
+        self.reInitBuffer = True

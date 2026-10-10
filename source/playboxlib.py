@@ -288,7 +288,8 @@ class PlayBoxControl():
     def InitControlEvent(self):
         self.reInitWave = True
         self.waveform_length = 1500
-        self.pending = Struct(dbresp=False, mfeats=False, mdx=False)
+        self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False)
+        self.skip_silence = GetPreference('skip_silence') is True
         self.waveform_init = numpy.linspace(0, 0, self.waveform_length)
         self.cue = Struct(mdx=None, path=None, waveform=None,
                           is_playing=False, hStream=0, tempo=0.0, key='-',
@@ -322,7 +323,7 @@ class PlayBoxControl():
         return self.cue.waveform
 
     def SetWaveImage(self, waveform):
-        if len(waveform) == 0:
+        if audio.is_waveform_3band(waveform) is False:
             waveform = None
         self.cue.waveform = waveform
 
@@ -361,6 +362,9 @@ class PlayBoxControl():
 
         if self.pending.mfeats:
             self.SetAudioEventWithMFEATS()
+
+        if self.pending.wave:
+            self.SetAudioEventWithWAVE()
 
         self.HandleEventTrackFinishTime()
         self.HandleEventFadeOut()
@@ -446,10 +450,34 @@ class PlayBoxControl():
         self.SetHighlightOffsetTime(resp.highlight[0])
         self.SetBestHighlightVariablePeriodTime()
         self.SetWaveImage(resp.waveform)
+        self.SkipLeadingSilence()
+        if self.cue.waveform is None or resp.version != mfeats.MFEATS_VERSION:
+            # analyzed before the current waveform: analyze again for it
+            self.parent.MFEATS.AddMFEATSTask(self.cue.path, urgent=True, forced=True)
+            self.pending.wave = time.time()
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
             self.GotoTrackOffsetTime()
         self.pending.dbresp = False
+        self.reInitWave = True
+
+    def SetAudioEventWithWAVE(self):
+        if time.time() - self.pending.wave < 1.0:
+            return
+        self.pending.wave = time.time()
+        resp = mfeats.getby_key_value('mdx', self.cue.mdx)
+        if resp is None:
+            return
+        if resp.error == 1:
+            self.pending.wave = False
+            return
+        if audio.is_waveform_3band(resp.waveform) is False:
+            return
+        if resp.version != mfeats.MFEATS_VERSION:
+            return
+        self.pending.wave = False
+        self.SetWaveImage(resp.waveform)
+        self.SkipLeadingSilence()
         self.reInitWave = True
 
     def IsAutoGainOn(self):
@@ -470,6 +498,44 @@ class PlayBoxControl():
         period = self.GetHighlightVariablePeriodTime()
         self.SetTrackFinishTime(offset + period)
         self.SetHighlightSkipOff()
+
+    def IsSkipSilenceOn(self):
+        return self.skip_silence
+
+    def SetSkipSilenceOn(self):
+        self.skip_silence = True
+        SetPreference('skip_silence', True)
+        self.SetSoundTrackTime()
+
+    def SetSkipSilenceOff(self):
+        self.skip_silence = False
+        SetPreference('skip_silence', False)
+        self.SetSoundTrackTime()
+
+    def GetSoundTime(self):
+        duration = self.GetDurationTime()
+        if self.IsSkipSilenceOn() and audio.is_waveform_3band(self.cue.waveform):
+            return audio.get_waveform_sound_time(self.cue.waveform, duration)
+        return (0.0, duration)
+
+    def SetSoundTrackTime(self):
+        # the whole track, or its sound alone when skipping silence; the
+        # highlight keeps its own period
+        if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
+            return
+        offset, finish = self.GetSoundTime()
+        self.SetTrackOffsetTime(offset)
+        self.SetTrackFinishTime(finish)
+
+    def SkipLeadingSilence(self):
+        self.SetSoundTrackTime()
+        if self.IsSkipSilenceOn() is False:
+            return
+        if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
+            return
+        offset = self.GetTrackOffsetTime()
+        if self.GetPositionTime() < offset:
+            self.SetPositionTime(offset)
 
     def SetOriginalTrackTime(self):
         self.SetTrackOffsetTime(0.0)
@@ -604,18 +670,24 @@ class PlayBoxControl():
         self.cue.highlight_on = True
 
     def SetHighlightOff(self):
-        self.SetTrackOffsetTime(0.0)
-        duration = self.GetDurationTime()
-        self.SetTrackFinishTime(duration)
+        # self.SetTrackOffsetTime(0.0)
+        # duration = self.GetDurationTime()
+        # self.SetTrackFinishTime(duration)
+        offset, finish = self.GetSoundTime()
+        self.SetTrackOffsetTime(offset)
+        self.SetTrackFinishTime(finish)
         self.cue.highlight_on = False
 
     def IsHighlightSkipOn(self):
         return self.cue.highlight_skip
 
     def SetHighlightSkipOn(self):
-        self.SetTrackOffsetTime(0.0)
-        duration = self.GetDurationTime()
-        self.SetTrackFinishTime(duration)
+        # self.SetTrackOffsetTime(0.0)
+        # duration = self.GetDurationTime()
+        # self.SetTrackFinishTime(duration)
+        offset, finish = self.GetSoundTime()
+        self.SetTrackOffsetTime(offset)
+        self.SetTrackFinishTime(finish)
         self.cue.highlight_skip = True
 
     def SetHighlightSkipOff(self):
@@ -771,6 +843,7 @@ class PlayBoxControl():
         self.pending.dbresp = True
         self.pending.mdx = True
         self.pending.mfeats = True
+        self.pending.wave = False
         self.SetHighlightSkipOff()
         self.SetTrackOffsetTime(0.0)
         self.parent.ListBox.List.pending.SkipStopIcon = True

@@ -42,7 +42,12 @@ from utilities import set_process_priority
 MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
-MFEATS_VERSION = '1.0.1'
+MFEATS_VERSION = '1.2.0'
+# 3band waveform: a column's seconds (about), where the lows end, the highs begin and end (Hz)
+WAVEFORM_COLUMN_SECONDS = 0.01
+WAVEFORM_LOW_TOP = 200
+WAVEFORM_HIGH_BOTTOM = 1500
+WAVEFORM_HIGH_TOP = 5512.5
 # CLIENT_ADDRESS = ('localhost', 12501)
 # SERVER_ADDRESS = ('localhost', 12502)
 CLIENT_ADDRESS = ('127.0.0.1', 12702)
@@ -181,10 +186,20 @@ def mfeats_single(path, queue=None):
     if int(frame_length) % 8 != 0:
         frame_length += (8 - int(frame_length) % 8)
     gap = total_frame_length / frame_length - waveform_length
-    waveform = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     highlight_raw_points = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
-    jump = 1.0 * frame_length / waveform_oversampling
+    # jump = 1.0 * frame_length / waveform_oversampling
+    mix_length = int(frame_length / channel)
+    # the waveform's columns: a frame split into some of about WAVEFORM_COLUMN_SECONDS
+    sub_count = max(int(round(1.0 * mix_length / fs / WAVEFORM_COLUMN_SECONDS)), 1)
+    sub_length = int(mix_length / sub_count)
+    # waveform = numpy.linspace(0, 0, int(round(waveform_length + gap)))
+    waveform = numpy.zeros((int(round(waveform_length + gap)) * sub_count, 5))
+    mix_window = numpy.hanning(mix_length)
+    mix_freqs = numpy.fft.rfftfreq(mix_length, 1.0 / fs)
+    mix_bands = (mix_freqs < WAVEFORM_LOW_TOP,
+                 (mix_freqs >= WAVEFORM_LOW_TOP) & (mix_freqs < WAVEFORM_HIGH_BOTTOM),
+                 (mix_freqs >= WAVEFORM_HIGH_BOTTOM) & (mix_freqs < WAVEFORM_HIGH_TOP))
 
     analyze_frame, tempo_frame, tempo_fs = ([], [], 200)
 
@@ -196,12 +211,19 @@ def mfeats_single(path, queue=None):
 
         mono_frame = deepcopy(frame_raw[::channel])
         analyze_frame += [mono_frame]
-        if jump < waveform_oversampling:
-            waveform[cnt] = numpy.max(numpy.abs(mono_frame))
-        else:
-            points = [numpy.max(numpy.abs(mono_frame[int(i):int(i + jump)]))
-                      for i in numpy.arange(0, frame_length / channel - jump, jump)]
-            waveform[cnt] = numpy.mean(points)
+        # if jump < waveform_oversampling:
+        #     waveform[cnt] = numpy.max(numpy.abs(mono_frame))
+        # else:
+        #     points = [numpy.max(numpy.abs(mono_frame[int(i):int(i + jump)]))
+        #               for i in numpy.arange(0, frame_length / channel - jump, jump)]
+        #     waveform[cnt] = numpy.mean(points)
+        mix = frame_raw[:mix_length * channel].reshape(-1, channel).mean(axis=1) / 32768.0
+        power = numpy.abs(numpy.fft.rfft(mix * mix_window))**2
+        subs = numpy.abs(mix[:sub_length * sub_count]).reshape(sub_count, sub_length)
+        row = cnt * sub_count
+        waveform[row:row + sub_count, 0] = subs.max(axis=1)
+        waveform[row:row + sub_count, 1] = subs.mean(axis=1)
+        waveform[row:row + sub_count, 2:] = [power[v].sum() for v in mix_bands]
         highlight_raw_points[cnt] = numpy.mean(numpy.abs(mono_frame))
 
         # collect frames for long term analysis
@@ -229,7 +251,12 @@ def mfeats_single(path, queue=None):
 
     # waveform
 
-    waveform = numpy.int8(waveform / (2**8))
+    # waveform = numpy.int8(waveform / (2**8))
+    # peak and level square-rooted, then each band's share of the sound
+    shares = numpy.sqrt(waveform[:, 2:])
+    shares = shares / numpy.maximum(shares.sum(axis=1, keepdims=True), 1e-12)
+    waveform = numpy.uint8(numpy.round(255 * numpy.column_stack([
+        numpy.sqrt(numpy.clip(waveform[:, :2], 0, 1)), shares])))
 
     # tempo analysis with tempo_frame
 
