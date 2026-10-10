@@ -434,7 +434,7 @@ class ListControl():
             for itemIdx in range(len(self.innerList[listIdx].items)):
                 if self.innerList[listIdx].items[itemIdx][statusIdx] in ('', 'analyzing'):
                     path = self.innerList[listIdx].items[itemIdx][pathIdx]
-                    resp = mfeats.getby_key_value('mdx', audio.makemdx(path))
+                    resp = mfeats.getby_key_value('mdx', audio.makemdx(path), waveform=False)
                     if resp is not None:
                         order = self.innerList[listIdx].items[itemIdx][orderIdx]
                         item = MakeMusicFileItem(path, order, columns)

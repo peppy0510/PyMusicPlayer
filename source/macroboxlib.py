@@ -272,7 +272,7 @@ def MakeMusicFileItem(path, order, columns):
         except Exception:
             tempo = ''
     mdx = audio.makemdx(path)
-    resp = mfeats.getby_key_value('mdx', mdx)
+    resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
     if resp is not None:
         if resp.highlight != '':
             highlight = resp.highlight[0]
@@ -546,21 +546,31 @@ class MFEATS_Scheduler(wx.Timer):
             if itemsIdx == []:
                 continue
             pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
-            for itemIdx in itemsIdx:
-                path = self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
-                # self.AddMFEATSTask(path, urgent=False)
-                t = threading.Thread(
-                    target=self.AddMFEATSTask,
-                    args=(path,), kwargs={'urgent': False},
-                    daemon=True
-                )
-                t.start()
+            # one thread for them all: a thread an item was thousands of threads
+            # on a big list, each looking its row up
+            paths = [self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
+                     for itemIdx in itemsIdx]
+            t = threading.Thread(target=self.AddMFEATSTasks, args=(paths,), daemon=True)
+            t.start()
+            # for itemIdx in itemsIdx:
+            #     path = self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
+            #     # self.AddMFEATSTask(path, urgent=False)
+            #     t = threading.Thread(
+            #         target=self.AddMFEATSTask,
+            #         args=(path,), kwargs={'urgent': False},
+            #         daemon=True
+            #     )
+            #     t.start()
+
+    def AddMFEATSTasks(self, paths):
+        for path in paths:
+            self.AddMFEATSTask(path, urgent=False)
 
     def SetProcsLimit(self, value):
         self.procs_limit = value
 
     def AddMFEATSTask(self, path, urgent=False, forced=False):
-        resp = mfeats.getby_key_value('path', path)
+        resp = mfeats.getby_key_value('path', path, waveform=False)
         if resp is not None and forced is False:
             return
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
@@ -599,7 +609,8 @@ class MFEATS_Scheduler(wx.Timer):
                 path = this.path
                 idx = [i for i, v in enumerate(self.procpath) if v == path]
                 if idx == []:
-                    return
+                    # return
+                    continue
                 path = self.procpath.pop(idx[0])
                 self.UpdateItemsValue(path)
 
@@ -613,7 +624,9 @@ class MFEATS_Scheduler(wx.Timer):
             return
         self.proclist.append(Struct(path=path, proc=mfeats.Process(path)))
         # self.proclist.append(Struct(path=path, proc=mfeats.Thread(path)))
-        self.proclist[-1].daemon = True
+        # self.proclist[-1].daemon = True
+        # the process's own flag (the Struct's was set): ended with the app
+        self.proclist[-1].proc.daemon = True
         self.proclist[-1].proc.start()
         self.procpath.append(path)
         self.UpdateItemsValue(path)
@@ -627,10 +640,14 @@ class MFEATS_Scheduler(wx.Timer):
                if self.procpath[i] == old_path]
         for i in idx:
             self.procpath[i] = new_path
+        # the running job too, or its slot was never given back
+        for proc in self.proclist:
+            if proc.path == old_path:
+                proc.path = new_path
 
     def UpdateItemsValue(self, path):
         mdx = audio.makemdx(path)
-        resp = mfeats.getby_key_value('mdx', mdx)
+        resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
         if resp is None:
             # analyzing status uses GetProcPath
             self.parent.ListBox.SetListItemsValueWhereColumnKey(
@@ -685,8 +702,12 @@ class MFEATS_Scheduler(wx.Timer):
 
     def terminate(self):
         self.stop = True
+        # for i in range(len(self.proclist)):
+        #     self.proclist[i].proc.join()
+        # an analysis still running is left (its row is written again later)
         for i in range(len(self.proclist)):
-            self.proclist[i].proc.join()
+            self.proclist[i].proc.terminate()
+            self.proclist[i].proc.join(1.0)
         # for i in range(len(self.proclist)):
         #   self.proclist[i].proc._Thread__stop()
 
@@ -778,7 +799,7 @@ class MFEATS_Network_Scheduler(wx.Timer):
         self.procs_limit = int(value)
 
     def AddMFEATSTask(self, path, urgent=False, forced=False):
-        resp = mfeats.getby_key_value('path', path)
+        resp = mfeats.getby_key_value('path', path, waveform=False)
         if resp is not None and forced is False:
             return
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
@@ -877,7 +898,7 @@ class MFEATS_Network_Scheduler(wx.Timer):
 
     def UpdateItemsValue(self, path):
         mdx = audio.makemdx(path)
-        resp = mfeats.getby_key_value('mdx', mdx)
+        resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
         if resp is None:
             # analyzing status uses GetProcPath
             self.parent.ListBox.SetListItemsValueWhereColumnKey(
@@ -1414,6 +1435,8 @@ class RectRect():
     def OnIdle(self, event):
         if self.reInitBuffer is False:
             return
+        if self.IsDrawable() is False:
+            return
         elapsed_time = time.time() - self.buffer.lap
         if elapsed_time < 1.0 / self.buffer.fps:
             return
@@ -1426,7 +1449,14 @@ class RectRect():
             return
         wx.BufferedPaintDC(self, self.buffer.bmp)
 
+    def IsDrawable(self):
+        # nothing is drawn while the window is minimized; drawn again when it is back
+        return wx.GetTopLevelParent(self).IsIconized() is False
+
     def DirectDraw(self):
+        if self.IsDrawable() is False:
+            self.reInitBuffer = True
+            return
         elapsed_time = time.time() - self.buffer.lap
         if elapsed_time < 1.0 / self.buffer.fps:
             return

@@ -1352,23 +1352,25 @@ class PlayBoxWave(RectBox):
         dc.DestroyClippingRegion()
 
     def SetRectHighlight(self):
+        # none left from the track before when this one has none
+        self.rectHighlight = (0, 0, 0, 0)
         if self.parent.IsDBRespPending():
-            self.rectHighlight = (0, 0, 0, 0)
             return
         duration = self.parent.GetDurationTime()
-        if duration == 0.0:
+        if duration <= 0.0:
             return
         offset, period = self.parent.GetHighlightTime()
         if offset is None or period is None:
             return
         _, _, width, _ = self.wave_rect
-        x = int(offset * width / duration)
+        # the cursor's rounding (DrawCursor: ceil), so it sits on the edge it goes to
+        x = int(math.ceil(offset * width / duration))
         if period == 0:
             xw = width
         else:
-            xw = min(int(x + period * width / duration), width)
-        if x == 0:
-            x = 1
+            xw = min(int(math.ceil((offset + period) * width / duration)), width)
+        # if x == 0:
+        #     x = 1
         _, height = self.GetSize()
         self.rectHighlight = (x + self.margin, 0, xw - x, height)
 
@@ -1488,6 +1490,7 @@ class PlayBoxWaveDetail(RectBox):
         # seconds across: at first, the least and how far a wheel notch goes
         self.span = 12.0
         self.span_least = 1.5
+        self.span_most = 3 * 60 * 60
         self.span_step = 1.25
         self.drag_least = 4
         self.highlight_dim = 0.45
@@ -1501,6 +1504,7 @@ class PlayBoxWaveDetail(RectBox):
 
     def OnSize(self, event=None):
         if self.parent.parent.parent.IsWaveformDetailShowOn() is False:
+            self.drag = None
             self.Hide()
             return
         self.Show()
@@ -1516,6 +1520,10 @@ class PlayBoxWaveDetail(RectBox):
         return min(self.span, duration)
 
     def GetCentre(self):
+        # a drag is of the track it began on: the next track's waveform is not
+        # shown at its time, nor played from it
+        if self.drag is not None and self.drag.path != self.parent.cue.path:
+            self.drag = None
         if self.drag is not None and self.drag.moved:
             return self.drag.time
         return self.parent.GetPositionTime()
@@ -1563,12 +1571,14 @@ class PlayBoxWaveDetail(RectBox):
         span = self.GetSpan()
         centre = self.GetCentre()
         period = self.GetHighlightPeriod()
-        key = (id(waveform), duration, centre, span, period, w, h)
+        # the window on whole pixels: the sound moves a pixel at a time and each
+        # pixel keeps its columns, or the picture shimmered as it scrolled; and
+        # painted again only when it has moved a pixel
+        pixel = span / w
+        step = round((centre - span * 0.5) / pixel)
+        key = (id(waveform), duration, step, span, period, w, h)
         if key != self.last_key:
-            # the window on whole pixels: the sound moves a pixel at a time and each
-            # pixel keeps its columns, or the picture shimmered as it scrolled
-            pixel = span / w
-            start = round((centre - span * 0.5) / pixel) * pixel
+            start = step * pixel
             times = start + (numpy.arange(w) + 0.5) * span / w
             bgcolor = numpy.array(self.parent.st.PLAY_BG_COLOR, dtype=float)
             ground, dim = (bgcolor, 1.0)
@@ -1595,13 +1605,19 @@ class PlayBoxWaveDetail(RectBox):
     def CATCH_EVT_MOUSEWHEEL(self, event):
         if self.onClient is False:
             return
-        # up narrows, down widens
+        # up narrows, down widens; kept as the span chosen, not fitted to the
+        # track (GetSpan does that), or a short track, or none, left every track
+        # after it zoomed in
+        duration = self.parent.GetDurationTime()
+        if duration <= 0:
+            return
         if event.WheelRotation > 0:
-            span = self.span / self.span_step
+            span = min(self.span, duration) / self.span_step
         else:
-            span = self.span * self.span_step
-        most = max(self.parent.GetDurationTime(), self.span_least)
-        self.span = min(max(span, self.span_least), most)
+            span = min(self.span * self.span_step, max(duration, self.span))
+        # most = max(self.parent.GetDurationTime(), self.span_least)
+        # self.span = min(max(span, self.span_least), most)
+        self.span = min(max(span, self.span_least), self.span_most)
         self.reInitBuffer = True
 
     def HandleEventDrag(self, event):
@@ -1609,8 +1625,11 @@ class PlayBoxWaveDetail(RectBox):
         # plays from where it is
         if event.LeftDown and event.rectIdx is not None:
             centre = self.parent.GetPositionTime()
-            self.drag = Struct(x=event.X, start=centre, time=centre, moved=False)
+            self.drag = Struct(x=event.X, start=centre, time=centre, moved=False,
+                               path=self.parent.cue.path)
             return
+        if self.drag is not None and self.drag.path != self.parent.cue.path:
+            self.drag = None
         if self.drag is None:
             return
         width = max(self.GetSize().width - self.margin * 2, 1)

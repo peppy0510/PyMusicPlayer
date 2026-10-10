@@ -181,15 +181,26 @@ def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
     # start, end: the columns drawn across (the whole waveform by default)
     # ground (3 or width x 3) and dim (scalar or width): per pixel column too
     # returns an RGB image (height, width, 3)
+    if width <= 0 or height <= 0:
+        return numpy.zeros((max(height, 0), max(width, 0), 3), dtype=numpy.uint8)
+    # neighbours either side, no wider than the picture
+    spread = min(spread, max((width - 1) // 2, 0))
     ground = numpy.array(ground, dtype=float)
     dim = numpy.array(dim, dtype=float)
-    data = waveform / 255.0
-    count = len(data)
+    count = len(waveform)
     if start is None:
         start, end = (0, count)
     edges = start + (end - start) * numpy.arange(width + 1) / width
     centres = (edges[:-1] + edges[1:]) * 0.5
     inside = (centres >= 0) & (centres < count)
+    # only the columns drawn, and one either side: the whole waveform read every
+    # frame was tens of megabytes a frame for a long mix
+    first = int(min(max(numpy.floor(min(start, end)) - 1, 0), count - 1))
+    last = int(min(max(numpy.ceil(max(start, end)) + 2, first + 1), count))
+    data = waveform[first:last] / 255.0
+    count = len(data)
+    edges = edges - first
+    centres = centres - first
     if (end - start) / width > 1:
         # columns to a pixel: the loudest peak, the mean level and bands
         padded = numpy.vstack([data, numpy.zeros((1, 5))])
@@ -588,9 +599,39 @@ def get_stream_spectrum_vectorscope_repl(hstream, vs_size=90, channel=2, autogai
     return log_spcetrum, list(set(xys))
 
 
+# the spectrum's bins and their weights by (spectrum length, scale): the same every frame
+SPECTRUM_BINS = {}
+
+
+def get_spectrum_bins(length, spectrum_scale):
+    key = (length, spectrum_scale)
+    if key in SPECTRUM_BINS:
+        return SPECTRUM_BINS[key]
+    low_pad = [2, 3, 4, 5, 6, 7]
+    note_freq_range = list(get_note_freq_range())
+    freqbin = [freq for freq in note_freq_range
+               if freq > 8 and freq < length + len(low_pad) + 1]
+    freqbin = low_pad + freqbin + [length]
+    for i in range(len(freqbin) - 1, 0, -1):
+        x = (freqbin[i] - freqbin[i - 1]) / spectrum_scale
+        for ii in range(spectrum_scale - 1, 0, -1):
+            freqbin.insert(i, freqbin[i - 1] + x * ii)
+    edges = numpy.array([int(v) for v in freqbin])
+    values = numpy.array(freqbin[:-1], dtype=float)
+    idx = numpy.arange(len(values))
+    # each bin is spectrum[edge:next edge + 1] (the next edge included)
+    starts = edges[:-1]
+    included = numpy.minimum(edges[1:], length - 1)
+    weights = numpy.log2(1 + values) * (values**0.25)
+    powers = 1.4 * ((2 + idx) / (1 + idx))
+    SPECTRUM_BINS[key] = (starts, included, weights, powers)
+    return SPECTRUM_BINS[key]
+
+
 def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, spectrum_scale=1):
     if hstream == 0:
-        return 0
+        # return 0
+        return None, None
     amplify = 1.25
     amplify = 1.25 * pow(spectrum_scale, 0.5)
     # amplify = 0.99
@@ -602,7 +643,10 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
     # frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel) * pow(spectrum_scale, 0.75)))
     fftpnt = int(round(freqmax * fftrex * 0.1))
-    data = numpy.arange(frame_length, dtype=ctypes.c_short)
+    # data = numpy.arange(frame_length, dtype=ctypes.c_short)
+    # silence where it is not filled: the length below is in bytes, so half of it
+    # is read, and the rest was arange's ramp, drawn as bars of its own
+    data = numpy.zeros(frame_length, dtype=ctypes.c_short)
     pybass.BASS_ChannelGetData(hstream, data.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length)
     if channel == 1:
@@ -610,37 +654,18 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     elif channel == 2:
         dataL = numpy.array(data[0::2])
         dataR = numpy.array(data[1::2])
+    else:
+        dataL = numpy.array(data[0::channel])
+        dataR = numpy.array(data[1::channel])
 
     amplify = autogain * (1.0 / 0.4) * 2 * (1.0 * fs / 44100) * amplify
     spectrum = numpy.fft.fft(dataL * amplify, fftpnt)
     spectrum = spectrum[1:int(len(spectrum) / 2)]
     spectrum = abs(spectrum) / fftpnt / 8192
-    low_pad = [2, 3, 4, 5, 6, 7]
-    # low_pad = []
-    # for i in range(len(note_freq_range) - 1, 0, -1):
-    #     x = (note_freq_range[i] - note_freq_range[i - 1]) / spectrum_scale
-    #     for ii in range(spectrum_scale - 1, 0, -1):
-    #         note_freq_range.insert(i, note_freq_range[i - 1] + x * ii)
-
-    note_freq_range = list(get_note_freq_range())
-
-    freqbin = [freq for freq in note_freq_range
-               if freq > 8 and freq < len(spectrum) + len(low_pad) + 1]
-    # freqbin = low_pad + freqbin + [len(spectrum)]
-    freqbin = low_pad + freqbin + [len(spectrum)]
-
-    for i in range(len(freqbin) - 1, 0, -1):
-        x = (freqbin[i] - freqbin[i - 1]) / spectrum_scale
-        for ii in range(spectrum_scale - 1, 0, -1):
-            freqbin.insert(i, freqbin[i - 1] + x * ii)
-
-    # print(freqbin)
-    log_spcetrum = numpy.zeros(len(freqbin) - 1)
-    for i, v in enumerate(freqbin[:-1]):
-        x = numpy.max(spectrum[int(freqbin[i]):int(freqbin[i + 1]) + 1])
-        log_spcetrum[i] = x * math.log(1 + v, 2) * (v**0.25)
-        log_spcetrum[i] = (log_spcetrum[i]**(1.4 * ((2 + i) / (1 + i)))) * 1.5
-    # print numpy.mean(log_spcetrum)
+    # (the bins and their weights once for each length and scale, the maxima at once)
+    starts, included, weights, powers = get_spectrum_bins(len(spectrum), spectrum_scale)
+    peaks = numpy.maximum(numpy.maximum.reduceat(spectrum, starts), spectrum[included])
+    log_spcetrum = ((peaks * weights)**powers) * 1.5
 
     dataL = dataL * amplify * 1.20
     dataR = dataR * amplify * 1.20

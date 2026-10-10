@@ -171,8 +171,13 @@ def mfeats_single(path, queue=None):
 
     if hstream == 0:
         error = 1
+    # an empty file, or one with no length to read
+    if hlength <= 0 or hlength == 0xFFFFFFFFFFFFFFFF or duration <= 0:
+        error = 1
 
     if error == 1:
+        if hstream != 0:
+            pybass.BASS_StreamFree(hstream)
         mfeats_data = MFEATS(mdx=mdx, path=path, date=time.time(), version=version, error=1)
         if queue is not None:
             queue.put(mfeats_data)
@@ -183,8 +188,12 @@ def mfeats_single(path, queue=None):
     if total_frame_length / 2 < waveform_length:
         waveform_length = total_frame_length / 2
     frame_length = int(1.0 * total_frame_length / waveform_length) * 2
-    if int(frame_length) % 8 != 0:
-        frame_length += (8 - int(frame_length) % 8)
+    # if int(frame_length) % 8 != 0:
+    #     frame_length += (8 - int(frame_length) % 8)
+    # whole samples of every channel (8 for stereo, as before)
+    frame_unit = int(numpy.lcm(8, channel))
+    if int(frame_length) % frame_unit != 0:
+        frame_length += (frame_unit - int(frame_length) % frame_unit)
     gap = total_frame_length / frame_length - waveform_length
     highlight_raw_points = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
@@ -353,6 +362,7 @@ def mfeats_single(path, queue=None):
             frame_length = int(fs * channel * 0.5)
         else:
             frame_length = int(fs * channel * (60.0 / xtempo))
+        frame_length -= frame_length % channel
 
         offset_position, until_position = (highlight[0], fs * channel * until_duration * 2)
 
@@ -369,9 +379,12 @@ def mfeats_single(path, queue=None):
         for cnt, frame_position in enumerate(
                 numpy.arange(0, total_frame_length - frame_length, frame_length)):
 
-            pybass.BASS_ChannelGetData(
+            got = pybass.BASS_ChannelGetData(
                 hstream, frame_raw.ctypes.data_as(
                     ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
+            # past the file's end (-1): the last frame read was counted already
+            if got <= 0 or got == 0xFFFFFFFF:
+                break
 
             mono_frame = frame_raw[::channel] / 32768.0
             spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
@@ -438,10 +451,13 @@ def mfeats_single(path, queue=None):
     if save_tag is None:
         save_tag = False
     if save_tag:
-        mutagen_mp3 = mutagen.mp3.MP3(path)
-        mutagen_mp3['TKEY'] = mutagen.id3.TKEY(encoding=3, text=[key])
-        mutagen_mp3['TBPM'] = mutagen.id3.TBPM(encoding=3, text=[tempo])
-        mutagen_mp3.save()
+        try:
+            mutagen_mp3 = mutagen.mp3.MP3(path)
+            mutagen_mp3['TKEY'] = mutagen.id3.TKEY(encoding=3, text=[key])
+            mutagen_mp3['TBPM'] = mutagen.id3.TBPM(encoding=3, text=[tempo])
+            mutagen_mp3.save()
+        except Exception:
+            pass
 
     mfeats_data = MFEATS(
         mdx=mdx, path=path, key=key, tempo=tempo,
@@ -652,8 +668,14 @@ class Process(multiprocessing.Process):
 
     def run(self):
         set_process_priority(6)
-        mfeats_single(self.path, self.queue)
-        self.result = self.queue.get()
+        # mfeats_single(self.path, self.queue)
+        # self.result = self.queue.get()
+        # a failed analysis is kept as an error, or it was tried again on every start
+        try:
+            self.result = mfeats_single(self.path)
+        except Exception:
+            self.result = MFEATS(mdx=makemdx(self.path), path=self.path,
+                                 date=time.time(), version=MFEATS_VERSION, error=1)
         insert_mfeats(self.result)
 
     def __del__(self):
@@ -790,6 +812,7 @@ def create_mfeats_table(table_name='mfeats', db_name=None):
         db_name = MFEATS_DB
 
     if os.path.isfile(db_name):
+        create_mfeats_index(table_name, db_name)
         return
     fields = ','.join([' '.join(field) for field in MFEATS_DEFINITION])
     query = '''CREATE TABLE %s (%s);''' % (table_name, fields)
@@ -877,15 +900,31 @@ def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
 #     thread.getby_key_value(key, value, table_name, db_name)
 
 
-def getby_key_value(key, value, table_name='mfeats', db_name=None):
+def create_mfeats_index(table_name='mfeats', db_name=None):
+    # rows are looked up by path too (the scheduler's check)
     if db_name is None:
         db_name = MFEATS_DB
-    query = f'''SELECT * FROM {table_name} WHERE {key}="{value}"'''
+    conn = sqlite3.connect(db_name)
+    conn.execute('CREATE INDEX IF NOT EXISTS %s_path ON %s (path)' % (table_name, table_name))
+    conn.commit()
+    conn.close()
+
+
+def getby_key_value(key, value, table_name='mfeats', db_name=None, waveform=True):
+    # waveform=False: the row without its waveform (the biggest blob), for the
+    # list's and the scheduler's checks
+    if db_name is None:
+        db_name = MFEATS_DB
+    # query = f'''SELECT * FROM {table_name} WHERE {key}="{value}"'''
+    fields = [field_key for field_key, _ in MFEATS_DEFINITION]
+    if waveform is False:
+        fields = ["'' AS waveform" if v == 'waveform' else v for v in fields]
+    query = f'''SELECT {','.join(fields)} FROM {table_name} WHERE {key}=?'''
     conn = None
     # sqlite.connect(':memory:', check_same_thread = False)
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
-    resp = c.execute(query)
+    resp = c.execute(query, (value,))
 
     if resp is None:
         conn.close()
@@ -902,6 +941,8 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None):
                        field_type in MFEATS_DEFINITION if field_type == 'BLOB']
     # data = {}
     for field_key in blob_field_keys:
+        if field_key == 'waveform' and waveform is False:
+            continue
         data.update(**{field_key: decompress_object(data[field_key])})
         # exec(f'{field_key} = decompress_object({field_key})')
 
@@ -938,13 +979,16 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None):
 def update_many_key_values(where, key_values, table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
-    key_values = [''.join([key, '="', value, '"']) for key, value in key_values]
-    key_values = ','.join(key_values)
-    query = '''UPDATE %s SET %s WHERE %s="%s";''' % (table_name, key_values, where[0], where[1])
+    # key_values = [''.join([key, '="', value, '"']) for key, value in key_values]
+    # key_values = ','.join(key_values)
+    # query = '''UPDATE %s SET %s WHERE %s="%s";''' % (table_name, key_values, where[0], where[1])
+    # values as parameters: a quote in a key or a tempo broke the query
+    names = ','.join(['%s=?' % (key) for key, _ in key_values])
+    query = '''UPDATE %s SET %s WHERE %s=?;''' % (table_name, names, where[0])
     conn = None
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
-    c.execute(query)
+    c.execute(query, [value for _, value in key_values] + [where[1]])
     conn.commit()
     conn.close()
     # try:
@@ -964,25 +1008,27 @@ def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):
     # tic = time.time()
     if db_name is None:
         db_name = MFEATS_DB
-    resp = getby_key_value('mdx', mfeats_data.mdx)
-    if resp is not None:
-        deleteby_key_value('mdx', mfeats_data.mdx)
+    # resp = getby_key_value('mdx', mfeats_data.mdx)
+    # if resp is not None:
+    #     deleteby_key_value('mdx', mfeats_data.mdx)
+    # replaced in one statement: deleted then inserted, a reader in between found
+    # no row and queued the file again
 
     field_keys = [v for v, _ in MFEATS_DEFINITION]
     field_types = [v for _, v in MFEATS_DEFINITION]
     field_values = [getattr(mfeats_data, v) for v in field_keys]
     for i, field_type in enumerate(field_types):
         if field_type == 'BLOB':
-            field_values[i] = '"%s"' % (compress_object(field_values[i]))
+            field_values[i] = compress_object(field_values[i])
         else:
-            field_values[i] = '"%s"' % (field_values[i])
-    values = ','.join(field_values)
-    query = '''INSERT INTO %s VALUES (%s);''' % (table_name, values)
+            field_values[i] = '%s' % (field_values[i])
+    marks = ','.join(['?'] * len(field_values))
+    query = '''INSERT OR REPLACE INTO %s VALUES (%s);''' % (table_name, marks)
     # print('SET', mfeats_data.mdx, mfeats_data.key, mfeats_data.tempo, field_values)
     conn = None
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
-    c.execute(query)
+    c.execute(query, field_values)
     conn.commit()
     conn.close()
 

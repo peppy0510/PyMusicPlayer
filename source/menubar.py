@@ -538,21 +538,14 @@ class MacroBoxPreference():
     def SetPlayerTopShowOn(self):
         self.playbox_top_show = True
         if self.IsPlayerOnlyModeOn():
-            height = self.GetPlayerOnlyHeight()
-            w, _ = self.GetSize()
-            self.SetMaxSize((-1, height))
-            self.SetMinSize((550, height))
-            self.SetSize((w, height))
+            self.SetPlayerOnlyHeight()
         self.OnSize()
 
     def SetPlayerTopShowOff(self):
         self.playbox_top_show = False
         if self.IsPlayerOnlyModeOn():
-            height = self.GetPlayerOnlyHeight()
-            w, _ = self.GetSize()
-            self.SetMinSize((550, height))
-            self.SetMaxSize((-1, height)) + 10
-            self.SetSize((w, height))
+            # (SetMaxSize(...) + 10 raised: the window never got shorter)
+            self.SetPlayerOnlyHeight()
         self.OnSize()
 
     def IsPlayerTopShowOn(self):
@@ -574,12 +567,18 @@ class MacroBoxPreference():
     def ApplyWaveformDetailShow(self):
         self.MenuBar.itemWaveformDetailShow.Check(self.waveform_detail_show)
         if self.IsPlayerOnlyModeOn():
-            height = self.GetPlayerOnlyHeight()
-            w, _ = self.GetSize()
-            self.SetMinSize((550, height))
-            self.SetMaxSize((-1, height))
-            self.SetSize((w, height))
+            self.SetPlayerOnlyHeight()
         self.OnSize()
+
+    def SetPlayerOnlyHeight(self):
+        # the least let go of first, so the least is never over the most while
+        # the height grows or shrinks
+        height = self.GetPlayerOnlyHeight()
+        w, _ = self.GetSize()
+        self.SetMinSize((550, -1))
+        self.SetMaxSize((-1, height))
+        self.SetMinSize((550, height))
+        self.SetSize((w, height))
 
     def GetWaveformDetailHeight(self):
         if self.IsWaveformDetailShowOn():
@@ -1021,6 +1020,8 @@ class AppearancePanel(wx.Panel):
         MainPanel.ListBox.SetBackgroundColour(st.LISTBOX.LIST_BG_COLOR)
         MainPanel.ListBox.List.SetBackgroundColour(st.LISTBOX.LIST_BG_COLOR)
         MainPanel.PlayBox.SetBackgroundColour(st.PLAYBOX.PLAY_BG_COLOR)
+        # the waveform's pictures are painted on the scheme's colours
+        MainPanel.PlayBox.reInitWave = True
         MainPanel.OnSize(None)
 
     def OnTracklistLineContrast(self, event):

@@ -65,6 +65,7 @@ class AudioControl(threading.Thread):
         self.pending = False
         self.resume = None
         self.vstHandle = None
+        self.failed = False
         # self.maximize_loudness = False
         # self._Thread__exc_clear()
         self.start()
@@ -91,9 +92,43 @@ class AudioControl(threading.Thread):
             return
         if self.parent.cue.path is None:
             return
-        if self.path != self.parent.cue.path or self.resume is not None:
+        if self.path != self.parent.cue.path:
             self.pending = True
             self.InitAudio()
+        elif self.resume is not None:
+            self.pending = True
+            if self.IsSeekable():
+                self.SeekAudio()
+            else:
+                self.InitAudio()
+
+    def IsSeekable(self):
+        # the same file still playing: moved in it, not opened again
+        if self.hStream == 0:
+            return False
+        return pybass.BASS_ChannelIsActive(self.hStream) == pybass.BASS_ACTIVE_PLAYING
+
+    def SeekAudio(self):
+        audio.set_volume(self.hStream, 0.0)
+        resume = self.resume
+        if resume < 0:
+            resume = audio.get_duration(self.hStream) + resume
+        audio.set_position(self.hStream, resume)
+        self.fadeout.cnt = 0.0
+        self.fadein.cnt = self.fadein.time
+        self.resume = None
+        self.pending = False
+
+    def FreeAudio(self):
+        # every stream, played out or not: only playing ones were freed, and one
+        # that had reached its end kept its file and its plugin
+        if self.hStream == 0:
+            return
+        if self.vstHandle:
+            pybass.BASS_VST_ChannelRemoveDSP(self.hStream, self.vstHandle)
+            self.vstHandle = None
+        pybass.BASS_StreamFree(self.hStream)
+        self.hStream = 0
 
     def LoopFadeInEvent(self):
         # if self.parent.IsHighlightOn() is False: return
@@ -167,8 +202,9 @@ class AudioControl(threading.Thread):
         else:
             is_position_set = False
         self.path = self.parent.cue.path
-        if pybass.BASS_ChannelIsActive(self.hStream) == 1:
-            pybass.BASS_StreamFree(self.hStream)
+        # if pybass.BASS_ChannelIsActive(self.hStream) == 1:
+        #     pybass.BASS_StreamFree(self.hStream)
+        self.FreeAudio()
         if sys.platform.startswith('win'):
             flags = pybass.BASS_STREAM_PRESCAN | pybass.BASS_UNICODE
         elif sys.platform.startswith('darwin'):
@@ -176,6 +212,13 @@ class AudioControl(threading.Thread):
             self.path = self.path.encode(sys.getfilesystemencoding())
 
         self.hStream = pybass.BASS_StreamCreateFile(False, self.path, 0, 0, flags)
+        if self.hStream == 0:
+            # not opened (gone, unreadable, no device): the player moves on
+            self.parent.cue.hStream = 0
+            self.failed = True
+            self.resume = None
+            self.pending = False
+            return
 
         ######
         # print(dir(pybass))
@@ -265,8 +308,9 @@ class AudioControl(threading.Thread):
 
     def Quit(self):
         self.loop = False
-        if pybass.BASS_ChannelIsActive(self.hStream) == 1:
-            pybass.BASS_StreamFree(self.hStream)
+        # if pybass.BASS_ChannelIsActive(self.hStream) == 1:
+        #     pybass.BASS_StreamFree(self.hStream)
+        self.FreeAudio()
         # self._Thread__stop()
 
     def __del__(self):
@@ -288,7 +332,9 @@ class PlayBoxControl():
     def InitControlEvent(self):
         self.reInitWave = True
         self.waveform_length = 1500
-        self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False)
+        self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False,
+                              dbresp_lap=0.0, wave_since=0.0)
+        self.failed_count = 0
         self.skip_silence = GetPreference('skip_silence') is True
         self.waveform_init = numpy.linspace(0, 0, self.waveform_length)
         self.cue = Struct(mdx=None, path=None, waveform=None,
@@ -366,6 +412,11 @@ class PlayBoxControl():
         if self.pending.wave:
             self.SetAudioEventWithWAVE()
 
+        if self.HandleEventOpenFailure():
+            return
+        if self.cue.hStream:
+            self.failed_count = 0
+
         self.HandleEventTrackFinishTime()
         self.HandleEventFadeOut()
 
@@ -393,6 +444,23 @@ class PlayBoxControl():
             return
         if position > finish - self.AudioControl.fadeout.time:
             self.AudioControl.StartFadeOut()
+
+    def HandleEventOpenFailure(self):
+        # the file did not open: on to the next one, but not through a whole list
+        # that cannot be played (no device)
+        if self.AudioControl.failed is False:
+            return False
+        self.AudioControl.failed = False
+        self.failed_count += 1
+        if self.failed_count > 3:
+            self.failed_count = 0
+            self.OnPause(endoflist=True)
+            return True
+        result = self.PlayAndFocusCueFileAround(1)
+        if result is False:
+            self.failed_count = 0
+            self.OnPause(endoflist=True)
+        return True
 
     def HandleEventTrackFinishTime(self):
         if self.IsTrackFinishTime() is False:
@@ -435,10 +503,16 @@ class PlayBoxControl():
     def SetAudioEventWithDBRESP(self):
         # if self.parent.MFEATS.IsPathTasking(self.cue.path):
         #   return
+        # once a second while the file is being analyzed, not every event
+        if time.time() - self.pending.dbresp_lap < 1.0:
+            return
+        self.pending.dbresp_lap = time.time()
         resp = mfeats.getby_key_value('mdx', self.cue.mdx)
         if resp is None:
             return
         if resp.error == 1:
+            # not analyzable: nothing more will come
+            self.pending.dbresp = False
             return
         self.pending.mfeats = False
         self.cue.autogain = resp.autogain
@@ -451,10 +525,11 @@ class PlayBoxControl():
         self.SetBestHighlightVariablePeriodTime()
         self.SetWaveImage(resp.waveform)
         self.SkipLeadingSilence()
-        if self.cue.waveform is None or resp.version != mfeats.MFEATS_VERSION:
+        if resp.version != mfeats.MFEATS_VERSION:
             # analyzed before the current waveform: analyze again for it
             self.parent.MFEATS.AddMFEATSTask(self.cue.path, urgent=True, forced=True)
             self.pending.wave = time.time()
+            self.pending.wave_since = time.time()
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
             self.GotoTrackOffsetTime()
@@ -463,6 +538,10 @@ class PlayBoxControl():
 
     def SetAudioEventWithWAVE(self):
         if time.time() - self.pending.wave < 1.0:
+            return
+        # given up on after a while (a three-hour mix takes a couple of minutes)
+        if time.time() - self.pending.wave_since > 600:
+            self.pending.wave = False
             return
         self.pending.wave = time.time()
         resp = mfeats.getby_key_value('mdx', self.cue.mdx)
@@ -841,6 +920,7 @@ class PlayBoxControl():
         audio.set_volume(self.cue.hStream, 0.0)
         self.AudioControl.resume = 0.0
         self.pending.dbresp = True
+        self.pending.dbresp_lap = 0.0
         self.pending.mdx = True
         self.pending.mfeats = True
         self.pending.wave = False
@@ -879,6 +959,9 @@ class PlayBoxControl():
             fffr = fffr / 1
         position = self.GetPositionTime()
         offset, finish = self.GetTrackTime()
+        if offset is None or finish is None:
+            # a highlight without its period yet (not analyzed): the whole sound
+            offset, finish = self.GetSoundTime()
         if position - fffr <= offset:
             if self.IsLoopOn():
                 self.GotoTrackOffsetTime()
@@ -913,6 +996,8 @@ class PlayBoxControl():
             fffr = fffr / 1
         position = self.GetPositionTime()
         offset, finish = self.GetTrackTime()
+        if offset is None or finish is None:
+            offset, finish = self.GetSoundTime()
         if position + fffr >= finish:
             if self.IsLoopOn():
                 self.GotoTrackOffsetTime()
