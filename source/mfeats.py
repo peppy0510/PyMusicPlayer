@@ -42,9 +42,12 @@ from utilities import set_process_priority
 MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
-MFEATS_VERSION = '1.2.0'
+MFEATS_VERSION = '1.3.0'
 # 3band waveform: a column's seconds (about), where the lows end, the highs begin and end (Hz)
 WAVEFORM_COLUMN_SECONDS = 0.01
+# the bands are read over blocks of about this long (a column is too short to tell
+# 200 Hz from 1,500); a frame shorter than two of them is read whole
+WAVEFORM_BAND_SECONDS = 0.023
 WAVEFORM_LOW_TOP = 200
 WAVEFORM_HIGH_BOTTOM = 1500
 WAVEFORM_HIGH_TOP = 5512.5
@@ -204,8 +207,18 @@ def mfeats_single(path, queue=None):
     sub_length = int(mix_length / sub_count)
     # waveform = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     waveform = numpy.zeros((int(round(waveform_length + gap)) * sub_count, 5))
-    mix_window = numpy.hanning(mix_length)
-    mix_freqs = numpy.fft.rfftfreq(mix_length, 1.0 / fs)
+    # mix_window = numpy.hanning(mix_length)
+    # mix_freqs = numpy.fft.rfftfreq(mix_length, 1.0 / fs)
+    # the bands block by block, each column the block its middle falls in: a frame
+    # is a 5000th of the file, and a three-hour mix had one colour every 2 seconds
+    band_length = int(fs * WAVEFORM_BAND_SECONDS)
+    if mix_length < band_length * 2:
+        band_length = mix_length
+    band_count = max(int(mix_length / band_length), 1)
+    band_of_sub = numpy.minimum(
+        ((numpy.arange(sub_count) + 0.5) * sub_length / band_length).astype(int), band_count - 1)
+    mix_window = numpy.hanning(band_length)
+    mix_freqs = numpy.fft.rfftfreq(band_length, 1.0 / fs)
     mix_bands = (mix_freqs < WAVEFORM_LOW_TOP,
                  (mix_freqs >= WAVEFORM_LOW_TOP) & (mix_freqs < WAVEFORM_HIGH_BOTTOM),
                  (mix_freqs >= WAVEFORM_HIGH_BOTTOM) & (mix_freqs < WAVEFORM_HIGH_TOP))
@@ -227,12 +240,16 @@ def mfeats_single(path, queue=None):
         #               for i in numpy.arange(0, frame_length / channel - jump, jump)]
         #     waveform[cnt] = numpy.mean(points)
         mix = frame_raw[:mix_length * channel].reshape(-1, channel).mean(axis=1) / 32768.0
-        power = numpy.abs(numpy.fft.rfft(mix * mix_window))**2
+        # power = numpy.abs(numpy.fft.rfft(mix * mix_window))**2
+        blocks = mix[:band_length * band_count].reshape(band_count, band_length)
+        power = numpy.abs(numpy.fft.rfft(blocks * mix_window, axis=1))**2
+        bands = numpy.column_stack([power[:, v].sum(axis=1) for v in mix_bands])
         subs = numpy.abs(mix[:sub_length * sub_count]).reshape(sub_count, sub_length)
         row = cnt * sub_count
         waveform[row:row + sub_count, 0] = subs.max(axis=1)
         waveform[row:row + sub_count, 1] = subs.mean(axis=1)
-        waveform[row:row + sub_count, 2:] = [power[v].sum() for v in mix_bands]
+        # waveform[row:row + sub_count, 2:] = [power[v].sum() for v in mix_bands]
+        waveform[row:row + sub_count, 2:] = bands[band_of_sub]
         highlight_raw_points[cnt] = numpy.mean(numpy.abs(mono_frame))
 
         # collect frames for long term analysis
