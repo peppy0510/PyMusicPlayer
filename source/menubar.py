@@ -684,6 +684,7 @@ class MacroBoxPreference():
         playcue = self.MainPanel.PlayBox.cue
         self.MainPanel.PlayBox.OnStop()
         self.MainPanel.PlayBox.AudioControl.Quit()
+        self.MainPanel.PlayBox.VisualClock.Quit()
         mfeats_scheduler = Struct(
             taskpath=taskpath, procpath=procpath,
             procs_limit=self.MainPanel.MFEATS.procs_limit,

@@ -61,6 +61,7 @@ class PlayBox(RectBox, PlayBoxControl):
         self.Spectrum = PlayBoxSpectrum(self)
         self.VectorScope = PlayBoxVectorScope(self)
         self.Apic = PlayBoxApic(self)
+        self.VisualClock = PlayBoxVisualClock(self)
         self.ControlButton = PlayBoxControlButton(self)
         self.VolumeSlider = VolumeSlider(self)
         self.VolumeDropdown = VolumeDropdown(self)
@@ -231,6 +232,57 @@ class PlayBox(RectBox, PlayBoxControl):
         # self.AudioControl._stop()
         self.AudioControl._delete()
         self.AudioControl._Thread__exc_clear()
+
+
+class PlayBoxVisualClock(threading.Thread):
+
+    # the visualizers' own clock while playing: the global events come every 25 ms
+    # (about 32 a second on Windows), which was the most any fps setting gave. a
+    # thread keeps the beat (time.sleep is to the millisecond) and the drawing is
+    # done on the GUI thread, one tick waiting at a time
+    def __init__(self, parent):
+        threading.Thread.__init__(self, daemon=True)
+        self.parent = parent
+        self.loop = True
+        self.posted = False
+        self.start()
+
+    def GetBoxes(self):
+        parent = self.parent
+        return [getattr(parent, name, None)
+                for name in ('Spectrum', 'VectorScope', 'Wave', 'WaveDetail')]
+
+    def GetFPS(self):
+        fps = [box.buffer.fps for box in self.GetBoxes() if box is not None]
+        return max(fps + [1])
+
+    def run(self):
+        due = time.perf_counter()
+        while self.loop:
+            due += 1.0 / self.GetFPS()
+            delay = due - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                # behind (the computer was busy): from now on, no catching up
+                due = time.perf_counter()
+            if self.posted:
+                continue
+            self.posted = True
+            wx.CallAfter(self.Tick)
+
+    def Tick(self):
+        self.posted = False
+        if self.loop is False or not self.parent:
+            return
+        if self.parent.IsPlaying() is False:
+            return
+        for box in self.GetBoxes():
+            if box is not None and box.IsShown():
+                box.DirectDraw()
+
+    def Quit(self):
+        self.loop = False
 
 
 class PlayBoxControlButton(RectBox):
@@ -1117,7 +1169,9 @@ class PlayBoxSpectrum(RectBox):
         pass
 
     def CATCH_EVT_GLOBAL(self, event):
-        self.DirectDraw()
+        # while playing the visual clock draws it (PlayBoxVisualClock)
+        if self.parent.IsPlaying() is False:
+            self.DirectDraw()
 
     def GetSpectrumVectorScope(self):
         if self.parent.IsPlaying() is False:
@@ -1225,7 +1279,8 @@ class PlayBoxVectorScope(RectBox):
         self.DrawVectorScope(dc, self.vectorscope)
 
     def CATCH_EVT_GLOBAL(self, event):
-        self.DirectDraw()
+        if self.parent.IsPlaying() is False:
+            self.DirectDraw()
 
     def DrawVectorScope(self, dc, vectorscope):
         bgcolor = self.parent.st.VECTORSCOPE_BG_COLOR
@@ -1430,7 +1485,8 @@ class PlayBoxWave(RectBox):
         if self.parent.parent.HasToSkipEvent() is False:
             self.HandleEventLeftIsDown(event)
             self.HandleEventHighlight(event)
-        self.DirectDraw()
+        if self.parent.IsPlaying() is False:
+            self.DirectDraw()
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
         if self.onClient is False:
@@ -1600,7 +1656,8 @@ class PlayBoxWaveDetail(RectBox):
             return
         if self.parent.parent.HasToSkipEvent() is False:
             self.HandleEventDrag(event)
-        self.DirectDraw()
+        if self.parent.IsPlaying() is False:
+            self.DirectDraw()
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
         if self.onClient is False:

@@ -1457,10 +1457,21 @@ class RectRect():
         if self.IsDrawable() is False:
             self.reInitBuffer = True
             return
-        elapsed_time = time.time() - self.buffer.lap
-        if elapsed_time < 1.0 / self.buffer.fps:
+        # elapsed_time = time.time() - self.buffer.lap
+        # if elapsed_time < 1.0 / self.buffer.fps:
+        #     return
+        # self.buffer.lap = time.time()
+        # on the beat: a tick a little early still draws, and the next frame is due
+        # a frame after this one was due (not after now), so the fps is kept
+        now = time.time()
+        interval = 1.0 / self.buffer.fps
+        elapsed_time = now - self.buffer.lap
+        if elapsed_time < interval * 0.8:
             return
-        self.buffer.lap = time.time()
+        if elapsed_time > interval * 2:
+            self.buffer.lap = now
+        else:
+            self.buffer.lap += interval
         self.InitBuffer()
         self.Refresh(False)
 
