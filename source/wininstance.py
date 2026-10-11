@@ -72,7 +72,8 @@ def has_running_instance():
             # if cpcwd == get_real_cwd(p):
             if [True for v in p.cmdline() if v.startswith(cpcwd)]:
                 print(cpcwd)
-                return True
+                # which process it was (main.pyw logs it): truthy as before
+                return 'pid %d %s' % (p.pid, ' '.join(p.cmdline()))
 
     return False
 

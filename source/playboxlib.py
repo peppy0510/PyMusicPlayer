@@ -6,7 +6,11 @@
 
 
 import audio
+import collections
+import ctypes
+import ctypes.wintypes
 import gc
+import math
 import mfeats
 # import modpybass as pybass
 import numpy
@@ -51,6 +55,28 @@ class PlayBoxDnD(wx.FileDropTarget):
         pass
 
 
+# the scratch: the hand's speed over this long, how fast the record follows it
+# and comes back to speed when let go, and
+# the speed under which the direction is kept
+# SCRATCH_VELOCITY_WINDOW = 0.04
+# SCRATCH_FOLLOW_SECONDS = 0.0046
+# the hand's speed is the slope of where it was over this long (a line fitted,
+# not the two ends: the cursor moves in whole pixels, and the ends of a short
+# stretch made the speed, and so the pitch, wobble ~10%, heard as a metallic ring)
+SCRATCH_VELOCITY_WINDOW = 0.06
+SCRATCH_FOLLOW_SECONDS = 0.010
+# the least pixels of hand a second at normal speed (the jog test's 300, heard
+# clean): the view's own scale is used down to this; at 12 s across a pixel was
+# 8.6 ms of sound, too coarse to scratch with
+SCRATCH_PIXELS_PER_SECOND = 250.0
+SCRATCH_RELEASE_SECONDS = 0.04
+SCRATCH_DEADBAND = 0.05
+SCRATCH_INTERVAL = 0.002
+
+
+WAVEFORM_MODES = ('vinyl', 'seek')
+
+
 class AudioControl(threading.Thread):
 
     def __init__(self, parent):
@@ -66,6 +92,14 @@ class AudioControl(threading.Thread):
         self.resume = None
         self.vstHandle = None
         self.failed = False
+        # the scratch on the waveform: the GUI says where the hand is, this thread
+        # plays the record at the hand's speed (LoopScratchEvent)
+        self.reversible = False
+        self.base_freq = 44100.0
+        self.scratch = Struct(active=False, held=False, moves=collections.deque(),
+                              lap=0.0, speed=1.0, seconds_per_pixel=0.0, event_x=0,
+                              direction=audio.BASS_FX_RVS_FORWARD)
+        threading.Thread(target=self.RunScratch, daemon=True).start()
         # self.maximize_loudness = False
         # self._Thread__exc_clear()
         self.start()
@@ -76,6 +110,115 @@ class AudioControl(threading.Thread):
             self.AutoFadeInOutTime()
             self.LoopFadeInEvent()
             self.LoopFadeOutEvent()
+
+    def RunScratch(self):
+        # the scratch on a beat of its own: every 2 ms while a hand is on the
+        # record (the test it was heard clean on), not the playback loop's 5 ms
+        while self.loop:
+            if self.scratch.active:
+                time.sleep(SCRATCH_INTERVAL)
+                self.LoopScratchEvent()
+            else:
+                time.sleep(0.01)
+
+    def IsScratchable(self):
+        if hasattr(ctypes, 'windll') is False:
+            return False
+        return self.reversible and self.hStream != 0 and self.pending is False
+
+    def ScratchPress(self, seconds_per_pixel):
+        # the hand is read off the cursor by the scratch's own thread every 2 ms
+        # (GetCursorPos), not taken from the GUI's mouse events: with the player
+        # drawing, those came late and in bunches, and their own times are only
+        # to the system tick (about 16 ms), so the record jumped or stood still
+        scratch = self.scratch
+        scratch.seconds_per_pixel = seconds_per_pixel
+        scratch.moves = collections.deque([(time.perf_counter(), self.GetCursorValue())])
+        scratch.lap = time.perf_counter()
+        scratch.held = True
+        scratch.active = True
+
+    def GetCursorValue(self):
+        # where the hand is, in the file's seconds: the sound follows the hand, so
+        # a drag to the left is later in the file
+        point = ctypes.wintypes.POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+            x = point.x
+        else:
+            # no cursor to read (no desktop): the GUI's last mouse event
+            x = self.scratch.event_x
+        return -x * self.scratch.seconds_per_pixel
+
+    def ScratchEventAt(self, x):
+        # the GUI's mouse events, in screen pixels: a fallback only
+        self.scratch.event_x = x
+
+    def SampleHand(self):
+        scratch = self.scratch
+        now = time.perf_counter()
+        scratch.moves.append((now, self.GetCursorValue()))
+        while len(scratch.moves) > 2 and now - scratch.moves[0][0] > SCRATCH_VELOCITY_WINDOW:
+            scratch.moves.popleft()
+
+    def ScratchRelease(self):
+        self.scratch.held = False
+
+    def GetHandSpeed(self):
+        # the hand's speed (x normal) over the last moments; a hand still is 0
+        moves = list(self.scratch.moves)
+        count = len(moves)
+        if count < 2:
+            return 0.0
+        # least squares: the slope of value over time
+        mt = sum(t for t, _ in moves) / count
+        mv = sum(v for _, v in moves) / count
+        stt = sum((t - mt) * (t - mt) for t, _ in moves)
+        if stt <= 0:
+            return 0.0
+        return sum((t - mt) * (v - mv) for t, v in moves) / stt
+
+    def LoopScratchEvent(self):
+        scratch = self.scratch
+        if scratch.active is False:
+            return
+        if self.IsScratchable() is False:
+            # a seek (a click on the strip) or a new file came in: back to speed
+            # first, or the record was left turning at the hand's last speed
+            if self.hStream and scratch.held is False:
+                audio.set_frequency(self.hStream, self.base_freq)
+                audio.set_direction(self.hStream, audio.BASS_FX_RVS_FORWARD)
+            scratch.direction = audio.BASS_FX_RVS_FORWARD
+            scratch.speed = 1.0
+            scratch.active = False
+            return
+        now = time.perf_counter()
+        elapsed = now - scratch.lap
+        scratch.lap = now
+        if scratch.held:
+            self.SampleHand()
+            target, tau = (self.GetHandSpeed(), SCRATCH_FOLLOW_SECONDS)
+        else:
+            target, tau = (1.0, SCRATCH_RELEASE_SECONDS)
+        scratch.speed += (target - scratch.speed) * (1.0 - math.exp(-elapsed / tau))
+        if scratch.held is False and abs(scratch.speed - 1.0) < 0.01:
+            # let go and back to speed: as it was before the hand
+            scratch.speed = 1.0
+            scratch.active = False
+        # a deadband: nearly still, the direction is kept, not flipped back and forth
+        if scratch.speed < -SCRATCH_DEADBAND and scratch.direction != audio.BASS_FX_RVS_REVERSE:
+            scratch.direction = audio.BASS_FX_RVS_REVERSE
+            audio.set_direction(self.hStream, scratch.direction)
+        elif scratch.speed > SCRATCH_DEADBAND and scratch.direction != audio.BASS_FX_RVS_FORWARD:
+            scratch.direction = audio.BASS_FX_RVS_FORWARD
+            audio.set_direction(self.hStream, scratch.direction)
+        if scratch.active is False:
+            audio.set_frequency(self.hStream, self.base_freq)
+            return
+        # BASS's least rate is 100 Hz: near enough to stopped
+        audio.set_frequency(self.hStream, max(self.base_freq * min(abs(scratch.speed), 4.0), 100.0))
+        if scratch.held and pybass.BASS_ChannelIsActive(self.hStream) != pybass.BASS_ACTIVE_PLAYING:
+            # run into the file's start backwards: played on from there
+            pybass.BASS_ChannelPlay(self.hStream, False)
 
     def AutoFadeInOutTime(self):
         if self.parent.IsHighlightOn()\
@@ -110,6 +253,13 @@ class AudioControl(threading.Thread):
 
     def SeekAudio(self):
         audio.set_volume(self.hStream, 0.0)
+        if self.scratch.held is False:
+            # a click on the strip pressed the record still: let go, at speed
+            self.scratch.active = False
+            self.scratch.speed = 1.0
+            self.scratch.direction = audio.BASS_FX_RVS_FORWARD
+            audio.set_frequency(self.hStream, self.base_freq)
+            audio.set_direction(self.hStream, audio.BASS_FX_RVS_FORWARD)
         resume = self.resume
         if resume < 0:
             resume = audio.get_duration(self.hStream) + resume
@@ -211,7 +361,11 @@ class AudioControl(threading.Thread):
             flags = pybass.BASS_STREAM_PRESCAN
             self.path = self.path.encode(sys.getfilesystemencoding())
 
-        self.hStream = pybass.BASS_StreamCreateFile(False, self.path, 0, 0, flags)
+        # self.hStream = pybass.BASS_StreamCreateFile(False, self.path, 0, 0, flags)
+        self.hStream, self.reversible = audio.create_play_stream(self.path, flags)
+        self.scratch.active = False
+        self.scratch.speed = 1.0
+        self.scratch.direction = audio.BASS_FX_RVS_FORWARD
         if self.hStream == 0:
             # not opened (gone, unreadable, no device): the player moves on
             self.parent.cue.hStream = 0
@@ -219,6 +373,7 @@ class AudioControl(threading.Thread):
             self.resume = None
             self.pending = False
             return
+        self.base_freq = audio.get_frequency(self.hStream)
 
         ######
         # print(dir(pybass))
@@ -336,6 +491,13 @@ class PlayBoxControl():
                               dbresp_lap=0.0, wave_since=0.0)
         self.failed_count = 0
         self.skip_silence = GetPreference('skip_silence') is True
+        # the waveform detail strip's mode: 'vinyl' (a record to scratch) or 'seek'
+        # (click or drag to a place); before it, a scratch on/off of its own
+        self.waveform_mode = GetPreference('waveform_mode')
+        if self.waveform_mode not in WAVEFORM_MODES:
+            # self.waveform_mode = 'seek' if GetPreference('waveform_scratch') is False else 'vinyl'
+            # seek by default; vinyl is chosen in the preferences
+            self.waveform_mode = 'seek'
         self.waveform_init = numpy.linspace(0, 0, self.waveform_length)
         self.cue = Struct(mdx=None, path=None, waveform=None,
                           is_playing=False, hStream=0, tempo=0.0, key='-',
@@ -577,6 +739,19 @@ class PlayBoxControl():
         period = self.GetHighlightVariablePeriodTime()
         self.SetTrackFinishTime(offset + period)
         self.SetHighlightSkipOff()
+
+    def IsWaveformScratchOn(self):
+        return self.waveform_mode == 'vinyl'
+
+    def GetWaveformMode(self):
+        return self.waveform_mode
+
+    def SetWaveformMode(self, mode):
+        if mode not in WAVEFORM_MODES:
+            return
+        self.waveform_mode = mode
+        SetPreference('waveform_mode', mode)
+        self.AudioControl.ScratchRelease()
 
     def IsSkipSilenceOn(self):
         return self.skip_silence

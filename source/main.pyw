@@ -8,12 +8,14 @@ email: peppy0510@hotmail.com
 
 
 import argparse
+import faulthandler
 import json
 import logging
 import numpy
 import os
 import socket
 import sys
+import time
 import traceback
 
 from pathlib import Path
@@ -38,12 +40,35 @@ numpy.finfo(numpy.dtype('float64'))
 MAIN_SOCKET_PORT = 55755
 
 
-def launch(filepath=None):
-    from mainapp import launch_mainapp
+def write_launch_log(message):
+    # why a start showed nothing (pythonw has no console): the reason, in the
+    # user's app folder
     try:
-        launch_mainapp(filepath)
+        path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'launch.log')
+        with open(path, 'a', encoding='utf-8') as file:
+            file.write('%s pid %d: %s\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getpid(), message))
     except Exception:
         pass
+
+
+def launch(filepath=None):
+    write_launch_log('launching (cwd %s)' % (os.getcwd()))
+    # a crash in native code (no Python error) and an error in an event handler
+    # (wx goes on, pythonw shows nothing) are written there too
+    try:
+        crash_log = open(os.path.join(
+            os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'launch.log'), 'a', encoding='utf-8')
+        faulthandler.enable(file=crash_log, all_threads=True)
+        sys.excepthook = lambda kind, value, trace: write_launch_log(
+            'error\n' + ''.join(traceback.format_exception(kind, value, trace)))
+    except Exception:
+        pass
+    try:
+        from mainapp import launch_mainapp
+        launch_mainapp(filepath)
+        write_launch_log('closed')
+    except Exception:
+        write_launch_log('failed\n' + traceback.format_exc())
 
 
 def get_mainapp_port():
@@ -102,7 +127,12 @@ def main(initfile=None):
             send_filepath_to_mainapp(filepath)
     else:
         # if not check_mainapp:
-        if not has_running_instance():
+        # if not has_running_instance():
+        #     launch()
+        running = has_running_instance()
+        if running:
+            write_launch_log('not started: already running as %s' % (running,))
+        else:
             launch()
     # except Exception:
     #     logging.error(traceback.format_exc())

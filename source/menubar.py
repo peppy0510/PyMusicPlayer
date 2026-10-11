@@ -942,14 +942,6 @@ class AppearancePanel(wx.Panel):
         value = self.parent.parent.parent.MainPanel.ListBox.scrollbar_size
         self.ScrollbarSize.SetValue(value)
 
-        offset += 30
-        label = u'Waveform Detail'
-        text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
-        text.SetRect((pad + 20, offset + 3, 180, -1))
-        self.WaveformDetail = CheckBox(self)
-        self.WaveformDetail.SetPosition((pad + 200 + 15, offset + 4))
-        self.WaveformDetail.Bind(wx.EVT_CHECKBOX, self.OnWaveformDetail)
-        self.WaveformDetail.SetValue(self.parent.parent.parent.IsWaveformDetailShowOn())
 
         # offset += 30
         # label = u'Always show scrollbar'
@@ -971,12 +963,6 @@ class AppearancePanel(wx.Panel):
         self.parent.parent.parent.MainPanel.ListBox.scrollbar_size = value
         self.parent.parent.parent.MainPanel.ListBox.reInitBuffer = True
         self.ApplyToScriptEditorBox()
-
-    def OnWaveformDetail(self, event):
-        if event.IsChecked():
-            self.parent.parent.parent.SetWaveformDetailShowOn()
-        else:
-            self.parent.parent.parent.SetWaveformDetailShowOff()
 
     def OnAlwaysShowScrollbar(self, event):
         self.parent.parent.parent.MainPanel\
@@ -1317,6 +1303,19 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.PlayerTitleFormat[-1].SetValue(preset[2])
         self.PlayerTitleFormat[-1].Bind(wx.EVT_COMBOBOX, self.OnPlayerTitleFormat)
 
+        # (the waveform detail is shown or not from the View menu)
+        offset += 30 + 10
+        label = u'Zoomed Waveform Drag'
+        text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
+        text.SetRect((20, offset + 3, 200, -1))
+        self.waveform_modes = (('vinyl', u'Vinyl'), ('seek', u'Seek'))
+        self.WaveformMode = ComboBox(
+            self, choices=[label for _, label in self.waveform_modes], style=wx.CB_READONLY)
+        self.WaveformMode.SetRect((220 + 15, offset, 170, 24))
+        mode = self.parent.parent.parent.MainPanel.PlayBox.GetWaveformMode()
+        self.WaveformMode.SetValue(dict(self.waveform_modes)[mode])
+        self.WaveformMode.Bind(wx.EVT_COMBOBOX, self.OnWaveformMode)
+
         # offset += 10
         # offset += 25
         # label = u'Default Audio Player'
@@ -1329,6 +1328,10 @@ class PreferenceMFEATSPanel(DialogPanel):
 
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
+
+    def OnWaveformMode(self, event):
+        mode = self.waveform_modes[self.WaveformMode.GetSelection()][0]
+        self.parent.parent.parent.MainPanel.PlayBox.SetWaveformMode(mode)
 
     def IsDefaultPlayer(self):
         # https://docs.python.org/2/library/_winreg.html
@@ -1565,7 +1568,9 @@ class PreferenceNotebook(wx.Notebook):
 class PreferenceBox(DialogBox):
 
     def __init__(self, parent):
-        DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 340))
+        # DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 340))
+        # taller for the general panel's last rows (the waveform's)
+        DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 450))
         self.parent = parent
         self.SetTitle('Preference')
         # self.SetBackgroundColour((240, 240, 240))
@@ -1582,7 +1587,11 @@ class PreferenceBox(DialogBox):
         width, height = self.GetClientSize()
         # x, y, w, h = self.Notebook.WebLinkPanel.WebLink[-1].GetRect()
         # self.SetClientSize((width, y+h+110))
-        self.SetClientSize((width, 340))
+        # self.SetClientSize((width, 340))
+        # the height is set here, whatever the dialog was made with: taller for
+        # the general panel's last rows (the waveform's)
+        self.SetClientSize((width, 390))
+        width, height = self.GetClientSize()
         self.Notebook.SetRect((5, 5, width - 8, height - 51))
         self.Notebook.OnSize(None)
         w, h = self.CloseButton.GetSize()
@@ -2016,7 +2025,7 @@ class MenuBar(wx.MenuBar):
             self.itemPlayerSideShow.Check()
 
         self.itemWaveformDetailShow = wx.MenuItem(
-            self.menuView, wx.ID_ANY, 'Waveform Detail', wx.EmptyString, wx.ITEM_CHECK)
+            self.menuView, wx.ID_ANY, 'Zoomed Waveform', wx.EmptyString, wx.ITEM_CHECK)
         self.menuView.Append(self.itemWaveformDetailShow)
         if self.parent.IsWaveformDetailShowOn():
             self.itemWaveformDetailShow.Check()

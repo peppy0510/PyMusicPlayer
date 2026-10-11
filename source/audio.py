@@ -372,6 +372,66 @@ def cheby2_filter(data, lowcut, highcut, fs, order=5, riple=5):
 # pybass.BASS_Init(-1,...)
 # -1 is default device / 0 is no sound / 1 is first real output device
 
+# playback: a short buffer, so a scratch on the waveform is heard as the hand moves
+# (30 ms was clean on the home PC; 40 for a margin), refilled more often than it lasts
+PLAY_BUFFER_MS = 40
+PLAY_UPDATE_PERIOD_MS = 10
+
+# bass_fx's reverse stream (bundled in assets/dlls, not in pybass): a stream that
+# plays either way, for the scratch
+BASS_ATTRIB_REVERSE_DIR = 0x11000
+BASS_FX_RVS_REVERSE = -1
+BASS_FX_RVS_FORWARD = 1
+BASS_FX_FREESOURCE = 0x10000
+REVERSE_BLOCK_SECONDS = 0.1
+BASS_FX_ReverseCreate = None
+
+
+def load_bass_fx():
+    global BASS_FX_ReverseCreate
+    if BASS_FX_ReverseCreate is None:
+        try:
+            bass_module, func_type = pybass.bass.load('bass_fx.dll')
+            BASS_FX_ReverseCreate = func_type(
+                ctypes.c_ulong, ctypes.c_ulong, ctypes.c_float, ctypes.c_ulong)(
+                ('BASS_FX_ReverseCreate', bass_module))
+        except Exception:
+            BASS_FX_ReverseCreate = False
+    return BASS_FX_ReverseCreate
+
+
+def create_play_stream(path, flags):
+    # (stream, True) playing either way, or (stream, False) a plain one when
+    # bass_fx is not there
+    reverse_create = load_bass_fx()
+    if reverse_create:
+        source = pybass.BASS_StreamCreateFile(False, path, 0, 0, flags | pybass.BASS_STREAM_DECODE)
+        if source == 0:
+            return (0, False)
+        hstream = reverse_create(source, REVERSE_BLOCK_SECONDS, BASS_FX_FREESOURCE)
+        if hstream:
+            set_direction(hstream, BASS_FX_RVS_FORWARD)
+            # resampled finer (16-point sinc, not 8) for a scratch's far-off speeds
+            pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_SRC, 2.0)
+            return (hstream, True)
+        pybass.BASS_StreamFree(source)
+    return (pybass.BASS_StreamCreateFile(False, path, 0, 0, flags), False)
+
+
+def set_direction(hstream, direction):
+    pybass.BASS_ChannelSetAttribute(hstream, BASS_ATTRIB_REVERSE_DIR, float(direction))
+
+
+def get_frequency(hstream):
+    freq = ctypes.c_float()
+    pybass.BASS_ChannelGetAttribute(hstream, pybass.BASS_ATTRIB_FREQ, ctypes.byref(freq))
+    return freq.value
+
+
+def set_frequency(hstream, freq):
+    pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_FREQ, freq)
+
+
 def init_bass_play():
     plugins = ['bass_vst.dll', 'bassaac.dll', 'bassac3.dll', 'bassape.dll',
                'bassflac.dll', 'bass_mpc.dll', 'bassopus.dll', 'basswma.dll']
@@ -383,6 +443,8 @@ def init_bass_play():
         except Exception:
             pass
         # pybass.BASS_PluginLoad(packctrl.findPath(plugin, ['', 'packages']), 0)
+    pybass.BASS_SetConfig(pybass.BASS_CONFIG_UPDATEPERIOD, PLAY_UPDATE_PERIOD_MS)
+    pybass.BASS_SetConfig(pybass.BASS_CONFIG_BUFFER, PLAY_BUFFER_MS)
     pybass.BASS_Init(-1, 44100, 0, 0, 0)
 
 

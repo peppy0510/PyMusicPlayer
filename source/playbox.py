@@ -26,6 +26,7 @@ from macroboxlib import RectBox
 from playboxlib import AudioControl
 from playboxlib import PlayBoxControl
 from playboxlib import PlayBoxDnD
+from playboxlib import SCRATCH_PIXELS_PER_SECOND
 from utilities import Struct
 # from playboxlib import *  # noqa
 
@@ -1543,20 +1544,81 @@ class PlayBoxWaveDetail(RectBox):
         self.gap = 6
         self.margin = 5
         self.buffer.fps = 60
-        # seconds across: at first, the least and how far a wheel notch goes
-        self.span = 12.0
+        # seconds across: at first, the least and how far a wheel notch goes. at
+        # first a pixel is about 3.6 ms of sound, fine enough to scratch with the
+        # waveform staying under the hand
+        # self.span = 12.0
+        self.span = 5.0
         self.span_least = 1.5
         self.span_most = 3 * 60 * 60
         self.span_step = 1.25
         self.drag_least = 4
         self.highlight_dim = 0.45
         self.drag = None
+        # the strip is the record: playing, a hand on it stops it and a drag
+        # scratches it, the waveform under the hand; paused, a drag moves through
+        # the file and it plays from there. a click alone does not seek (the bar
+        # below does): it was a stop, a seek or a scratch by how long and how far
+        # the press went, and it could not be told which
+        self.scratching = None
         self.last_key = None
         self.last_bitmap = None
         self.SetDropTarget(PlayBoxDnD(self.parent))
         color = self.parent.st.PLAY_BG_COLOR
         self.SetBackgroundColour(color)
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnScratchDown)
+        self.Bind(wx.EVT_MOTION, self.OnScratchMotion)
+        self.Bind(wx.EVT_LEFT_UP, self.OnScratchUp)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, self.OnScratchCaptureLost)
         self.InitBuffer()
+
+    def IsScratchable(self):
+        return self.parent.IsWaveformScratchOn() and self.parent.IsPlaying()\
+            and self.parent.AudioControl.IsScratchable()
+
+    def OnScratchDown(self, event):
+        if self.IsScratchable() is False:
+            event.Skip()
+            return
+        self.CaptureMouse()
+        self.drag = None
+        self.scratching = Struct(x=event.GetX(), time=time.time(), moved=False,
+                                 start=self.parent.GetPositionTime(), path=self.parent.cue.path)
+        # the hand itself is read off the cursor by the audio side (ScratchPress),
+        # at the view's own scale so the waveform stays under the hand, but no
+        # coarser than the scale heard clean (zoomed far out, the hand outruns it)
+        width = max(self.GetSize().width - self.margin * 2, 1)
+        seconds_per_pixel = min(1.0 * self.GetSpan() / width, 1.0 / SCRATCH_PIXELS_PER_SECOND)
+        self.parent.AudioControl.ScratchEventAt(self.ClientToScreen(event.GetPosition()).x)
+        self.parent.AudioControl.ScratchPress(seconds_per_pixel)
+
+    def OnScratchMotion(self, event):
+        if self.scratching is None:
+            event.Skip()
+            return
+        if abs(event.GetX() - self.scratching.x) >= self.drag_least:
+            self.scratching.moved = True
+        self.parent.AudioControl.ScratchEventAt(self.ClientToScreen(event.GetPosition()).x)
+
+    def OnScratchUp(self, event):
+        if self.scratching is None:
+            event.Skip()
+            return
+        scratching = self.scratching
+        self.scratching = None
+        if self.HasCapture():
+            self.ReleaseMouse()
+        self.parent.AudioControl.ScratchRelease()
+        # if scratching.moved or time.time() - scratching.time > self.click_seconds:
+        #     return
+        # if scratching.path != self.parent.cue.path:
+        #     return
+        # width = max(self.GetSize().width - self.margin * 2, 1)
+        # self.SeekTo(scratching.start + (1.0 * (scratching.x - self.margin) / width - 0.5) * self.GetSpan())
+
+    def OnScratchCaptureLost(self, event):
+        self.scratching = None
+        self.parent.AudioControl.ScratchRelease()
 
     def OnSize(self, event=None):
         if self.parent.parent.parent.IsWaveformDetailShowOn() is False:
@@ -1680,7 +1742,12 @@ class PlayBoxWaveDetail(RectBox):
     def HandleEventDrag(self, event):
         # a drag moves through the file, let go where it should play; a click
         # plays from where it is
+        # a scratch has the press (OnScratchDown)
+        if self.scratching is not None:
+            return
         if event.LeftDown and event.rectIdx is not None:
+            if self.IsScratchable():
+                return
             centre = self.parent.GetPositionTime()
             self.drag = Struct(x=event.X, start=centre, time=centre, moved=False,
                                path=self.parent.cue.path)
@@ -1701,8 +1768,11 @@ class PlayBoxWaveDetail(RectBox):
         self.drag = None
         if drag.moved:
             position = drag.time
-        else:
+        elif self.parent.GetWaveformMode() == 'seek':
+            # seek mode: a click plays from where it is (vinyl: the bar below does)
             position = drag.start + (1.0 * (drag.x - self.margin) / width - 0.5) * self.GetSpan()
+        else:
+            return
         self.SeekTo(position)
 
     def SeekTo(self, position):
