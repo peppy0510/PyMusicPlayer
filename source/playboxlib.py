@@ -1002,11 +1002,11 @@ class PlayBoxControl():
             if self.IsLoopOn():
                 self.GotoTrackOffsetTime()
             else:
-                self.pending_fffr_Next = True
+                self.pending_fffr_next = True
                 result = self.OnNext()
                 if result is False:
                     # self.GotoTrackOffsetTime()
-                    self.pending_fffr_Next = False
+                    self.pending_fffr_next = False
                     self.OnPause()
                     self.SetResumeTime(finish)
                     self.Wave.reInitBuffer = True
