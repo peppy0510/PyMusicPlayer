@@ -22,6 +22,10 @@ from audio import fir_filter
 from audio import get_channel
 from audio import init_bass_decode
 from copy import deepcopy
+from multiprocessing.connection import Client
+from multiprocessing.connection import Listener
+from queue import Empty
+from queue import Queue
 from macroboxlib import PREFERENCE_DB
 from utilities import PipeMessenger
 from utilities import Struct
@@ -138,7 +142,9 @@ class MFEATS(Struct):
 # https://gist.github.com/255291/c97d2b088c53104f1d0d7cf8b20e89fc788037df
 
 
-def mfeats_single(path, queue=None):
+def mfeats_single(path, queue=None, on_wave=None):
+    # on_wave: given the song's waveform (and highlight) as soon as they are there,
+    # before the tempo's octave and the key
     # uses mono data
 
     # tic = time.time()
@@ -224,9 +230,33 @@ def mfeats_single(path, queue=None):
                  (mix_freqs >= WAVEFORM_HIGH_BOTTOM) & (mix_freqs < WAVEFORM_HIGH_TOP))
 
     analyze_frame, tempo_frame, tempo_fs = ([], [], 200)
-    # the first frame centred at 0, as Essentia's FrameCutter
-    key_length = get_key_frame_length(fs)
-    key_hpcp, key_mix = (numpy.zeros(12), [numpy.zeros(int((key_length + 1) / 2))])
+    # the key on a thread of its own: this pass hands it the frames it reads for the
+    # waveform (mix), thirty seconds at a time, where it handed them to the key
+    # itself before, and goes on (its FFTs let go of the GIL). in this pass the key
+    # held the waveform back (4.5 s of 22 for an hour's mix); read again after it,
+    # the song took a third longer; read again alongside, the two fought for the
+    # GIL. the same frames in the same bunches, in order: the same sums to the bit
+    key_frames, key_bunches, key_found = ([], Queue(), [])
+
+    def read_key():
+        # the first frame centred at 0, as Essentia's FrameCutter
+        key_length = get_key_frame_length(fs)
+        key_hpcp, rest = (numpy.zeros(12), numpy.zeros(int((key_length + 1) / 2)))
+        while True:
+            # given up on if this pass is gone (an error in it): no thread left behind
+            try:
+                last, frames = key_bunches.get(timeout=KEY_BUNCH_WAIT)
+            except Empty:
+                return
+            rest = add_key_frames(
+                key_hpcp, numpy.concatenate([rest] + frames), key_length, fs, last=last)
+            if last:
+                break
+        key_found.append(get_key_from_hpcp(key_hpcp))
+
+    key_thread = threading.Thread(target=read_key, daemon=True)
+    if find_key:
+        key_thread.start()
 
     for cnt, frame_position in enumerate(
             numpy.arange(0, total_frame_length - frame_length, frame_length)):
@@ -255,7 +285,7 @@ def mfeats_single(path, queue=None):
         waveform[row:row + sub_count, 2:] = bands[band_of_sub]
         highlight_raw_points[cnt] = numpy.mean(numpy.abs(mono_frame))
         if find_key:
-            key_mix += [mix]
+            key_frames += [mix]
 
         # collect frames for long term analysis
 
@@ -270,7 +300,8 @@ def mfeats_single(path, queue=None):
                     numpy.arange(len(analyze_frame)), analyze_frame))]
 
             if find_key:
-                key_mix = [add_key_frames(key_hpcp, numpy.concatenate(key_mix), key_length, fs)]
+                key_bunches.put((False, key_frames))
+                key_frames = []
 
             # key_frame_length = int(fs*0.25); key_frame_jump = 0.8
             # for i in range(0, len(analyze_frame)-key_frame_length,\
@@ -282,6 +313,9 @@ def mfeats_single(path, queue=None):
             #   notes = spectrum_to_note_by_max(spectrum, note_freq_div)
             #   chromagram += [note_to_chroma_by_max(notes)]
             analyze_frame = []
+
+    if find_key:
+        key_bunches.put((True, key_frames))
 
     # waveform
 
@@ -341,6 +375,15 @@ def mfeats_single(path, queue=None):
     offset_time = 1.0 * jump * pntadd / (len(highlight_raw_points) / duration)
     highlight = (offset_time, until_duration)
 
+    # the waveform shown while the rest goes on: DeepRhythm (its model loaded in a
+    # new worker, seconds) and the key's pass are still to come
+    if on_wave is not None:
+        # the tempo before its octave (for the highlight's length in beats only)
+        on_wave(MFEATS(
+            mdx=mdx, path=path, duration=duration, highlight=highlight, waveform=waveform,
+            tempo=tempo, date=time.time(), version=version, channel=channel, bit=bit,
+            error=0, autogain=0.4))
+
     # the octave from DeepRhythm over the highlight, the value from the spectrum
     seconds = max(until_duration, DEEPRHYTHM_CLIP)
     offset = max(min(highlight[0], duration - seconds), 0)
@@ -385,10 +428,9 @@ def mfeats_single(path, queue=None):
 
     key = ''
     if find_key:
-        add_key_frames(key_hpcp, numpy.concatenate(key_mix), key_length, fs, last=True)
-        key_idx = get_key_from_hpcp(key_hpcp)
-        if key_idx is not None:
-            key = chord_idx_to_char(key_idx)
+        key_thread.join()
+        if key_found and key_found[0] is not None:
+            key = chord_idx_to_char(key_found[0])
 
     # key analysis in highlight period: the most frequent chord
 
@@ -862,11 +904,20 @@ class Process(multiprocessing.Process):
         pass
 
 
-def mfeats_worker(conn):
+# how long the key's thread waits for the next frames before it gives up
+KEY_BUNCH_WAIT = 120
+
+
+def mfeats_worker(conn, model_address=None):
+    # model_address: deeprhythm_server's, for the tempo's octave (none: the model here)
     # one process for the songs in a row: torch and its models load once, not a song each.
     # here, not in macroboxlib: a worker spawned for one there imported macroboxlib first,
     # met this module importing it back half done (circular import) and died before a song
     set_process_priority(6)
+    DEEPRHYTHM.address = model_address
+    # DeepRhythm's model is loaded with the first song, after its waveform is out
+    # (mfeats_single's on_wave): loaded on a thread alongside, its imports held the
+    # GIL and the first waveform came at 5.3 s, not 2.2 (done at 5.4 s either way)
     while True:
         try:
             path = conn.recv()
@@ -877,11 +928,12 @@ def mfeats_worker(conn):
             return
         # a failed analysis is kept as an error, or it was tried again on every start
         try:
-            result = mfeats_single(path)
+            result = mfeats_single(path, on_wave=insert_mfeats_wave)
         except Exception:
             result = MFEATS(mdx=makemdx(path), path=path, date=time.time(),
                             version=MFEATS_VERSION, error=1)
         insert_mfeats(result)
+        delete_mfeats_wave(result.mdx)
         try:
             conn.send(path)
         except (EOFError, OSError):
@@ -920,7 +972,147 @@ def get_tempo(audata, samplerate, tmin=60, tmax=190):
 
 DEEPRHYTHM_FS = 22050
 DEEPRHYTHM_CLIP = 8
-DEEPRHYTHM = Struct(predictor=None, failed=False, lock=threading.Lock())
+DEEPRHYTHM = Struct(predictor=None, failed=False, lock=threading.Lock(),
+                    address=None, client=None, unreachable=0)
+# DeepRhythm in a process of its own for all the workers (deeprhythm_server): in each
+# worker torch and the model were 313 MB of its 437 (24 workers, 10 GB), and a new
+# worker waited seconds for them. a worker given its address sends a clip and gets
+# the BPM; a server starting is waited for, a server gone leaves the spectrum tempo
+DEEPRHYTHM_CONNECT_WAIT = 20
+# the most songs' clips through the model at once (a song is 4 to 8 clips of 8 s)
+DEEPRHYTHM_BATCH = 16
+DEEPRHYTHM_ANSWER_WAIT = 30
+# not reached: tried again after this long (the scheduler starts it again)
+DEEPRHYTHM_RETRY = 60
+
+
+def get_deeprhythm_address(pid):
+    return r'\\.\pipe\PyMusicPlayer-deeprhythm-%d' % (pid)
+
+
+def deeprhythm_server(control, address, threads=None):
+    '''DeepRhythm's BPMs for the workers connected at address, until control ends.
+    threads: torch's own (the cores the workers leave; torch takes them all by default)'''
+    set_process_priority(6)
+    if threads is not None:
+        import torch
+        torch.set_num_threads(threads)
+    listener = Listener(address)
+    requests = Queue()
+    # loaded at once: the first clip comes after a song's first pass
+    threading.Thread(target=get_deeprhythm, daemon=True).start()
+
+    def serve(client):
+        while True:
+            try:
+                audio, fs = client.recv()
+            except (EOFError, OSError):
+                break
+            asked = Struct(audio=audio, fs=fs, bpm=None, done=threading.Event())
+            requests.put(asked)
+            asked.done.wait()
+            try:
+                client.send(asked.bpm)
+            except (EOFError, OSError):
+                break
+        client.close()
+
+    def predict():
+        # the clips asked for meanwhile in one batch: one at a time, a clip for each of
+        # 24 workers, one process answered 6.7 a second
+        while True:
+            batch = [requests.get()]
+            while len(batch) < DEEPRHYTHM_BATCH:
+                try:
+                    batch.append(requests.get_nowait())
+                except Empty:
+                    break
+            predict_deeprhythm_batch(batch)
+            for asked in batch:
+                asked.done.set()
+
+    def accept():
+        while True:
+            try:
+                client = listener.accept()
+            except multiprocessing.AuthenticationError:
+                continue
+            except (EOFError, OSError):
+                return
+            threading.Thread(target=serve, args=(client,), daemon=True).start()
+
+    threading.Thread(target=predict, daemon=True).start()
+    threading.Thread(target=accept, daemon=True).start()
+    # told to end (None), or the app gone (its end closed)
+    try:
+        control.recv()
+    except (EOFError, OSError):
+        pass
+
+
+def predict_deeprhythm_batch(batch):
+    '''each asked's bpm (None if none): its 8 s clips with all the others' through the
+    model at once, then each song's mean as predict_from_audio takes it'''
+    predictor = get_deeprhythm()
+    if predictor is None:
+        return
+    import torch
+    from deeprhythm.audio_proc.hcqm import compute_hcqm
+    from deeprhythm.utils import class_to_bpm
+    from deeprhythm.utils import split_audio
+    try:
+        clips = [split_audio(asked.audio, asked.fs) for asked in batch]
+        counts = [len(v) for v in clips]
+        with torch.no_grad():
+            inputs = compute_hcqm(torch.cat(clips).to(device=predictor.device),
+                                  *predictor.specs).permute(0, 3, 1, 2)
+            probabilities = torch.softmax(predictor.model(inputs), dim=1)
+        for asked, part in zip(batch, torch.split(probabilities, counts)):
+            asked.bpm = float(class_to_bpm(torch.max(part.mean(dim=0), 0)[1].item()))
+    except Exception:
+        # the batch failed (one song's clip): each on its own, as before
+        for asked in batch:
+            try:
+                asked.bpm = float(predictor.predict_from_audio(asked.audio, asked.fs))
+            except Exception:
+                asked.bpm = None
+
+
+def predict_deeprhythm(audio):
+    '''DeepRhythm's BPM for the clip, from the server when the worker has one; or None'''
+    if DEEPRHYTHM.address is None:
+        predictor = get_deeprhythm()
+        if predictor is None:
+            return None
+        with DEEPRHYTHM.lock:
+            return float(predictor.predict_from_audio(audio, DEEPRHYTHM_FS))
+    if time.time() < DEEPRHYTHM.unreachable:
+        return None
+    try:
+        if DEEPRHYTHM.client is None:
+            # a server just started is not listening yet
+            until = time.time() + DEEPRHYTHM_CONNECT_WAIT
+            while DEEPRHYTHM.client is None:
+                try:
+                    DEEPRHYTHM.client = Client(DEEPRHYTHM.address)
+                except (FileNotFoundError, ConnectionError, OSError):
+                    if time.time() > until:
+                        # not waited for again at every song of this worker
+                        DEEPRHYTHM.unreachable = time.time() + DEEPRHYTHM_RETRY
+                        return None
+                    time.sleep(0.2)
+        DEEPRHYTHM.client.send((audio, DEEPRHYTHM_FS))
+        if DEEPRHYTHM.client.poll(DEEPRHYTHM_ANSWER_WAIT) is False:
+            raise TimeoutError
+        return DEEPRHYTHM.client.recv()
+    except Exception:
+        # gone or stuck: this song keeps the spectrum tempo, the next one connects again
+        try:
+            DEEPRHYTHM.client.close()
+        except Exception:
+            pass
+        DEEPRHYTHM.client = None
+        return None
 
 
 def get_deeprhythm():
@@ -952,16 +1144,14 @@ def fix_tempo_octave(tempo, mono, fs):
     '''the spectrum tempo halved or doubled to DeepRhythm's, when one is within 3%'''
     if tempo == 0 or len(mono) < fs * DEEPRHYTHM_CLIP:
         return tempo
-    predictor = get_deeprhythm()
-    if predictor is None:
-        return tempo
     from scipy.signal import resample_poly
     gcd = int(numpy.gcd(DEEPRHYTHM_FS, fs))
     audio = resample_poly(mono, DEEPRHYTHM_FS // gcd, fs // gcd).astype(numpy.float32)
     try:
-        with DEEPRHYTHM.lock:
-            bpm = float(predictor.predict_from_audio(audio, DEEPRHYTHM_FS))
+        bpm = predict_deeprhythm(audio)
     except Exception:
+        return tempo
+    if bpm is None:
         return tempo
     for ratio in (0.5, 1.0, 2.0):
         if abs(tempo * ratio / bpm - 1) <= 0.03:
@@ -1263,6 +1453,32 @@ def update_many_key_values(where, key_values, table_name='mfeats', db_name=None)
     # finally:
     #     if conn:
     #         conn.close()
+
+
+# the waveform of a song still being analyzed (mfeats_single's on_wave), shown
+# before its tempo and key: a table of its own, never taken for an analyzed song
+MFEATS_WAVE_TABLE = 'mfeats_wave'
+
+
+def insert_mfeats_wave(mfeats_data):
+    fields = ','.join([' '.join(field) for field in MFEATS_DEFINITION])
+    conn = sqlite3.connect(MFEATS_DB)
+    conn.execute('CREATE TABLE IF NOT EXISTS %s (%s)' % (MFEATS_WAVE_TABLE, fields))
+    conn.commit()
+    conn.close()
+    insert_mfeats(mfeats_data, table_name=MFEATS_WAVE_TABLE)
+
+
+def getby_mdx_wave(mdx):
+    # none yet: no table before the first one
+    try:
+        return getby_key_value('mdx', mdx, table_name=MFEATS_WAVE_TABLE)
+    except sqlite3.Error:
+        return None
+
+
+def delete_mfeats_wave(mdx):
+    deleteby_key_value('mdx', mdx, table_name=MFEATS_WAVE_TABLE)
 
 
 def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):

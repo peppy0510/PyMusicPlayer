@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import audio
+import bisect
 import mfeats
 import multiprocessing
 import mutagen
@@ -284,7 +285,10 @@ def MakeMusicFileItem(path, order, columns):
         except Exception:
             tempo = ''
         key = resp.key  # noqa
-        status = 'analyzed'  # noqa
+        # analyzed by an older version: its values shown, waiting for the analysis
+        # again (marked red, queued by the auto analyzer)
+        if resp.version == mfeats.MFEATS_VERSION:
+            status = 'analyzed'  # noqa
     duration = '%02d:%02d' % (duration / 60, duration % 60)
 
     item = [None] * len(columns)
@@ -391,6 +395,82 @@ class CursorEventCatcher():
         self.cursor_status = status
 
 
+class ThreadTimer():
+    # wx.Timer's Start/Stop/IsRunning/Notify with its beat from two places, Notify once a
+    # beat on the GUI thread: a thread's CallAfter, and a wx.Timer. a wx.Timer alone comes
+    # as WM_TIMER, which Windows sends only when no other message waits: with the mouse
+    # moving over the window it waited, and the events, the list and the analysis with
+    # it. a CallAfter alone waits in the loops Windows runs on its own (a drag and drop,
+    # a window moved or resized), where WM_TIMER still comes: drag and drop stopped.
+    # the analysis' only (MFEATS_Scheduler): given to the mouse events (EVENT_Scheduler),
+    # the drag's start and the list tab's sash, a drag in the list mostly failed and the
+    # sash hardly followed the mouse; they keep their wx.Timer
+
+    def __init__(self):
+        self.timer_interval = 0
+        self.timer_running = False
+        self.timer_posted = False
+        self.timer_generation = 0
+        self.timer_last = 0
+        self.timer_wx = wx.Timer()
+        self.timer_wx.Bind(wx.EVT_TIMER, lambda event: self.OnTimerBeat())
+
+    def Start(self, milliseconds=-1, oneShot=False):
+        if milliseconds > 0:
+            self.timer_interval = milliseconds
+        self.timer_running = True
+        self.timer_wx.Start(max(self.timer_interval, 1))
+        # a thread a start: the one before ends at its next beat
+        self.timer_generation += 1
+        threading.Thread(target=self.KeepTimerBeat, args=(self.timer_generation,),
+                         daemon=True).start()
+        return True
+
+    def Stop(self):
+        self.timer_running = False
+        self.timer_wx.Stop()
+
+    def IsRunning(self):
+        return self.timer_running
+
+    def GetInterval(self):
+        return self.timer_interval
+
+    def KeepTimerBeat(self, generation):
+        due = time.perf_counter()
+        while self.timer_running and generation == self.timer_generation:
+            due += max(self.timer_interval, 1) / 1000.0
+            delay = due - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                # behind (the computer was busy): from now on, no catching up
+                due = time.perf_counter()
+            if self.timer_posted:
+                continue
+            self.timer_posted = True
+            try:
+                wx.CallAfter(self.OnTimerPosted)
+            except Exception:
+                # no app any more (it is closing)
+                return
+
+    def OnTimerPosted(self):
+        self.timer_posted = False
+        self.OnTimerBeat()
+
+    def OnTimerBeat(self):
+        # the two beats of one: whichever comes first
+        now = time.perf_counter()
+        if self.timer_running is False or now - self.timer_last < self.timer_interval * 0.0006:
+            return
+        self.timer_last = now
+        self.Notify()
+
+    def Notify(self):
+        pass
+
+
 class PopupMenuEventCatcherTimer(wx.Timer):
 
     def __init__(self, parent):
@@ -481,10 +561,10 @@ class PopupMenuEventCatcher():
 MFEATS_WORKER_IDLETIME = 10.0
 
 
-class MFEATS_Scheduler(wx.Timer):
+class MFEATS_Scheduler(ThreadTimer):
 
     def __init__(self, parent):
-        wx.Timer.__init__(self)
+        ThreadTimer.__init__(self)
         self.parent = parent
         self.interval = 50
         self.max_cores = multiprocessing.cpu_count()
@@ -496,6 +576,11 @@ class MFEATS_Scheduler(wx.Timer):
         self.proclist = []
         self.stop = False
         self.redraw_pending = False
+        # DeepRhythm's process for the workers (StartModel): started with the first,
+        # ended once they are all gone
+        self.model = None
+        self.model_lock = threading.Lock()
+        self.model_address = mfeats.get_deeprhythm_address(os.getpid())
         self.Start(self.interval)
 
     def SetOptimalProcsLimit(self):
@@ -595,7 +680,8 @@ class MFEATS_Scheduler(wx.Timer):
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
-        if resp is not None and forced is False:
+        # analyzed by an older version: analyzed again
+        if resp is not None and resp.version == mfeats.MFEATS_VERSION and forced is False:
             return
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
         if urgent is False:
@@ -659,6 +745,12 @@ class MFEATS_Scheduler(wx.Timer):
                     this.conn.send(None)
                 except (EOFError, OSError):
                     this.proc.terminate()
+        # every worker gone (a new one is in the list before it starts): the model too
+        if self.proclist == [] and self.model is not None:
+            self.StopModel()
+        # died with workers left: started again (on a thread, a start is 17 ms)
+        elif self.model is not None and self.model.proc.is_alive() is False:
+            threading.Thread(target=self.StartModel, daemon=True).start()
 
     def SendJobToProcessor(self):
         if self.IsProcsFull():
@@ -696,9 +788,39 @@ class MFEATS_Scheduler(wx.Timer):
         self.procpath.append(path)
         self.UpdateItemsValue(path)
 
+    def StartModel(self):
+        # from the workers' starting threads, more than one at a time
+        with self.model_lock:
+            if self.model is not None and self.model.proc.is_alive():
+                return
+            # its process gone (it died): started again at the same address
+            if self.model is not None:
+                self.model.control.close()
+            control, model_control = multiprocessing.Pipe()
+            # torch on the cores the workers leave (it takes them all by default)
+            threads = max(1, self.max_cores - self.procs_limit - 1)
+            proc = multiprocessing.Process(
+                target=mfeats.deeprhythm_server,
+                args=(model_control, self.model_address, threads), daemon=True)
+            proc.start()
+            model_control.close()
+            self.model = Struct(proc=proc, control=control)
+
+    def StopModel(self):
+        with self.model_lock:
+            if self.model is None:
+                return
+            try:
+                self.model.control.send(None)
+            except (EOFError, OSError):
+                self.model.proc.terminate()
+            self.model.control.close()
+            self.model = None
+
     def StartWorker(self, this, worker_conn):
+        self.StartModel()
         proc = multiprocessing.Process(
-            target=mfeats.mfeats_worker, args=(worker_conn,), daemon=True)
+            target=mfeats.mfeats_worker, args=(worker_conn, self.model_address), daemon=True)
         proc.start()
         worker_conn.close()
         try:
@@ -741,8 +863,10 @@ class MFEATS_Scheduler(wx.Timer):
             tempo = '%05.1f' % (0.1 * round(tempo * 10))
         except Exception:
             tempo = ''
+        # an older version's row: not analyzed yet (MakeMusicFileItem)
+        status = 'analyzed' if resp.version == mfeats.MFEATS_VERSION else ''
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
-            ('mdx', mdx), ('status', 'analyzed'))
+            ('mdx', mdx), ('status', status))
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
             ('mdx', mdx), ('tempo', tempo))
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
@@ -780,6 +904,7 @@ class MFEATS_Scheduler(wx.Timer):
 
     def terminate(self):
         self.stop = True
+        self.StopModel()
         # for i in range(len(self.proclist)):
         #     self.proclist[i].proc.join()
         # an analysis still running is left (its row is written again later)
@@ -1455,6 +1580,10 @@ class EventCatcher():
         pass  # Override This Method
 
 
+# LimitTextLength's text widths by (font, text)
+TEXT_EXTENTS = {}
+
+
 class RectRect():
 
     def __init__(self):
@@ -1489,7 +1618,15 @@ class RectRect():
 
     def LimitTextLength(self, dc, string, width, margin=12):
         string = '%s' % (string)
-        limit = len([i for i in dc.GetPartialTextExtents(string) if i <= width - margin])
+        # each text's widths measured once a font: measured at every draw, a sash
+        # dragged drew the list at every step and this was a sixth of all the time
+        key = (dc.GetFont().GetNativeFontInfoDesc(), string)
+        extents = TEXT_EXTENTS.get(key)
+        if extents is None:
+            if len(TEXT_EXTENTS) > 50000:
+                TEXT_EXTENTS.clear()
+            extents = TEXT_EXTENTS[key] = dc.GetPartialTextExtents(string)
+        limit = bisect.bisect_right(extents, width - margin)
         if limit == len(string):
             return string
         return string[:limit] + '...'

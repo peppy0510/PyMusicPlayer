@@ -487,7 +487,7 @@ class PlayBoxControl():
     def InitControlEvent(self):
         self.reInitWave = True
         self.waveform_length = 1500
-        self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False,
+        self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False, early=False,
                               dbresp_lap=0.0, wave_since=0.0)
         self.failed_count = 0
         self.skip_silence = GetPreference('skip_silence') is True
@@ -671,6 +671,7 @@ class PlayBoxControl():
         self.pending.dbresp_lap = time.time()
         resp = mfeats.getby_key_value('mdx', self.cue.mdx)
         if resp is None:
+            self.SetEarlyAnalysis(highlight=True)
             return
         if resp.error == 1:
             # not analyzable: nothing more will come
@@ -694,7 +695,9 @@ class PlayBoxControl():
             self.pending.wave_since = time.time()
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
-            self.GotoTrackOffsetTime()
+            # gone to already with the early highlight (the same offset)
+            if self.pending.early is False:
+                self.GotoTrackOffsetTime()
         self.pending.dbresp = False
         self.reInitWave = True
 
@@ -712,14 +715,53 @@ class PlayBoxControl():
         if resp.error == 1:
             self.pending.wave = False
             return
-        if audio.is_waveform_3band(resp.waveform) is False:
-            return
         if resp.version != mfeats.MFEATS_VERSION:
+            # analyzed again while it plays: the waveform early, its highlight with
+            # the rest (where it plays is not moved)
+            self.SetEarlyAnalysis(highlight=False)
             return
+        # analyzed again: all the new values in place of the older version's (they
+        # were the waveform's alone), and where it plays left as it is
         self.pending.wave = False
+        self.cue.autogain = resp.autogain
+        self.cue.channel = resp.channel
+        self.SetMFEATSKey(resp.key)
+        self.SetMFEATSTempo(resp.tempo)
+        self.SetBestFFFRVariableTime()
+        self.cue.duration = resp.duration
+        self.SetHighlightOffsetTime(resp.highlight[0])
+        self.SetBestHighlightVariablePeriodTime()
         self.SetWaveImage(resp.waveform)
         self.SkipLeadingSilence()
+        if self.IsHighlightOn():
+            self.SetTrackTimeWithHighlight()
         self.reInitWave = True
+
+    def SetEarlyAnalysis(self, highlight=True):
+        # being analyzed: its waveform and highlight as soon as the worker has them,
+        # before the tempo's octave and the key (mfeats.insert_mfeats_wave)
+        if self.pending.early:
+            return
+        wave = mfeats.getby_mdx_wave(self.cue.mdx)
+        if wave is None or audio.is_waveform_3band(wave.waveform) is False:
+            return
+        self.pending.early = True
+        if audio.is_waveform_3band(self.cue.waveform) is False:
+            self.SetWaveImage(wave.waveform)
+        if highlight:
+            self.SetHighlightOffsetTime(wave.highlight[0])
+            # its length in beats of the tempo before its octave: half a beat at most
+            # from the one to come (the tempo itself is not shown before it)
+            value = self.GetNearestBeatTime(self.cue.highlight_static, wave.tempo)
+            self.cue.highlight_variable = min(value, self.GetDurationTime())
+            if self.IsHighlightOn():
+                self.SetTrackTimeWithHighlight()
+                self.GotoTrackOffsetTime()
+        self.reInitWave = True
+
+    def IsHighlightKnown(self):
+        # analyzed, or its highlight early (SetEarlyAnalysis)
+        return self.pending.dbresp is False or self.pending.early
 
     def IsAutoGainOn(self):
         return False
@@ -1096,6 +1138,7 @@ class PlayBoxControl():
         self.AudioControl.resume = 0.0
         self.pending.dbresp = True
         self.pending.dbresp_lap = 0.0
+        self.pending.early = False
         self.pending.mdx = True
         self.pending.mfeats = True
         self.pending.wave = False

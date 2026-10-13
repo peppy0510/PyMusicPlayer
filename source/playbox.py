@@ -235,6 +235,8 @@ class PlayBox(RectBox, PlayBoxControl):
         self.AudioControl._Thread__exc_clear()
 
 
+
+
 class PlayBoxVisualClock(threading.Thread):
 
     # the visualizers' own clock while playing: the global events come every 25 ms
@@ -246,24 +248,16 @@ class PlayBoxVisualClock(threading.Thread):
         self.parent = parent
         self.loop = True
         self.posted = False
-        # while the window is moved or resized Windows runs a loop of its own, in
-        # which the CallAfter below waited (up to 220 ms a frame measured): a
-        # timer's messages still come in it, so a timer keeps the beat until then
+        # a wx.Timer beside the thread, always: in the loops Windows runs on its own
+        # (a window moved or resized, a drag and drop) the CallAfter below waited, up
+        # to 220 ms a frame measured, and a timer's WM_TIMER still comes. outside them
+        # its beats are the thread's twice over, and a box draws once a frame
+        # (DirectDraw)
         self.sizing = wx.Timer()
         self.sizing.Bind(wx.EVT_TIMER, self.OnSizing)
-        frame = wx.GetTopLevelParent(parent)
-        frame.Bind(wx.EVT_MOVE_START, self.OnMoveStart)
-        frame.Bind(wx.EVT_MOVE_END, self.OnMoveEnd)
-        self.start()
-
-    def OnMoveStart(self, event):
         # the shortest a timer goes (it comes about every 15.6 ms)
         self.sizing.Start(10)
-        event.Skip()
-
-    def OnMoveEnd(self, event):
-        self.sizing.Stop()
-        event.Skip()
+        self.start()
 
     def OnSizing(self, event):
         self.Tick()
@@ -301,6 +295,12 @@ class PlayBoxVisualClock(threading.Thread):
         for box in self.GetBoxes():
             if box is not None and box.IsShown():
                 box.DirectDraw()
+                # put on the screen now: Windows paints only when no other message
+                # waits, and with the mouse moving over the window the frames drawn
+                # waited (the clock kept 60 a second, the screen did not). here only:
+                # for every box (DirectDraw) a sash dragged painted each one at every
+                # step and could not keep up with the mouse
+                box.Update()
 
     def Quit(self):
         self.loop = False
@@ -1517,7 +1517,7 @@ class PlayBoxWave(RectBox):
             self.SetRectHighlight()
 
     def SetRectDraw(self, dc):
-        draw_highlight = self.parent.IsDBRespPending() is False\
+        draw_highlight = self.parent.IsHighlightKnown()\
             and self.parent.IsHighlightOn()\
             and self.parent.IsHighlightSkipOn() is False
         if draw_highlight:
@@ -1551,7 +1551,7 @@ class PlayBoxWave(RectBox):
     def SetRectHighlight(self):
         # none left from the track before when this one has none
         self.rectHighlight = (0, 0, 0, 0)
-        if self.parent.IsDBRespPending():
+        if self.parent.IsHighlightKnown() is False:
             return
         duration = self.parent.GetDurationTime()
         if duration <= 0.0:
@@ -1670,7 +1670,7 @@ class PlayBoxWave(RectBox):
             return
         if event.LeftDown is False:
             return
-        if self.parent.IsDBRespPending():
+        if self.parent.IsHighlightKnown() is False:
             return
         if self.parent.IsHighlightOn() is False:
             return
@@ -1817,7 +1817,7 @@ class PlayBoxWaveDetail(RectBox):
         return self.parent.GetPositionTime()
 
     def IsHighlightDrawn(self):
-        return self.parent.IsDBRespPending() is False\
+        return self.parent.IsHighlightKnown()\
             and self.parent.IsHighlightOn()\
             and self.parent.IsHighlightSkipOn() is False
 

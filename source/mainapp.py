@@ -305,7 +305,10 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         if width == self.list_tab_width:
             return
         self.list_tab_width = width
-        self.OnSize()
+        # the list tab, the sash and the list only (SetListRects): laid out whole
+        # (OnSize), the player above was laid out and drawn at every step of a sash
+        # dragged, and it hardly followed the mouse
+        self.OnListTabSize()
 
     def ResetListTabWidth(self):
         self.SetListTabWidth(LIST_TAB_WIDTH)
