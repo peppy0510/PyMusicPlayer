@@ -564,10 +564,16 @@ class ListBoxTabHeader(RectBox):
             return
         if event.LeftUp is False:
             return
-        if event.click.x is None or event.click.y is None:
-            return
+        # if event.click.x is None or event.click.y is None:
+        #     return
         # if not event.LeftDown:
         #     return
+        # pressed and released on it, as the tab's close (a click was lost to
+        # a pixel's move or a press over half a second)
+        if event.down.X is None or event.down.Y is None:
+            return
+        if not self.IsInRect(self.add_button, (event.down.X, event.down.Y)):
+            return
         if not self.IsInRect(self.add_button, (event.X, event.Y)):
             return
         self.parent.parent.ListBox.AddInnerList()
@@ -589,8 +595,11 @@ class ListBoxTabHeader(RectBox):
         offset_x = width - (size + self.parent.scrollbar_size + 12)
         offset_y = (height - size) / 2 + 1
         dc.DrawBitmap(self.bmp.add, round(offset_x), round(offset_y), useMask=True)
-        pad = 2
-        self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
+        # pad = 2
+        # self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
+        # the header's height, up to the line before the scrollbar (the 8px mark was 12px to hit)
+        pad = 8
+        self.add_button = (offset_x - pad, 0, size + pad * 2, height)
 
         lines = [(0, 1, 0, self.GetSize().height)]
         color = self.parent.st.HEADER_PN_COLOR
