@@ -22,6 +22,7 @@ from macroboxlib import COLOR_TOOLBAR_BG
 from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_PLAYINFO
 from macroboxlib import GetPreference
+from macroboxlib import PaintUnpainted
 from macroboxlib import RectBox
 from playboxlib import AudioControl
 from playboxlib import PlayBoxControl
@@ -290,6 +291,7 @@ class PlayBoxVisualClock(threading.Thread):
         self.posted = False
         if self.loop is False or not self.parent:
             return
+        PaintUnpainted()
         if self.parent.IsPlaying() is False:
             return
         for box in self.GetBoxes():
@@ -301,6 +303,12 @@ class PlayBoxVisualClock(threading.Thread):
                 # for every box (DirectDraw) a sash dragged painted each one at every
                 # step and could not keep up with the mouse
                 box.Update()
+        # the time shown with them (its own 30 a second): it came with the global
+        # events, a wx.Timer, held back with the mouse moving as the frames were
+        info = getattr(self.parent, 'Info', None)
+        if info is not None and info.IsShown():
+            info.HandleInfoChange()
+            info.Update()
 
     def Quit(self):
         self.loop = False

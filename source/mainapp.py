@@ -260,9 +260,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
     def OnListTabSize(self):
         self.Freeze()
+        size = self.ListBox.GetSize()
         self.SetListRects()
         self.ListTab.OnSize()
-        self.ListBox.OnSize()
+        # a new size has laid the list out already (its EVT_SIZE, in SetRect): laid
+        # out again here, a step of a sash dragged drew the list three times (80 ms)
+        if self.ListBox.GetSize() == size:
+            self.ListBox.OnSize()
         self.Thaw()
 
     def GetListTabRatio(self):

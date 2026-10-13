@@ -234,6 +234,12 @@ class ListBox(RectBox, ListControl):
         self.SliderH.DirectDraw()
         self.SliderV.DirectDraw()
         self.DirectDraw()
+        # drawn just above: not again when idle (the draw before this one asks it,
+        # SetRectDraw), or a step of a sash dragged drew the list twice
+        self.List.reInitBuffer = False
+        self.Header.reInitBuffer = False
+        self.SliderH.reInitBuffer = False
+        self.SliderV.reInitBuffer = False
         self.Thaw()
 
     def __del__(self):
@@ -879,7 +885,10 @@ class ListBoxList(RectBox):
         self.parent.ScrollV(event.WheelRotation / 40)
 
     def OnSize(self, event=None):
-        self.DirectDraw()
+        # drawn when idle (OnIdle), not at once: resized, it is drawn by the list box
+        # laying out right after (ListBox.OnSize), and a step of a sash dragged drew
+        # it twice, 16 ms each
+        self.reInitBuffer = True
 
 
 class ListBoxHeader(RectBox):
@@ -2564,7 +2573,7 @@ class StatusBox(RectBox):
         else:
             message_left = u'Selected %s / %s tracks %s'\
                 % (selected, total, filtered)
-        message_right = u'Analyzing %s / %s tracks using %s Threads'\
+        message_right = u'Analyzing %s / %s tracks using %s Processes'\
             % (proc, task + proc, core)
         messages = (message_left, message_right)
         if self.messages == messages:

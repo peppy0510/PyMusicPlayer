@@ -402,9 +402,9 @@ class ThreadTimer():
     # moving over the window it waited, and the events, the list and the analysis with
     # it. a CallAfter alone waits in the loops Windows runs on its own (a drag and drop,
     # a window moved or resized), where WM_TIMER still comes: drag and drop stopped.
-    # the analysis' only (MFEATS_Scheduler): given to the mouse events (EVENT_Scheduler),
-    # the drag's start and the list tab's sash, a drag in the list mostly failed and the
-    # sash hardly followed the mouse; they keep their wx.Timer
+    # the analysis' only (MFEATS_Scheduler). the mouse events (EVENT_Scheduler) keep
+    # their wx.Timer: on this beat, on its own or with the drag's start and the list
+    # tab's sash, a drag in the list failed and the sash hardly followed the mouse
 
     def __init__(self):
         self.timer_interval = 0
@@ -412,6 +412,7 @@ class ThreadTimer():
         self.timer_posted = False
         self.timer_generation = 0
         self.timer_last = 0
+        self.timer_notifying = False
         self.timer_wx = wx.Timer()
         self.timer_wx.Bind(wx.EVT_TIMER, lambda event: self.OnTimerBeat())
 
@@ -460,12 +461,19 @@ class ThreadTimer():
         self.OnTimerBeat()
 
     def OnTimerBeat(self):
-        # the two beats of one: whichever comes first
+        # the two beats of one: whichever comes first. and not in its own Notify (a
+        # loop Windows runs from it lets the wx.Timer's beat in)
         now = time.perf_counter()
         if self.timer_running is False or now - self.timer_last < self.timer_interval * 0.0006:
             return
+        if self.timer_notifying:
+            return
         self.timer_last = now
-        self.Notify()
+        self.timer_notifying = True
+        try:
+            self.Notify()
+        finally:
+            self.timer_notifying = False
 
     def Notify(self):
         pass
@@ -1583,6 +1591,23 @@ class EventCatcher():
 # LimitTextLength's text widths by (font, text)
 TEXT_EXTENTS = {}
 
+# drawn and not yet on the screen (DirectDraw), put there by PaintUnpainted. Windows
+# paints only when no other message waits: with the mouse moving over the window
+# the list and the buttons waited. each painted at once instead, a sash dragged
+# painted every box at every step and hardly followed the mouse
+UNPAINTED = set()
+
+
+def PaintUnpainted():
+    '''the boxes drawn since, painted now, once each (from a beat the mouse does
+    not hold back: the visualizers' clock, PlayBoxVisualClock)'''
+    boxes = list(UNPAINTED)
+    UNPAINTED.clear()
+    for box in boxes:
+        # gone meanwhile (a dialog's)
+        if box:
+            box.Update()
+
 
 class RectRect():
 
@@ -1666,6 +1691,7 @@ class RectRect():
         self.Refresh(False)
 
     def OnPaint(self, event):
+        UNPAINTED.discard(self)
         if self.buffer.bmp is None:
             return
         wx.BufferedPaintDC(self, self.buffer.bmp)
@@ -1695,6 +1721,7 @@ class RectRect():
             self.buffer.lap += interval
         self.InitBuffer()
         self.Refresh(False)
+        UNPAINTED.add(self)
 
     def OnErase(self, event):
         pass
