@@ -42,7 +42,7 @@ from utilities import set_process_priority
 MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
-MFEATS_VERSION = '1.5.0'
+MFEATS_VERSION = '1.5.1'
 # 3band waveform: a column's seconds (about), where the lows end, the highs begin and end (Hz)
 WAVEFORM_COLUMN_SECONDS = 0.01
 # the bands are read over blocks of about this long (a column is too short to tell
@@ -682,6 +682,9 @@ KEY_MAX_FREQUENCY = 3500.0
 KEY_MAX_PEAKS = 60
 KEY_PEAK_THRESHOLD = 0.0001
 KEY_PCP_THRESHOLD = 0.2
+# added to the minor correlations: the library is mostly minor (84% of tags, 94% of 10,916
+# labelled loops); exact 63 to 68% on songs, 44 to 49% on loops, majors 83 to 79% and 43 to 38%
+KEY_MINOR_BIAS = 0.05
 # major and minor from A (Faraldo, Jorda and Herrera, AES Semantic Audio 2017)
 KEY_PROFILES = (
     (1.00, 0.00, 0.42, 0.00, 0.53, 0.37, 0.00, 0.77, 0.00, 0.38, 0.21, 0.30),
@@ -797,11 +800,12 @@ def get_key_from_hpcp(hpcp):
     pcp = numpy.array(hpcp) / numpy.max(hpcp)
     pcp[pcp < KEY_PCP_THRESHOLD] = 0
     pcp = pcp - pcp.mean()
+    pcp = pcp / (numpy.sqrt(numpy.sum(pcp**2)) or 1.0)
     best = []
-    for profile in KEY_PROFILES:
+    for bias, profile in zip((0.0, KEY_MINOR_BIAS), KEY_PROFILES):
         profile = numpy.array(profile) - numpy.mean(profile)
         profile = profile / numpy.sqrt(numpy.sum(profile**2))
-        scores = [numpy.sum(pcp * numpy.roll(profile, v)) for v in range(12)]
+        scores = [numpy.sum(pcp * numpy.roll(profile, v)) + bias for v in range(12)]
         best += [(max(scores), int(numpy.argmax(scores)))]
     if best[0][0] > best[1][0]:
         return (best[0][1] + 9) % 12
