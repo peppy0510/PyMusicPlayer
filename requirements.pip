@@ -8,6 +8,8 @@ mutagen
 wxpython
 modpybass
 objectlistview
+# optional, the tempo octave; torch from https://download.pytorch.org/whl/cpu
+deeprhythm
 git+https://git@github.com/peppy0510/python-mstr.git
 git+https://git@github.com/peppy0510/python-mpath.git
 git+https://git@github.com/peppy0510/python-dtruct.git
