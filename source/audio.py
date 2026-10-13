@@ -729,22 +729,9 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     peaks = numpy.maximum(numpy.maximum.reduceat(spectrum, starts), spectrum[included])
     log_spcetrum = ((peaks * weights)**powers) * 1.5
 
-    dataL = dataL * amplify * 1.20
-    dataR = dataR * amplify * 1.20
-    dataL_max = numpy.max(numpy.abs(dataL))
-    dataR_max = numpy.max(numpy.abs(dataR))
-    data_max = max((dataL_max, dataR_max))
-    if data_max > 32768:
-        dataL = dataL / data_max * 32768
-        dataR = dataR / data_max * 32768
-    dataL = dataL[:768] * 0.00001 * vs_size
-    dataR = dataR[:768] * 0.00001 * vs_size
-    sdt = numpy.sin(0.75 * numpy.pi)
-    cdt = numpy.cos(0.75 * numpy.pi)
-    xdts = dataR * cdt + dataL * sdt
-    ydts = -dataL * sdt + dataR * cdt
-    xys = zip(numpy.int16(-xdts + 0.5 * vs_size), numpy.int16(ydts + 0.5 * vs_size + 1))
-    return log_spcetrum, list(set(xys))
+    # the vectorscope's samples as they are (-1 to 1): its gain and its dots
+    # are its own (PlayBoxVectorScope.SetSamples)
+    return log_spcetrum, (dataL[:768] / 32768.0, dataR[:768] / 32768.0)
 
 
 def get_id3(filename, field_keys):

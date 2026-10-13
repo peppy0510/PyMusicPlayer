@@ -42,7 +42,7 @@ from utilities import set_process_priority
 MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
-MFEATS_VERSION = '1.4.0'
+MFEATS_VERSION = '1.5.0'
 # 3band waveform: a column's seconds (about), where the lows end, the highs begin and end (Hz)
 WAVEFORM_COLUMN_SECONDS = 0.01
 # the bands are read over blocks of about this long (a column is too short to tell
@@ -224,6 +224,9 @@ def mfeats_single(path, queue=None):
                  (mix_freqs >= WAVEFORM_HIGH_BOTTOM) & (mix_freqs < WAVEFORM_HIGH_TOP))
 
     analyze_frame, tempo_frame, tempo_fs = ([], [], 200)
+    # the first frame centred at 0, as Essentia's FrameCutter
+    key_length = get_key_frame_length(fs)
+    key_hpcp, key_mix = (numpy.zeros(12), [numpy.zeros(int((key_length + 1) / 2))])
 
     for cnt, frame_position in enumerate(
             numpy.arange(0, total_frame_length - frame_length, frame_length)):
@@ -251,6 +254,8 @@ def mfeats_single(path, queue=None):
         # waveform[row:row + sub_count, 2:] = [power[v].sum() for v in mix_bands]
         waveform[row:row + sub_count, 2:] = bands[band_of_sub]
         highlight_raw_points[cnt] = numpy.mean(numpy.abs(mono_frame))
+        if find_key:
+            key_mix += [mix]
 
         # collect frames for long term analysis
 
@@ -263,6 +268,9 @@ def mfeats_single(path, queue=None):
                 numpy.abs(numpy.interp(
                     numpy.linspace(0, len(analyze_frame) - 1, num),
                     numpy.arange(len(analyze_frame)), analyze_frame))]
+
+            if find_key:
+                key_mix = [add_key_frames(key_hpcp, numpy.concatenate(key_mix), key_length, fs)]
 
             # key_frame_length = int(fs*0.25); key_frame_jump = 0.8
             # for i in range(0, len(analyze_frame)-key_frame_length,\
@@ -373,83 +381,92 @@ def mfeats_single(path, queue=None):
 
             autogain = 0.14 / rms
 
-    # key analysis in highlight period
+    # key analysis over the whole song with the HPCP of the first pass
 
     key = ''
     if find_key:
-        chromagram, resolution = ([], 1.0)
-        note_freq_div = get_note_freq_div(resolution)
-        # note_window = get_note_window(fs, resolution, note_freq_div)
-        if xtempo == 0:
-            frame_length = int(fs * channel * 0.5)
-        else:
-            frame_length = int(fs * channel * (60.0 / xtempo))
-        frame_length -= frame_length % channel
+        add_key_frames(key_hpcp, numpy.concatenate(key_mix), key_length, fs, last=True)
+        key_idx = get_key_from_hpcp(key_hpcp)
+        if key_idx is not None:
+            key = chord_idx_to_char(key_idx)
 
-        offset_position, until_position = (highlight[0], fs * channel * until_duration * 2)
+    # key analysis in highlight period: the most frequent chord
 
-        if frame_length > total_frame_length:
-            frame_length = total_frame_length - 1
+    # key = ''
+    # if find_key:
+    #     chromagram, resolution = ([], 1.0)
+    #     note_freq_div = get_note_freq_div(resolution)
+    #     # note_window = get_note_window(fs, resolution, note_freq_div)
+    #     if xtempo == 0:
+    #         frame_length = int(fs * channel * 0.5)
+    #     else:
+    #         frame_length = int(fs * channel * (60.0 / xtempo))
+    #     frame_length -= frame_length % channel
 
-        if offset_position + until_position > total_frame_length:
-            until_position = total_frame_length - offset_position
+    #     offset_position, until_position = (highlight[0], fs * channel * until_duration * 2)
 
-        frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
-        byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, offset_position)
-        pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+    #     if frame_length > total_frame_length:
+    #         frame_length = total_frame_length - 1
 
-        for cnt, frame_position in enumerate(
-                numpy.arange(0, total_frame_length - frame_length, frame_length)):
+    #     if offset_position + until_position > total_frame_length:
+    #         until_position = total_frame_length - offset_position
 
-            got = pybass.BASS_ChannelGetData(
-                hstream, frame_raw.ctypes.data_as(
-                    ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
-            # past the file's end (-1): the last frame read was counted already
-            if got <= 0 or got == 0xFFFFFFFF:
-                break
+    #     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
+    #     byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, offset_position)
+    #     pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
 
-            mono_frame = frame_raw[::channel] / 32768.0
-            spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
-            spectrum = numpy.abs(spectrum[1:int(len(spectrum) / 2)])
+    #     for cnt, frame_position in enumerate(
+    #             numpy.arange(0, total_frame_length - frame_length, frame_length)):
 
-            if find_key:
+    #         got = pybass.BASS_ChannelGetData(
+    #             hstream, frame_raw.ctypes.data_as(
+    #                 ctypes.POINTER(ctypes.c_short)), int(frame_length * 2))
+    #         # past the file's end (-1): the last frame read was counted already
+    #         if got <= 0 or got == 0xFFFFFFFF:
+    #             break
 
-                notes = spectrum_to_note_by_max(spectrum, note_freq_div)
-                chromagram += [note_to_chroma_by_max(notes)]
+    #         mono_frame = frame_raw[::channel] / 32768.0
+    #         spectrum = numpy.fft.fft(mono_frame, int(fs * resolution))
+    #         spectrum = numpy.abs(spectrum[1:int(len(spectrum) / 2)])
 
-            if (cnt + 1) * frame_length >= until_position:
-                break
+    #         if find_key:
 
-        scored_keys, key_scores, key_counts = ([], [0] * 24, [0] * 24)
-        for chroma in chromagram:
-            lag, score = get_chord_binaries_correlation_lag_score(chroma)
-            scored_keys += [lag]
-            key_counts[lag] += 1
-            key_scores[lag] += score
-        key_scores = numpy.array(key_scores)
-        max_key_scores = max(key_scores)
-        if max_key_scores == 0.0:
-            key = ''
-        else:
-            key_scores = key_scores / max_key_scores * 100
-            scored_key_idx = []
-            for i in range(1):
-                value, pnt = find_max(key_scores)
-                if value < 50:
-                    break
-                scored_key_idx += [pnt[0]]
-                key_scores[pnt[0]] = 0
-            string_keys = []
-            for i in range(len(scored_key_idx) - 1, -1, -1):
-                if scored_key_idx[i] - 12 in scored_key_idx:
-                    scored_key_idx.pop(i)
-                    continue
-                elif scored_key_idx[i] + 12 in scored_key_idx:
-                    scored_key_idx.pop(i)
-                    continue
-                string_keys += [chord_idx_to_char(scored_key_idx[i])]
-            string_keys = ' or '.join(string_keys)
-            key = '%s' % (string_keys)
+    #             notes = spectrum_to_note_by_max(spectrum, note_freq_div)
+    #             chromagram += [note_to_chroma_by_max(notes)]
+
+    #         if (cnt + 1) * frame_length >= until_position:
+    #             break
+
+    #     scored_keys, key_scores, key_counts = ([], [0] * 24, [0] * 24)
+    #     for chroma in chromagram:
+    #         lag, score = get_chord_binaries_correlation_lag_score(chroma)
+    #         scored_keys += [lag]
+    #         key_counts[lag] += 1
+    #         key_scores[lag] += score
+    #     key_scores = numpy.array(key_scores)
+    #     max_key_scores = max(key_scores)
+    #     if max_key_scores == 0.0:
+    #         key = ''
+    #     else:
+    #         key_scores = key_scores / max_key_scores * 100
+    #         scored_key_idx = []
+    #         for i in range(1):
+    #             value, pnt = find_max(key_scores)
+    #             if value < 50:
+    #                 break
+    #             scored_key_idx += [pnt[0]]
+    #             key_scores[pnt[0]] = 0
+    #         string_keys = []
+    #         for i in range(len(scored_key_idx) - 1, -1, -1):
+    #             if scored_key_idx[i] - 12 in scored_key_idx:
+    #                 scored_key_idx.pop(i)
+    #                 continue
+    #             elif scored_key_idx[i] + 12 in scored_key_idx:
+    #                 scored_key_idx.pop(i)
+    #                 continue
+    #             string_keys += [chord_idx_to_char(scored_key_idx[i])]
+    #         string_keys = ' or '.join(string_keys)
+    #         key = '%s' % (string_keys)
 
     # chromagram = numpy.array(chromagram).T
     # chromagram = numpy.flipud(chromagram)
@@ -654,6 +671,143 @@ def get_chord_binaries_correlation_lag_score(chroma):
     return (minor_lag + 12, minor_value)
 
 
+# Essentia's KeyExtractor with its defaults (bgate profile) in numpy: whitened spectral
+# peaks of 25 to 3500 Hz into a 12-bin HPCP over the whole song. Same keys as Essentia on
+# 1,413 songs; on 1,526 tagged songs 66% against 36% for the highlight's most frequent chord.
+
+KEY_FS = 44100
+KEY_FRAME = 4096
+KEY_MIN_FREQUENCY = 25.0
+KEY_MAX_FREQUENCY = 3500.0
+KEY_MAX_PEAKS = 60
+KEY_PEAK_THRESHOLD = 0.0001
+KEY_PCP_THRESHOLD = 0.2
+# major and minor from A (Faraldo, Jorda and Herrera, AES Semantic Audio 2017)
+KEY_PROFILES = (
+    (1.00, 0.00, 0.42, 0.00, 0.53, 0.37, 0.00, 0.77, 0.00, 0.38, 0.21, 0.30),
+    (1.00, 0.00, 0.36, 0.39, 0.00, 0.38, 0.00, 0.74, 0.27, 0.00, 0.42, 0.23))
+
+
+def get_key_frame_length(fs):
+    return int(round(1.0 * KEY_FRAME * fs / KEY_FS))
+
+
+def get_key_harmonics():
+    '''(semitone, weight) of a peak as the 1st to 5th harmonic of a lower note'''
+    harmonics = []
+    for i in range(5):
+        semitone = 12.0 * numpy.log2(i + 1.0)
+        weight = 1.0 / max(1.0, semitone / 12.0 * 0.5)
+        while semitone >= 12.0 - 0.00001:
+            semitone -= 12.0
+        for v in harmonics:
+            if abs(v[0] - semitone) < 0.00001:
+                v[1] += weight
+                break
+        else:
+            harmonics += [[semitone, weight]]
+    return harmonics
+
+
+def get_key_hpcp(frames, fs):
+    '''the frames' HPCP summed, from A'''
+    size = frames.shape[1]
+    window = numpy.hanning(size)
+    window = window * 2.0 / window.sum()
+    spectrum = numpy.abs(numpy.fft.rfft(frames * window, axis=1))
+    bins = spectrum.shape[1]
+    scale = fs / 2.0 / (bins - 1)
+
+    first = max(0, int(numpy.ceil(KEY_MIN_FREQUENCY / scale)))
+    last = int(KEY_MAX_FREQUENCY / scale) + 2
+    left = spectrum[:, first:last - 1]
+    middle = spectrum[:, first + 1:last]
+    right = spectrum[:, first + 2:last + 1]
+    peak = (left < middle) & (middle > right) & (middle > KEY_PEAK_THRESHOLD)
+    with numpy.errstate(divide='ignore', invalid='ignore'):
+        delta = 0.5 * (left - right) / (left - 2 * middle + right)
+    delta = numpy.where(peak, delta, 0.0)
+    magnitude = middle - 0.25 * (left - right) * delta
+    frequency = (numpy.arange(first + 1, last) + delta) * scale
+    edge = spectrum[:, first]
+    peak = numpy.column_stack((
+        (edge > spectrum[:, first + 1]) & (edge > KEY_PEAK_THRESHOLD), peak))
+    magnitude = numpy.column_stack((edge, magnitude))
+    frequency = numpy.column_stack((numpy.full(len(frames), first * scale), frequency))
+    peak &= frequency <= KEY_MAX_FREQUENCY
+    order = numpy.argsort(numpy.where(peak, -magnitude, numpy.inf), axis=1, kind='stable')
+    order = order[:, :KEY_MAX_PEAKS]
+    peak = numpy.take_along_axis(peak, order, axis=1)
+    magnitude = numpy.take_along_axis(magnitude, order, axis=1)
+    frequency = numpy.take_along_axis(frequency, order, axis=1)
+
+    # whitening: a peak's level against the spectrum's envelope, every 100 Hz
+    points = numpy.arange(0.0, KEY_MAX_FREQUENCY * 1.2 + 1, 100.0)
+    points = points[points <= fs / 2.0]
+    shape = numpy.zeros((len(points), bins))
+    for i, v in enumerate(points):
+        b = int((v - max(50.0, v * 0.34)) / (fs / 2.0) * (bins - 1.0) + 0.5)
+        e = int((v + max(50.0, v * 0.58)) / (fs / 2.0) * (bins - 1.0) + 0.5)
+        b = min(max(b, 0), bins - 1)
+        e = min(max(e, b + 1), bins)
+        c = b / 2.0 + e / 2.0
+        shape[i, b:e] = (1.0 - numpy.abs(numpy.arange(b, e) - c) / (e - c))**4
+    energy = spectrum**2
+    total = energy.dot(shape.T)
+    with numpy.errstate(divide='ignore', invalid='ignore'):
+        envelope = numpy.where(total > 0, (energy**2).dot(shape.T) / total, 0.0)
+    envelope[:, -1] = envelope[:, -2]
+    envelope = numpy.sqrt(envelope)
+    envelope = numpy.where(
+        envelope < 1e-10, -200.0, 20 * numpy.log10(numpy.maximum(envelope, 1e-300)))
+    level = numpy.where(
+        magnitude < 1e-10, -200.0, 20 * numpy.log10(numpy.maximum(magnitude, 1e-300)))
+    step = numpy.clip(numpy.floor(frequency / 100.0).astype(int), 0, len(points) - 2)
+    floor = numpy.take_along_axis(envelope, step, axis=1)
+    floor += (frequency / 100.0 - step) * (
+        numpy.take_along_axis(envelope, step + 1, axis=1) - floor)
+    white = numpy.where(level > floor, 0.0,
+                        numpy.where(level > floor - 30.0, level - floor, -200.0))
+    white = 10**((white - 20.0 * frequency / 4000.0) / 20.0)
+
+    hpcp = numpy.zeros(12)
+    for semitone, weight in get_key_harmonics():
+        note = 12 * numpy.log2(frequency * 2**(-semitone / 12.0) / 440.0)
+        nearest = numpy.floor(note + 0.5)
+        hpcp += numpy.bincount(
+            (nearest[peak] % 12).astype(int), minlength=12,
+            weights=(numpy.cos(numpy.pi * (note - nearest)) * white**2 * weight**2)[peak])
+    return hpcp
+
+
+def add_key_frames(hpcp, mix, length, fs, last=False):
+    '''the whole frames of mix added to hpcp, the rest returned (padded and added if last)'''
+    if last and len(mix) % length != 0:
+        mix = numpy.concatenate((mix, numpy.zeros(length - len(mix) % length)))
+    count = int(len(mix) / length)
+    if count > 0:
+        hpcp += get_key_hpcp(mix[:count * length].reshape(count, length), fs)
+    return mix[count * length:]
+
+
+def get_key_from_hpcp(hpcp):
+    '''the chord index (C to B major, then minor) of the best correlated profile, or None'''
+    if numpy.max(hpcp) <= 0:
+        return None
+    pcp = numpy.array(hpcp) / numpy.max(hpcp)
+    pcp[pcp < KEY_PCP_THRESHOLD] = 0
+    pcp = pcp - pcp.mean()
+    best = []
+    for profile in KEY_PROFILES:
+        profile = numpy.array(profile) - numpy.mean(profile)
+        profile = profile / numpy.sqrt(numpy.sum(profile**2))
+        scores = [numpy.sum(pcp * numpy.roll(profile, v)) for v in range(12)]
+        best += [(max(scores), int(numpy.argmax(scores)))]
+    if best[0][0] > best[1][0]:
+        return (best[0][1] + 9) % 12
+    return (best[1][1] + 9) % 12 + 12
+
+
 # http://www.pyinstaller.org/ticket/182
 # http://www.pyinstaller.org/wiki/Recipe/Multiprocessing
 # https://github.com/terryh/autotrader/blob/master/quote/quoteworker.py
@@ -702,6 +856,32 @@ class Process(multiprocessing.Process):
 
     def __del__(self):
         pass
+
+
+def mfeats_worker(conn):
+    # one process for the songs in a row: torch and its models load once, not a song each.
+    # here, not in macroboxlib: a worker spawned for one there imported macroboxlib first,
+    # met this module importing it back half done (circular import) and died before a song
+    set_process_priority(6)
+    while True:
+        try:
+            path = conn.recv()
+        except (EOFError, OSError):
+            # the app is gone (its end of the pipe closed)
+            return
+        if path is None:
+            return
+        # a failed analysis is kept as an error, or it was tried again on every start
+        try:
+            result = mfeats_single(path)
+        except Exception:
+            result = MFEATS(mdx=makemdx(path), path=path, date=time.time(),
+                            version=MFEATS_VERSION, error=1)
+        insert_mfeats(result)
+        try:
+            conn.send(path)
+        except (EOFError, OSError):
+            return
 
 
 class Thread(threading.Thread):

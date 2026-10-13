@@ -231,6 +231,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         pbh = self.GetPlayBoxHeight()
         w, h = self.GetSize()
         sph = 4
+        size = self.PlayBox.GetSize()
         self.PlayBox.SetRect((0, 0, w, pbh + sph))
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
@@ -245,7 +246,10 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.ListTab.SetRect((0, h - 24 - 5, w, 24))
 
         self.BorderBoxHB.SetRect((0, h - 5, w, 5))
-        self.PlayBox.OnSize()
+        # a new size has laid the play box out already (its EVT_SIZE, in SetRect):
+        # laid out again here it was done twice a step
+        if self.PlayBox.GetSize() == size:
+            self.PlayBox.OnSize()
         self.ListTab.OnSize()
         # self.ListSearch.OnSize()
         self.ListBox.OnSize()
@@ -468,12 +472,16 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
     def OnSize(self, event=None):
         self.Freeze()
         w, h = self.GetClientSize()
+        size = self.MainPanel.GetSize()
         if self.IsPlayerOnlyModeOn():
             height = self.GetPlayerOnlyHeight()
             self.MainPanel.SetRect((0, 0, w, height))
         else:
             self.MainPanel.SetRect((0, 0, w, h))
-        self.MainPanel.OnSize()
+        # a new size has laid the panel out already (its EVT_SIZE, in SetRect):
+        # laid out again here it was done twice a step, the list drawn twice
+        if self.MainPanel.GetSize() == size:
+            self.MainPanel.OnSize()
         self.Thaw()
 
     def OnAutoCheckUpdate(self, event):

@@ -477,6 +477,10 @@ class PopupMenuEventCatcher():
         dropSource.DoDragDrop(False)
 
 
+# a worker idle this long is told to end
+MFEATS_WORKER_IDLETIME = 10.0
+
+
 class MFEATS_Scheduler(wx.Timer):
 
     def __init__(self, parent):
@@ -491,6 +495,7 @@ class MFEATS_Scheduler(wx.Timer):
         self.taskpath = []
         self.proclist = []
         self.stop = False
+        self.redraw_pending = False
         self.Start(self.interval)
 
     def SetOptimalProcsLimit(self):
@@ -564,12 +569,31 @@ class MFEATS_Scheduler(wx.Timer):
 
     def AddMFEATSTasks(self, paths):
         for path in paths:
-            self.AddMFEATSTask(path, urgent=False)
+            self.AddMFEATSTask(path, urgent=False, redraw=False)
+        wx.CallAfter(self.RequestListRedraw)
 
     def SetProcsLimit(self, value):
         self.procs_limit = value
 
-    def AddMFEATSTask(self, path, urgent=False, forced=False):
+    def RequestListRedraw(self):
+        # the list drawn again for the analysis at most four times a second, on
+        # the GUI thread (songs are queued from threads too): drawn at once for
+        # every song queued, sent and done it was 20 ms a time, at times 100,
+        # and the visualizers stuttered with it
+        if self.redraw_pending:
+            return
+        self.redraw_pending = True
+        wx.CallLater(250, self.RedrawList)
+
+    def RedrawList(self):
+        self.redraw_pending = False
+        if not self.parent:
+            return
+        self.parent.ListBox.List.DirectDraw()
+
+    def AddMFEATSTask(self, path, urgent=False, forced=False, redraw=True):
+        if redraw:
+            wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
         if resp is not None and forced is False:
             return
@@ -602,17 +626,39 @@ class MFEATS_Scheduler(wx.Timer):
     def HandleFinishedJob(self):
         if self.proclist == []:
             return
+        now = time.time()
         for i in range(len(self.proclist) - 1, -1, -1):
-            if self.proclist[i].proc.is_alive() is False:
-                # self.proclist[i].proc._Thread__stop()
-                this = self.proclist.pop(i)
-                path = this.path
+            this = self.proclist[i]
+            # still being started (StartWorker)
+            if this.proc is None:
+                continue
+            alive = this.proc.is_alive()
+            done = False
+            try:
+                done = alive and this.conn.poll()
+                if done:
+                    this.conn.recv()
+            except (EOFError, OSError):
+                alive = False
+            # its song done, or the worker died with it (the song is left, as a process's was)
+            if this.path is not None and (done or alive is False):
+                path, this.path, this.idle = (this.path, None, now)
                 idx = [i for i, v in enumerate(self.procpath) if v == path]
-                if idx == []:
-                    # return
-                    continue
-                path = self.procpath.pop(idx[0])
-                self.UpdateItemsValue(path)
+                if idx != []:
+                    path = self.procpath.pop(idx[0])
+                    self.UpdateItemsValue(path)
+            if alive is False:
+                # self.proclist[i].proc._Thread__stop()
+                this.conn.close()
+                self.proclist.pop(i)
+            elif this.retired is False and this.path is None\
+                    and now - this.idle >= MFEATS_WORKER_IDLETIME:
+                # told to end, not ended by itself: no song is sent to one ending
+                this.retired = True
+                try:
+                    this.conn.send(None)
+                except (EOFError, OSError):
+                    this.proc.terminate()
 
     def SendJobToProcessor(self):
         if self.IsProcsFull():
@@ -622,14 +668,46 @@ class MFEATS_Scheduler(wx.Timer):
         path = self.taskpath.pop(0)
         if path in self.procpath:
             return
-        self.proclist.append(Struct(path=path, proc=mfeats.Process(path)))
+        # self.proclist.append(Struct(path=path, proc=mfeats.Process(path)))
         # self.proclist.append(Struct(path=path, proc=mfeats.Thread(path)))
         # self.proclist[-1].daemon = True
         # the process's own flag (the Struct's was set): ended with the app
-        self.proclist[-1].proc.daemon = True
-        self.proclist[-1].proc.start()
+        # self.proclist[-1].proc.daemon = True
+        # self.proclist[-1].proc.start()
+        idle = [v for v in self.proclist if v.path is None and v.retired is False]
+        if idle == []:
+            # started on a thread with its song: a start held the window about
+            # 17 ms, a frame of the visualizers
+            conn, worker_conn = multiprocessing.Pipe()
+            this = Struct(proc=None, conn=conn, path=path, idle=0, retired=False)
+            self.proclist.append(this)
+            threading.Thread(target=self.StartWorker, args=(this, worker_conn), daemon=True).start()
+            self.procpath.append(path)
+            self.UpdateItemsValue(path)
+            return
+        try:
+            idle[0].conn.send(path)
+        except (EOFError, OSError):
+            # died idle: the song waits for the next worker
+            idle[0].retired = True
+            self.taskpath.insert(0, path)
+            return
+        idle[0].path = path
         self.procpath.append(path)
         self.UpdateItemsValue(path)
+
+    def StartWorker(self, this, worker_conn):
+        proc = multiprocessing.Process(
+            target=mfeats.mfeats_worker, args=(worker_conn,), daemon=True)
+        proc.start()
+        worker_conn.close()
+        try:
+            # its song as it is now (renamed meanwhile: ResetItemValue)
+            this.conn.send(this.path)
+        except (EOFError, OSError):
+            # died at once: seen as dead (HandleFinishedJob), its song left
+            pass
+        this.proc = proc
 
     def ResetItemValue(self, old_path, new_path):
         idx = [i for i in range(len(self.taskpath))
@@ -652,7 +730,7 @@ class MFEATS_Scheduler(wx.Timer):
             # analyzing status uses GetProcPath
             self.parent.ListBox.SetListItemsValueWhereColumnKey(
                 ('mdx', mdx), ('status', ''))
-            self.parent.ListBox.List.DirectDraw()
+            self.RequestListRedraw()
             return
 
         key = resp.key
@@ -671,7 +749,7 @@ class MFEATS_Scheduler(wx.Timer):
             ('mdx', mdx), ('key', key))
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
             ('mdx', mdx), ('duration', duration))
-        self.parent.ListBox.List.DirectDraw()
+        self.RequestListRedraw()
 
     def HasTask(self):
         return self.taskpath != []
@@ -705,9 +783,15 @@ class MFEATS_Scheduler(wx.Timer):
         # for i in range(len(self.proclist)):
         #     self.proclist[i].proc.join()
         # an analysis still running is left (its row is written again later)
+        # every worker ends with the window, the idle ones too
         for i in range(len(self.proclist)):
-            self.proclist[i].proc.terminate()
-            self.proclist[i].proc.join(1.0)
+            if self.proclist[i].proc is not None:
+                self.proclist[i].proc.terminate()
+        for i in range(len(self.proclist)):
+            if self.proclist[i].proc is not None:
+                self.proclist[i].proc.join(1.0)
+            self.proclist[i].conn.close()
+        self.proclist = []
         # for i in range(len(self.proclist)):
         #   self.proclist[i].proc._Thread__stop()
 

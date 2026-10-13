@@ -420,6 +420,9 @@ class ListBoxList(RectBox):
 
         # draw status column
         procpath = self.parent.parent.MFEATS.GetProcPath()
+        # waiting in the queue: red too, analyzed before or not (a song analyzed
+        # by an older version waits for its analysis again)
+        taskpath = set(self.parent.parent.MFEATS.GetTaskPath())
         pathIdx = self.parent.GetColumnKeyToIdx('path')
         for row, item in enumerate(shownItemIdx):
             for i, col in enumerate(shownColIdx):
@@ -438,7 +441,7 @@ class ListBoxList(RectBox):
                     color = self.parent.st.ANALYZE_PEND_COLOR
                     dc.DrawRectangleList((rects,), pens=wx.Pen(color, 1),
                                          brushes=wx.Brush(color))
-                elif status == '':
+                elif status == '' or self.parent.innerList[listIdx].items[item][pathIdx] in taskpath:
                     color = self.parent.st.ANALYZE_NONE_COLOR
                     dc.DrawRectangleList((rects,), pens=wx.Pen(color, 1),
                                          brushes=wx.Brush(color))

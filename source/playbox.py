@@ -246,7 +246,27 @@ class PlayBoxVisualClock(threading.Thread):
         self.parent = parent
         self.loop = True
         self.posted = False
+        # while the window is moved or resized Windows runs a loop of its own, in
+        # which the CallAfter below waited (up to 220 ms a frame measured): a
+        # timer's messages still come in it, so a timer keeps the beat until then
+        self.sizing = wx.Timer()
+        self.sizing.Bind(wx.EVT_TIMER, self.OnSizing)
+        frame = wx.GetTopLevelParent(parent)
+        frame.Bind(wx.EVT_MOVE_START, self.OnMoveStart)
+        frame.Bind(wx.EVT_MOVE_END, self.OnMoveEnd)
         self.start()
+
+    def OnMoveStart(self, event):
+        # the shortest a timer goes (it comes about every 15.6 ms)
+        self.sizing.Start(10)
+        event.Skip()
+
+    def OnMoveEnd(self, event):
+        self.sizing.Stop()
+        event.Skip()
+
+    def OnSizing(self, event):
+        self.Tick()
 
     def GetBoxes(self):
         parent = self.parent
@@ -284,6 +304,7 @@ class PlayBoxVisualClock(threading.Thread):
 
     def Quit(self):
         self.loop = False
+        self.sizing.Stop()
 
 
 class PlayBoxControlButton(RectBox):
@@ -1140,10 +1161,13 @@ class PlayBoxSpectrum(RectBox):
         self.parent = parent
         self.scale = 1
         self.max_scale = 3
+        self.max_width = 500
         self.width = 320 * self.scale
         self.height = 39
         self.resolution = 1
         self.saturation = 0.1
+        self.bar_pitch = 3
+        self.bar_width = 1
 
         fps = GetPreference('spectrum_fps')
         if fps is None:
@@ -1185,12 +1209,12 @@ class PlayBoxSpectrum(RectBox):
 
     def SetRectDraw(self, dc):
         spectrum, vectorscope = self.GetSpectrumVectorScope()
-        self.DrawSpectrumGround(dc)
         if spectrum is None:
+            self.DrawSpectrumGround(dc)
             return
         self.DrawSpectrumHTB(dc, spectrum)
         if hasattr(self.parent, 'VectorScope'):
-            self.parent.VectorScope.vectorscope = vectorscope
+            self.parent.VectorScope.SetSamples(vectorscope)
 
     def DrawSpectrumGround(self, dc):
         color = self.parent.st.SPECTRUM_BG_COLOR
@@ -1198,23 +1222,49 @@ class PlayBoxSpectrum(RectBox):
                              brushes=wx.Brush(color))
 
     def DrawSpectrumHTB(self, dc, spectrum):
-        fgcolor = self.parent.st.SPECTRUM_FG_COLOR
+        # the ground and the bars as one picture: drawn a rectangle at a time
+        # (DrawRectangleList) they took about 4 ms a frame, most of the visualizers'
         w, h = self.GetSize()
+        if w <= 0 or h <= 0:
+            return
         scale = 0.4
-        spLength = len(spectrum) - 1
-        sw, offset = self.GetBarStep(w, spLength)
-        rects = [(int(sw * i + offset + 1), int((h - level * h * scale) * 0.5),
-                  max(int(sw - 2), 1), int(level * h * scale)) for i, level in enumerate(spectrum)]
-        stroke = self.parent.st.SPECTRUM_STROKE
-        dc.DrawRectangleList(rects, pens=wx.Pen(fgcolor, stroke),
-                             brushes=wx.Brush(fgcolor))
+        xs = numpy.array(self.GetBarSlots(w))
+        levels = self.FitBarLevels(spectrum, len(xs))
+        talls = (levels * h * scale).astype(int)
+        # a bar a pixel tall was not drawn as a rectangle: not drawn here either
+        talls[talls < 2] = 0
+        tops = ((h - levels * h * scale) * 0.5).astype(int)
+        image = numpy.empty((h, w, 3), dtype=numpy.uint8)
+        image[:] = wx.Colour(self.GetBackgroundColour()).Get()[:3]
+        top = int(h / 2 - 1)
+        for x in range(self.bar_width):
+            image[top:top + 2, xs + x] = wx.Colour(self.parent.st.SPECTRUM_BG_COLOR).Get()[:3]
+        rows = numpy.arange(h)[:, None]
+        bars = (rows >= tops) & (rows < tops + talls)
+        for x in range(self.bar_width):
+            columns = image[:, xs + x]
+            columns[bars] = wx.Colour(self.parent.st.SPECTRUM_FG_COLOR).Get()[:3]
+            image[:, xs + x] = columns
+        dc.DrawBitmap(wx.Bitmap.FromBuffer(w, h, image.tobytes()), 0, 0)
 
-    def GetBarStep(self, w, spLength):
-        # whole pixels a bar, or a fraction when squeezed below that
-        sw = 1.0 * w / spLength
-        if sw >= 3:
-            sw = int(sw)
-        return sw, (w - sw * spLength) * 0.5
+    def GetBarSlots(self, w):
+        # a bar every bar_pitch pixels from one end of the box to the other
+        count = max(2, int(w - 1) // self.bar_pitch + 1)
+        offset = (int(w) - 1 - self.bar_pitch * (count - 1)) // 2
+        return [offset + self.bar_pitch * i for i in range(count)]
+
+    def FitBarLevels(self, levels, count):
+        # more slots than bins: joined linearly between neighbours,
+        # fewer: the largest of the bins falling into each slot
+        levels = numpy.asarray(levels, dtype=float)
+        length = len(levels)
+        if length < 2:
+            return numpy.resize(levels, count)
+        if count >= length:
+            return numpy.interp(numpy.linspace(0, length - 1, count),
+                                numpy.arange(length), levels)
+        edges = numpy.linspace(0, length, count + 1).astype(int)
+        return numpy.maximum.reduceat(levels, edges[:-1])
 
     def OnSize(self, event=None):
         if self.parent.parent.parent.IsPlayerTopShowOn() is False:
@@ -1223,12 +1273,13 @@ class PlayBoxSpectrum(RectBox):
         self.Show()
         y = self.parent.GetWaveTop()
         w, _ = self.parent.GetSize()
-        scale = int((w - 200) / 320)
+        # the cover's left and the vectorscope's right margins no smaller than
+        # their gaps to the spectrum (cover 45 + 12, vectorscope 12 + 45)
+        width = max(min(self.max_width, w - 152), 103 * 2)
+        # the bins follow the width, the bars are fitted to it (FitBarLevels)
+        scale = int(round(width / 320.0))
         scale = 1 if scale < 1 else scale
         scale = self.max_scale if scale > self.max_scale else scale
-        # the cover's left and the vectorscope's right margins no smaller than
-        # their gaps to the spectrum (cover 45 + 12, vectorscope 13 + 50)
-        width = max(min(320 * scale, w - 152), 103 * 2 * scale)
         if self.scale != scale or self.width != width:
             self.scale = scale
             self.width = width
@@ -1241,11 +1292,7 @@ class PlayBoxSpectrum(RectBox):
         self.SetRect((int(x), int(y), int(self.width), int(self.height)))
 
         w, h = self.GetSize()
-        len_spectrum = 103 * self.scale
-        spLength = len_spectrum - 1
-        sw, offset = self.GetBarStep(w, spLength)
-        ground = [wx.Rect(int(sw * i + offset + 1), int(h / 2 - 1), max(int(sw - 2), 1), 2)
-                  for i in range(len_spectrum)]
+        ground = [wx.Rect(x, int(h / 2 - 1), self.bar_width, 2) for x in self.GetBarSlots(w)]
         self.ground = ground
         self.DirectDraw()
 
@@ -1259,10 +1306,18 @@ class PlayBoxVectorScope(RectBox):
         if fps is None:
             fps = 60
         self.buffer.fps = fps
-        self.size = 50
+        # a square the cover's size (PlayBoxApic), no border, the L and R axes as an X
+        self.size = 45
         self.margin = 2
-        self.vectorscope = []
-        self.polygon = ((0, 0), (0, 0),)
+        self.vectorscope = None
+        # the dots of the frames before stay and fade like on a phosphor screen
+        # (persist and dot are a frame's at 30 fps), the gain follows the track
+        # slowly so that the dots fill the scope whether it is loud or quiet
+        self.persist = 0.55
+        self.dot = 0.30
+        self.gain = 1.0
+        self.glow = None
+        self.glow_lap = 0
         color = self.parent.st.PLAY_BG_COLOR
         self.SetBackgroundColour(color)
         self.InitBuffer()
@@ -1273,8 +1328,51 @@ class PlayBoxVectorScope(RectBox):
             return
         return self.vectorscope
 
+    def SetSamples(self, samples):
+        if samples is None:
+            self.glow = None
+            self.vectorscope = None
+            return
+        w = h = self.size
+        now = time.time()
+        frames = 1.0
+        if self.glow is None or self.glow.shape != (h, w):
+            self.glow = numpy.zeros((h, w), dtype='float32')
+        else:
+            frames = min(6.0, max(0.0, now - self.glow_lap) * 30)
+        self.glow_lap = now
+        persist = self.persist ** frames
+        self.glow *= persist
+        left, right = samples
+        energy = float(numpy.sqrt((left ** 2 + right ** 2).mean()))
+        target = min(8.0, 0.35 / max(energy, 1e-4))
+        self.gain += (target - self.gain) * (1 - 0.85 ** frames)
+        if energy >= 1e-5:
+            radius = (0.5 * w - 2) * self.gain
+            side = (right - left) * 0.7071 * radius
+            mid = (right + left) * 0.7071 * radius
+            xs = numpy.clip(0.5 * w + side, 0, w - 1).astype(int)
+            ys = numpy.clip(0.5 * h - mid, 0, h - 1).astype(int)
+            hits = numpy.bincount(ys * w + xs, minlength=w * h).reshape(h, w)
+            dot = self.dot * (1 - persist) / (1 - self.persist)
+            self.glow += hits * dot
+            numpy.minimum(self.glow, 1.0, out=self.glow)
+        self.vectorscope = None if self.glow.max() < 0.02 else self.GetGlowBitmap()
+
+    def GetGlowBitmap(self):
+        # one bitmap of the brightness, not a point at a time
+        h, w = self.glow.shape
+        bgcolor = wx.Colour(self.parent.st.VECTORSCOPE_BG_COLOR).Get()[:3]
+        fgcolor = wx.Colour(self.parent.st.VECTORSCOPE_FG_COLOR).Get()[:3]
+        bgcolor = numpy.array(bgcolor, dtype='float32')
+        fgcolor = numpy.array(fgcolor, dtype='float32')
+        rgb = (bgcolor + (fgcolor - bgcolor) * self.glow[..., None]).astype('uint8')
+        alpha = (numpy.minimum(1.0, self.glow * 4) * 255).astype('uint8')
+        return wx.Bitmap.FromBufferRGBA(w, h, numpy.dstack([rgb, alpha[..., None]]).tobytes())
+
     def SetRectDraw(self, dc):
         if self.parent.IsPlaying() is False:
+            self.SetSamples(None)
             self.DrawVectorScope(dc, None)
             return
         self.DrawVectorScope(dc, self.vectorscope)
@@ -1286,15 +1384,18 @@ class PlayBoxVectorScope(RectBox):
     def DrawVectorScope(self, dc, vectorscope):
         bgcolor = self.parent.st.VECTORSCOPE_BG_COLOR
         pncolor = self.parent.st.VECTORSCOPE_PN_COLOR
+        w, h = (self.size, self.size)
         dc.SetBrush(wx.Brush(bgcolor))
-        dc.SetPen(wx.Pen(pncolor, 1))
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.DrawRectangle(0, 0, w, h)
         # ODDEVEN_RULE WINDING_RULE
         # dc.DrawPolygon(self.polygon, 0, 0, fillStyle=wx.ODDEVEN_RULE)
-        dc.DrawPolygon(self.polygon, 0, 0)
+        dc.SetPen(wx.Pen(pncolor, 1))
+        dc.DrawLine(0, 0, w, h)
+        dc.DrawLine(w - 1, 0, -1, h)
         if vectorscope is None:
             return
-        fgcolor = self.parent.st.VECTORSCOPE_FG_COLOR
-        dc.DrawPointList(vectorscope, pens=wx.Pen(fgcolor, 1))
+        dc.DrawBitmap(vectorscope, 0, 0, True)
 
     def OnSize(self, event=None):
         isTopShowOn = self.parent.parent.parent.IsPlayerTopShowOn()
@@ -1304,11 +1405,10 @@ class PlayBoxVectorScope(RectBox):
         self.Show()
         w, h = (self.size, self.size)
         sr = self.parent.Spectrum.GetRect()
-        x = sr.x + sr.width + 8 + 5
-        y = sr.y - 6
+        # as far from the spectrum as the cover on the other side
+        x = sr.x + sr.width + 12
+        y = sr.y + (sr.height - h) // 2
         self.SetRect(wx.Rect(round(x), round(y), round(w), round(h)))
-        self.polygon = ((round(0.5 * w), 1), (1, round(0.5 * h)),
-                        (round(0.5 * w), round(h - 1)), (round(w - 1), round(0.5 * h)))
         self.DirectDraw()
 
 
@@ -1325,6 +1425,10 @@ class PlayBoxWave(RectBox):
         self.highlight_dim = 0.45
         self.wave_rect = (0, 0, 0, 0)
         self.wave_bitmaps = None
+        self.wave_exact = None
+        self.wave_source = None
+        self.wave_job = 0
+        self.resize_timer = None
         self.last_size = self.GetSize()
         self.rectHighlight = (0, 0, 0, 0)
         self.SetDropTarget(PlayBoxDnD(self.parent))
@@ -1366,8 +1470,45 @@ class PlayBoxWave(RectBox):
             return
         self.last_size = rect
         self.SetRect(rect)
-        self.parent.reInitWave = True
+        # while the window is resized the last waveform is stretched to it, and
+        # painted again for the width once the resizing stops: painted at every
+        # step it took 18 ms a step for a song and 140 ms for a two-hour mix
+        if self.wave_exact is None:
+            self.parent.reInitWave = True
+        else:
+            self.StretchWave()
+            if self.resize_timer is None:
+                self.resize_timer = wx.CallLater(150, self.OnResized)
+            else:
+                self.resize_timer.Start(150)
         self.DirectDraw()
+
+    def OnResized(self):
+        # the window can be gone by then
+        if not self:
+            return
+        self.parent.reInitWave = True
+        self.InitBuffer()
+        self.Refresh(False)
+        self.parent.WaveDetail.InitBuffer()
+        self.parent.WaveDetail.Refresh(False)
+
+    def IsResizing(self):
+        return self.resize_timer is not None and self.resize_timer.IsRunning()
+
+    def GetWaveRect(self):
+        w, h = self.GetSize()
+        x, y = (self.margin, 2)
+        return (x, y, w - x * 2, h - y * 2 - 1)
+
+    def StretchWave(self):
+        x, y, w, h = self.GetWaveRect()
+        if w <= 0 or h <= 0:
+            return
+        self.wave_rect = (x, y, w, h)
+        self.wave_bitmaps = [wx.Bitmap(bitmap.ConvertToImage().Scale(w, h, wx.IMAGE_QUALITY_NORMAL))
+                             for bitmap in self.wave_exact]
+        self.SetRectHighlight()
 
     def SetRectPre(self):
         if self.parent.reInitWave is True:
@@ -1466,21 +1607,48 @@ class PlayBoxWave(RectBox):
         dc.DrawRectangle(int(x - self.cursor_width * 0.5), 0, int(self.cursor_width), int(h))
 
     def SetRectWave(self):
-        w, h = self.GetSize()
-        x, y = (self.margin, 2)
-        w, h = (w - x * 2, h - y * 2 - 1)
+        x, y, w, h = self.GetWaveRect()
         self.wave_rect = (x, y, w, h)
-        self.wave_bitmaps = None
         waveform = self.parent.GetWaveform()
+        self.wave_job += 1
         if audio.is_waveform_3band(waveform) is False or w <= 0 or h <= 0:
+            self.wave_bitmaps = None
+            self.wave_exact = None
+            self.wave_source = None
             return
+        # painted on a thread: on this one a long mix held the window 100 ms and
+        # more at every change of song. until it is done the same song's last
+        # waveform is stretched over, a new song's is the flat line
+        if self.wave_source is waveform and self.wave_exact is not None:
+            self.StretchWave()
+        else:
+            self.wave_bitmaps = None
+            self.wave_exact = None
+        self.wave_source = waveform
         # normal, dimmed for outside the highlight, and on the highlight ground
         bgcolor = self.parent.st.PLAY_BG_COLOR
         hlcolor = self.parent.st.HIGHLIGHT_BG_COLOR
-        self.wave_bitmaps = [
-            wx.Bitmap.FromBuffer(w, h, audio.paint_waveform_3band(
-                waveform, w, h, ground=ground, dim=dim).tobytes())
-            for ground, dim in ((bgcolor, 1.0), (bgcolor, self.highlight_dim), (hlcolor, 1.0))]
+        grounds = ((bgcolor, 1.0), (bgcolor, self.highlight_dim), (hlcolor, 1.0))
+        job = self.wave_job
+
+        def paint():
+            images = [audio.paint_waveform_3band(waveform, w, h, ground=ground, dim=dim).tobytes()
+                      for ground, dim in grounds]
+            wx.CallAfter(self.SetWaveImages, job, (x, y, w, h), images)
+
+        threading.Thread(target=paint, daemon=True).start()
+
+    def SetWaveImages(self, job, rect, images):
+        # a song or a size since: painted again for that one already
+        if not self or job != self.wave_job:
+            return
+        x, y, w, h = rect
+        self.wave_bitmaps = [wx.Bitmap.FromBuffer(w, h, image) for image in images]
+        self.wave_exact = self.wave_bitmaps
+        if self.GetWaveRect() != rect:
+            self.StretchWave()
+        self.InitBuffer()
+        self.Refresh(False)
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.parent.HasToSkipEvent() is False:
@@ -1562,6 +1730,7 @@ class PlayBoxWaveDetail(RectBox):
         # the press went, and it could not be told which
         self.scratching = None
         self.last_key = None
+        self.last_step = 0
         self.last_bitmap = None
         self.SetDropTarget(PlayBoxDnD(self.parent))
         color = self.parent.st.PLAY_BG_COLOR
@@ -1628,7 +1797,8 @@ class PlayBoxWaveDetail(RectBox):
         self.Show()
         x, y, w, h = self.parent.Wave.GetRect()
         self.SetRect((x, y - self.height - self.gap, w, self.height))
-        self.last_key = None
+        # not painted again here: a new width is a new key (DrawDetailWave), and
+        # while the window is resized the strip is kept
         self.DirectDraw()
 
     def GetSpan(self):
@@ -1692,12 +1862,29 @@ class PlayBoxWaveDetail(RectBox):
         # the window on whole pixels: the sound moves a pixel at a time and each
         # pixel keeps its columns, or the picture shimmered as it scrolled; and
         # painted again only when it has moved a pixel
+        # while the window is resized the strip keeps its own scale (the window
+        # shows more or less of it) and is painted again once the resizing stops:
+        # painted at every step it was 8 ms a step, at times 70
+        if self.last_key is not None and self.parent.Wave.IsResizing()\
+                and self.last_key[:4] == (id(waveform), duration, span, period):
+            kept = self.last_key[4]
+            step = round((centre - span * 0.5) / (span / kept))
+            if kept // 4 <= step - self.last_step <= kept * 2 - kept // 4:
+                dc.SetClippingRegion(self.margin, 0, w, h)
+                dc.DrawBitmap(self.last_bitmap,
+                              self.margin + (w - kept) // 2 - (step - self.last_step), 0)
+                dc.DestroyClippingRegion()
+                return
         pixel = span / w
         step = round((centre - span * 0.5) / pixel)
-        key = (id(waveform), duration, step, span, period, w, h)
-        if key != self.last_key:
-            start = step * pixel
-            times = start + (numpy.arange(w) + 0.5) * span / w
+        # a strip three windows wide on the same pixels, moved under the window
+        # and painted again only near its ends: painted every frame it was about
+        # 2.5 ms a frame
+        key = (id(waveform), duration, span, period, w, h)
+        if key != self.last_key or not w // 4 <= step - self.last_step <= w * 2 - w // 4:
+            self.last_step = step - w
+            start = self.last_step * pixel
+            times = start + (numpy.arange(w * 3) + 0.5) * span / w
             bgcolor = numpy.array(self.parent.st.PLAY_BG_COLOR, dtype=float)
             ground, dim = (bgcolor, 1.0)
             if period is not None:
@@ -1707,11 +1894,13 @@ class PlayBoxWaveDetail(RectBox):
                 dim = numpy.where(inside, 1.0, self.highlight_dim)
             columns = len(waveform) / duration
             image = audio.paint_waveform_3band(
-                waveform, w, h, ground=ground, dim=dim,
-                start=start * columns, end=(start + span) * columns, spread=0)
-            self.last_bitmap = wx.Bitmap.FromBuffer(w, h, image.tobytes())
+                waveform, w * 3, h, ground=ground, dim=dim,
+                start=start * columns, end=(start + span * 3) * columns, spread=0)
+            self.last_bitmap = wx.Bitmap.FromBuffer(w * 3, h, image.tobytes())
             self.last_key = key
-        dc.DrawBitmap(self.last_bitmap, self.margin, 0)
+        dc.SetClippingRegion(self.margin, 0, w, h)
+        dc.DrawBitmap(self.last_bitmap, self.margin - (step - self.last_step), 0)
+        dc.DestroyClippingRegion()
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.IsShown() is False:
