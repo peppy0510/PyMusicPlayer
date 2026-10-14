@@ -312,6 +312,19 @@ class AudioControl(threading.Thread):
             ratio = min(ratio, max(left, 0.0) / self.fadeout.time)
         audio.set_volume(self.hStream, self.parent.GetOutputVolume() * ratio)
 
+    def GetSoundOffsetTime(self):
+        if self.parent.IsSkipSilenceOn() is False:
+            return 0.0
+        if self.parent.IsHighlightOn() and self.parent.IsHighlightSkipOn() is False:
+            return 0.0
+        try:
+            resp = mfeats.getby_key_value('path', self.path)
+        except Exception:
+            return 0.0
+        if resp is None or resp.error == 1 or audio.is_waveform_3band(resp.waveform) is False:
+            return 0.0
+        return audio.get_waveform_sound_time(resp.waveform, resp.duration)[0]
+
     def InitAudio(self):
         ######
         # import ctypes
@@ -419,6 +432,8 @@ class AudioControl(threading.Thread):
 
         self.parent.cue.hStream = self.hStream
         audio.set_volume(self.hStream, 0.0)
+        if self.resume == 0.0 and is_position_set is False:
+            self.resume = self.GetSoundOffsetTime()
         if self.resume is not None:
             resume = self.resume
             if self.resume < 0:
