@@ -306,6 +306,10 @@ class AudioControl(threading.Thread):
         if self.fadeout.cnt < 0.0:
             self.fadeout.cnt = 0.0
         ratio = self.fadeout.cnt / self.fadeout.time
+        finish = self.parent.GetTrackFinishTime()
+        if finish is not None and finish != -1.0:
+            left = finish - audio.get_position(self.hStream)
+            ratio = min(ratio, max(left, 0.0) / self.fadeout.time)
         audio.set_volume(self.hStream, self.parent.GetOutputVolume() * ratio)
 
     def InitAudio(self):
@@ -426,7 +430,7 @@ class AudioControl(threading.Thread):
         self.fadein.cnt = self.fadein.time
         if is_position_set is False and self.parent.IsLoopOn():
             self.fadein.cnt = self.fadein.time
-        else:
+        elif self.fadein.cnt == 0.0:
             self.parent.SetVolume()
         self.resume = None
         self.pending = False
