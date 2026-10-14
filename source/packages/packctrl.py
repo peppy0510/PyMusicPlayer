@@ -45,7 +45,7 @@ def tryLoadDLL(module_name, paths):
             else:
                 module = ctypes.CDLL(path)
                 func_type = ctypes.CFUNCTYPE
-        except:
+        except Exception:
             pass
         if module is not None and func_type is not None:
             return module, func_type

@@ -430,7 +430,7 @@ class ScriptEditorBox(DialogBox, ScriptControl):
                 self.SetScriptSelector(items[0])
             else:
                 self.SetScriptSelector()
-        except:
+        except Exception:
             pass
 
     def UpdatePreview(self):
