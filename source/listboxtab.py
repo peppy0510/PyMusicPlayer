@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import wx
 
@@ -54,6 +55,10 @@ class ListBoxTabDnD(wx.FileDropTarget):
         self.tabDrag = False
         self.downTabIdx = None
         self.insertTabIdx = None
+        self.dropInsertIdx = None
+        self.dropEdge = 0.3
+        self.dropEdgeLap = None
+        self.dropEdgeWait = 0.4
 
     def OnEnter(self, x, y, d):
         self.onClient = True
@@ -63,13 +68,57 @@ class ListBoxTabDnD(wx.FileDropTarget):
     def OnLeave(self):
         self.onClient = False
         self.parent.onClient = False
+        self.SetDropInsertIdx(None)
+        self.dropEdgeLap = None
 
     def OnDragOver(self, x, y, d):
         self.onClient = True
         self.parent.onClient = True
+        place = None if self.tabDrag else self.GetDropPlace(x, y)
+        self.SetDropInsertIdx(place[1] if place and place[0] == 'insert' else None)
+        self.ScrollAtEdge(y)
         return d
 
+    def GetDropPlace(self, x, y):
+        rects = self.parent.rects if isinstance(self.parent.rects, list) else []
+        for i, rect in enumerate(rects):
+            if rect.y <= y <= rect.y + rect.height:
+                edge = rect.height * self.dropEdge
+                if y < rect.y + edge:
+                    return ('insert', i)
+                if y > rect.y + rect.height - edge:
+                    return ('insert', i + 1)
+                return ('into', i)
+        if rects and y > rects[-1].y + rects[-1].height:
+            return ('insert', len(rects))
+        return None
+
+    def SetDropInsertIdx(self, idx):
+        if idx == self.dropInsertIdx:
+            return
+        self.dropInsertIdx = idx
+        self.parent.DirectDraw()
+
+    def ScrollAtEdge(self, y):
+        row = self.parent.tab_height
+        height = self.parent.GetSize().height
+        step = 0.18 if y < row * 0.5 else -0.18 if y > height - row * 0.5 else 0
+        if step == 0:
+            self.dropEdgeLap = None
+            return
+        now = time.time()
+        if self.dropEdgeLap is None:
+            self.dropEdgeLap = now
+        if now - self.dropEdgeLap < self.dropEdgeWait:
+            return
+        self.parent.parent.ScrollV(step)
+        self.parent.parent.SliderV.DirectDraw()
+        self.parent.DirectDraw()
+
     def OnDropFiles(self, x, y, inpaths):
+        place = self.GetDropPlace(x, y)
+        self.SetDropInsertIdx(None)
+        self.dropEdgeLap = None
         if self.tabDrag:
             return 0
         if self.parent.parent.parent.ListBox.IsFilteredAll():
@@ -77,21 +126,25 @@ class ListBoxTabDnD(wx.FileDropTarget):
         # if self.parent.parent.ListBox.IsFilteredAll():
         #   filtered = True
         # else: filtered = False
-        tabRectIdx = self.parent.GetTabRectIdx((x, y))
         if self.downTabIdx is not None:
             return
-        isExistingTab = tabRectIdx is not None and tabRectIdx != -1
-        if isExistingTab:
-            self.DropToExistingTab(inpaths, tabRectIdx)
+        if place and place[0] == 'into':
+            self.DropToExistingTab(inpaths, place[1])
         elif self.parent.IsTabCreationLimited():
             return 0
         else:
-            self.CreateAndDropToNewTab(inpaths)
+            self.CreateAndDropToNewTab(inpaths, place[1] if place else None)
         return 0
 
-    def CreateAndDropToNewTab(self, inpaths):
+    def MoveNewTab(self, insertIdx):
+        count = len(self.parent.parent.parent.ListBox.innerList)
+        if insertIdx is not None and insertIdx < count - 1:
+            self.parent.SetTabShuffle(count - 1, insertIdx)
+
+    def CreateAndDropToNewTab(self, inpaths, insertIdx=None):
         if len(inpaths) > 1:
             self.parent.parent.parent.ListBox.AddInnerList()
+            self.MoveNewTab(insertIdx)
             # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
             self.DropFromOutside(inpaths)
             # t = threading.Thread(
@@ -120,6 +173,7 @@ class ListBoxTabDnD(wx.FileDropTarget):
             else:
                 title = None
             self.parent.parent.parent.ListBox.AddInnerList(title)
+            self.MoveNewTab(insertIdx)
             self.parent.parent.parent.ListBox.Header.SetAutoColumnWidth()
             # self.parent.parent.ListBox.List.FileDrop.DropFromOutside(inpaths)
             self.DropFromOutside(inpaths)
@@ -701,18 +755,22 @@ class ListBoxTabList(RectBox):
                 dc.GradientFillLinear(rect, bgcolor_odd, bgcolor_odd, nDirection=wx.SOUTH)
 
     def DrawTabInsertLine(self, dc):
-        if self.FileDrop.insertTabIdx is None:
+        idx = self.FileDrop.insertTabIdx
+        if idx is None:
+            idx = self.FileDrop.dropInsertIdx
+        if idx is None or not self.rects:
             return
-        if self.FileDrop.insertTabIdx < len(self.rects):
-            rect = self.rects[self.FileDrop.insertTabIdx]
+        if idx < len(self.rects):
+            rect = self.rects[idx]
             y = rect.y - 1
         else:
             rect = self.rects[-1]
             y = rect.y + rect.height - 1
         length = self.parent.GetItemsLength()
-        y = y - 1 if length == self.FileDrop.insertTabIdx else y
+        y = y - 1 if length == idx else y
+        color = self.parent.parent.ListBox.st.SELECTED_BG_COLOR
         dc.DrawRectangleList(((0, y, self.GetSize().width + 1, 3),),
-                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((200, 200, 200, 255)))
+                             pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((*color, 255)))
 
     def DrawTabLine(self, dc):
         color = self.parent.parent.ListBox.st.LIST_PN_COLOR
