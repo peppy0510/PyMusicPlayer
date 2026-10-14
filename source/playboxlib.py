@@ -288,11 +288,7 @@ class AudioControl(threading.Thread):
         if self.fadein.cnt < 0.0:
             self.fadein.cnt = 0.0
         ratio = 1.0 - self.fadein.cnt / self.fadein.time
-        target_volume = self.parent.GetVolume()
-        if self.parent.IsAutoGainOn():
-            target_volume = target_volume\
-                * self.parent.cue.autogain * self.parent.cue.agc_headroom
-        audio.set_volume(self.hStream, target_volume * ratio)
+        audio.set_volume(self.hStream, self.parent.GetOutputVolume() * ratio)
 
     def StartFadeOut(self):
         if self.fadeout.cnt > 0.0:
@@ -310,10 +306,7 @@ class AudioControl(threading.Thread):
         if self.fadeout.cnt < 0.0:
             self.fadeout.cnt = 0.0
         ratio = self.fadeout.cnt / self.fadeout.time
-        target_volume = self.parent.GetVolume()
-        if self.parent.IsAutoGainOn():
-            target_volume = target_volume * self.parent.cue.autogain
-        audio.set_volume(self.hStream, target_volume * ratio)
+        audio.set_volume(self.hStream, self.parent.GetOutputVolume() * ratio)
 
     def InitAudio(self):
         ######
@@ -1119,12 +1112,16 @@ class PlayBoxControl():
         elif value > 1.0:
             value = 1.0
         self.cue.volume = value
+        audio.set_volume(self.cue.hStream, self.GetOutputVolume(value))
+
+    def GetOutputVolume(self, value=None):
+        # the stream's volume for a volume: with the auto gain and its
+        # headroom, the fades' end and start too
+        if value is None:
+            value = self.GetVolume()
         if self.IsAutoGainOn():
-            value = value * self.cue.autogain
-            value = value * self.cue.agc_headroom
-            if value > 1.0:
-                value = 1.0
-        audio.set_volume(self.cue.hStream, value)
+            value = min(value * self.cue.autogain * self.cue.agc_headroom, 1.0)
+        return value
 
     def SetVolumeFadeIn(self):
         target_volume = self.GetVolume()
