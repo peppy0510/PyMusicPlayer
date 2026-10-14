@@ -159,15 +159,140 @@ WAVEFORM_PEAK_DIM = 0.4
 
 # a column below this peak (-60 dBFS, square-rooted as stored) is silence
 WAVEFORM_SILENCE_PEAK = 8
+# sounds at either end parted from the rest by this much silence, this short
+# together, are clicks (an edit's, a record's) and silence too: 17 of 1,643
+# songs had one of 30 ms or less, some sounds left on purpose last 0.1 to 1 s;
+# one as loud as the music (FLOOR_LOUD) needs only CLICK_LOUD_GAP, a fade's
+# last beats are quieter (0.35 s apart in one)
+WAVEFORM_CLICK_SECONDS = 0.05
+WAVEFORM_CLICK_GAP = 0.5
+WAVEFORM_CLICK_LOUD_GAP = 0.3
+# the start and the end differ. at the start, a quiet lead-in the music cuts
+# in out of is not the music (a tape's hiss, a hum: 1.2 s at -37 dBFS in one
+# song, -38 to -53 in another; a fade-in rises slowly): below the song's loud
+# level (its columns' 95th percentile in dB) by FLOOR_BELOW, lasting
+# FLOOR_SECONDS (shorter is a note's own start), the music within FLOOR_LOUD
+# of the loud level and FLOOR_RISE above it, its FLOOR_ATTACK before that its
+# own. at the end the last note's decay and a fade are the music; at either
+# end a steady floor is not (-31 dBFS before and after one song): within
+# FLOOR_STEADY of its level, that FLOOR_LOUD below the loud level and
+# FLOOR_STEADY above the silence's
+WAVEFORM_FLOOR_BELOW = 30
+WAVEFORM_FLOOR_SECONDS = (0.2, 3.0)
+WAVEFORM_FLOOR_LOUD = 24
+WAVEFORM_FLOOR_RISE = 20
+WAVEFORM_FLOOR_ATTACK = 0.2
+WAVEFORM_FLOOR_STEADY = 3
+
+
+def get_waveform_levels(peaks):
+    # dBFS of the columns' peaks as stored
+    return 40 * numpy.log10(numpy.maximum(peaks, 1) / 255.0)
+
+
+def get_waveform_edge_levels(peaks, start, seconds):
+    # dB of the columns from start (peaks as stored, read forwards) as far as
+    # a floor lasts and a little more, silence as the silence peak (a floor
+    # about it stays level, its columns of silence among them)
+    longest = WAVEFORM_FLOOR_SECONDS[1]
+    return numpy.maximum(
+        get_waveform_levels(peaks[start:start + int((longest + 0.1) / seconds) + 2]),
+        get_waveform_levels(WAVEFORM_SILENCE_PEAK))
+
+
+def get_waveform_leadin_end(peaks, start, loud, seconds):
+    # the column the music cuts in at past a quiet lead-in from start, or start
+    shortest, longest = WAVEFORM_FLOOR_SECONDS
+    levels = get_waveform_edge_levels(peaks, start, seconds)
+    music = numpy.nonzero(levels >= loud - WAVEFORM_FLOOR_LOUD)[0]
+    if len(music) == 0 or not shortest <= music[0] * seconds <= longest:
+        return start
+    music = music[0]
+    quiet = levels[:music - min(int(WAVEFORM_FLOOR_ATTACK / seconds), music // 2)]
+    high = numpy.percentile(quiet, 90)
+    rise = levels[music:music + max(int(0.1 / seconds), 1)].max()
+    if quiet.max() > loud - WAVEFORM_FLOOR_BELOW or rise - high < WAVEFORM_FLOOR_RISE:
+        return start
+    # where it leaves the lead-in, the music's attack kept
+    return start + numpy.nonzero(levels[:music + 1] >= high + 6)[0][0]
+
+
+def get_waveform_steady_end(peaks, start, loud, seconds):
+    # the column past a steady floor from start, or start
+    shortest, longest = WAVEFORM_FLOOR_SECONDS
+    levels = get_waveform_edge_levels(peaks, start, seconds)
+    level = numpy.median(levels[:max(int(0.1 / seconds), 1)])
+    silence = get_waveform_levels(WAVEFORM_SILENCE_PEAK)
+    if not silence + WAVEFORM_FLOOR_STEADY <= level <= loud - WAVEFORM_FLOOR_LOUD:
+        return start
+    louder = numpy.nonzero(levels > level + WAVEFORM_FLOOR_STEADY)[0]
+    if len(louder) == 0 or not shortest <= louder[0] * seconds <= longest\
+            or numpy.percentile(levels[:louder[0]], 10) < level - WAVEFORM_FLOOR_STEADY:
+        return start
+    return start + louder[0]
 
 
 def get_waveform_sound_time(waveform, duration):
-    # (offset, finish) of the sound: the leading and trailing silence left out
+    # (offset, finish) of the sound: the leading and trailing silence left out,
+    # with the clicks and the noise floor alone in it
     sound = numpy.nonzero(waveform[:, 0] >= WAVEFORM_SILENCE_PEAK)[0]
     if len(sound) == 0 or duration <= 0:
         return (0.0, duration)
     seconds = 1.0 * duration / len(waveform)
-    return (sound[0] * seconds, min((sound[-1] + 1) * seconds, duration))
+    # the runs of sound, columns [starts, ends), in groups the silence parts:
+    # runs [heads, tails) of each, and its columns of sound
+    breaks = numpy.nonzero(numpy.diff(sound) > 1)[0]
+    starts = numpy.concatenate(([sound[0]], sound[breaks + 1]))
+    ends = numpy.concatenate((sound[breaks], [sound[-1]])) + 1
+    parted = numpy.nonzero((starts[1:] - ends[:-1]) * seconds >= WAVEFORM_CLICK_GAP)[0] + 1
+    heads = numpy.concatenate(([0], parted))
+    tails = numpy.concatenate((parted, [len(starts)]))
+    lengths = numpy.concatenate(([0], numpy.cumsum(ends - starts)))
+    sounds = lengths[tails] - lengths[heads]
+    first, last = 0, len(heads) - 1
+    while first < last and sounds[first] * seconds <= WAVEFORM_CLICK_SECONDS:
+        first += 1
+    while first < last and sounds[last] * seconds <= WAVEFORM_CLICK_SECONDS:
+        last -= 1
+    # the loud level from the peaks' counts (a pass, hours of a mix in ms)
+    peaks = waveform[:, 0]
+    counts = numpy.cumsum(numpy.bincount(peaks, minlength=256))
+    loud = get_waveform_levels(numpy.searchsorted(counts, 0.95 * len(peaks)))
+
+    def is_short(head, tail):
+        # runs [head, tail]
+        return (lengths[tail + 1] - lengths[head]) * seconds <= WAVEFORM_CLICK_SECONDS
+
+    def is_parted(run):
+        # by the silence after it
+        return (starts[run + 1] - ends[run]) * seconds >= WAVEFORM_CLICK_LOUD_GAP
+
+    def is_loud(head, tail):
+        return get_waveform_levels(peaks[starts[head]:ends[tail]].max()) >= loud - WAVEFORM_FLOOR_LOUD
+
+    head, tail = heads[first], tails[last] - 1
+    while head < tail:
+        near = head
+        while near < tail and not is_parted(near) and is_short(head, near):
+            near += 1
+        if near == tail or not is_parted(near) or not is_short(head, near)\
+                or not is_loud(head, near):
+            break
+        head = near + 1
+    while head < tail:
+        near = tail
+        while near > head and not is_parted(near - 1) and is_short(near, tail):
+            near -= 1
+        if near == head or not is_parted(near - 1) or not is_short(near, tail)\
+                or not is_loud(near, tail):
+            break
+        tail = near - 1
+    offset = get_waveform_steady_end(peaks, starts[head], loud, seconds)
+    offset = get_waveform_leadin_end(peaks, offset, loud, seconds)
+    finish = len(peaks) - get_waveform_steady_end(peaks[::-1], len(peaks) - ends[tail], loud, seconds)
+    if finish <= offset:
+        offset, finish = starts[head], ends[tail]
+    return (offset * seconds, min(finish * seconds, duration))
 
 
 def is_waveform_3band(waveform):
