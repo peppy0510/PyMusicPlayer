@@ -1194,7 +1194,7 @@ def fix_tempo_octave(tempo, mono, fs):
 # Beat This! over the highlight. scored on 268 hand-gridded EDM edits (2026-10-20): all
 # within 0.005 BPM, 98-99% of beats within 15 ms, downbeats 87%
 
-GRID_VERSION = '1.0.0'
+GRID_VERSION = '1.1.0'
 GRID_TABLE = 'mfeats_grid'
 GRID_FS = 11025
 GRID_HOP = 11
@@ -1207,6 +1207,11 @@ BEATTHIS_SECONDS = 60
 BEATTHIS_NEAR = 0.030
 BEATTHIS_FAR = 0.060
 BEATTHIS = Struct(predictor=None, failed=False, lock=threading.Lock())
+# the phrase (4 bars): the bar after which the sound changes most, beat by beat 4 beats
+# against the 4 before, summed over the song. 77% on the edits cut at random (85% on
+# the right bar), chance 25%
+PHRASE_WINDOW = 4
+PHRASE_BANDS = numpy.geomspace(40, 5000, 13)
 
 
 def read_mono_all(path, fs_out):
@@ -1370,7 +1375,36 @@ def analyze_grid(path, tempo, highlight):
         if found is not None:
             bar, source = found, 'beatthis'
     downbeat = (phase + bar * period) % (period * 4)
-    return Struct(bpm=bpm, downbeat=downbeat, source=source)
+    try:
+        phrase = get_grid_phrase(mono, GRID_FS * 4, downbeat, period)
+    except Exception:
+        phrase = 0
+    return Struct(bpm=bpm, downbeat=downbeat, source=source, phrase=phrase)
+
+
+def get_grid_phrase(mono, fs, downbeat, period):
+    '''bars (0 to 3) from downbeat to the first phrase's start'''
+    feats = []
+    start = downbeat % period
+    for k in range(int((len(mono) / fs - start) / period)):
+        segment = mono[int((start + k * period) * fs):int((start + (k + 1) * period) * fs)]
+        power = numpy.abs(numpy.fft.rfft(segment * numpy.hanning(len(segment)))) ** 2
+        freqs = numpy.fft.rfftfreq(len(segment), 1.0 / fs)
+        bands = [power[(freqs >= low) & (freqs < high)].sum()
+                 for low, high in zip(PHRASE_BANDS[:-1], PHRASE_BANDS[1:])]
+        feats.append(numpy.r_[numpy.log1p(bands),
+                              numpy.log1p(numpy.sqrt(numpy.mean(segment ** 2)) * 100)])
+    feats = numpy.array(feats)
+    w = PHRASE_WINDOW
+    if len(feats) < w * 2 + 16:
+        return 0
+    change = numpy.zeros(len(feats))
+    for k in range(w, len(feats) - w):
+        change[k] = numpy.linalg.norm(feats[k:k + w].mean(0) - feats[k - w:k].mean(0))
+    # beat numbers from the grid's first beat; the downbeat's among them
+    bar0 = int(round((downbeat - start) / period)) % 4
+    scores = [change[(bar0 + 4 * q) % 16::16].sum() for q in range(4)]
+    return int(numpy.argmax(scores))
 
 
 def get_tempi_using_overlap_sum_fft(audata, samplerate):
@@ -1698,15 +1732,23 @@ def delete_mfeats_wave(mdx):
 # the beat grid: a table and a version of its own, so a new grid analyzes no song's
 # waveform, tempo or key again. shift: the user's move of the bar, in beats, kept
 # through a new analysis
+# phrase: bars from the downbeat to the first phrase (4 bars); phrase_shift, the user's
+# move of it, kept as shift is
 GRID_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('bpm', 'REAL'), ('downbeat', 'REAL'),
                    ('shift', 'INTEGER'), ('source', 'TEXT'), ('version', 'TEXT'),
-                   ('date', 'REAL'))
+                   ('date', 'REAL'), ('phrase', 'INTEGER'), ('phrase_shift', 'INTEGER'))
 
 
 def connect_grid():
     conn = sqlite3.connect(MFEATS_DB)
     conn.execute('CREATE TABLE IF NOT EXISTS %s (%s)' % (
         GRID_TABLE, ','.join([' '.join(field) for field in GRID_DEFINITION])))
+    # a table made before the phrase: its columns added (at the end, as listed)
+    columns = [v[1] for v in conn.execute('PRAGMA table_info(%s)' % (GRID_TABLE))]
+    for key, kind in GRID_DEFINITION:
+        if key not in columns:
+            conn.execute('ALTER TABLE %s ADD COLUMN %s %s DEFAULT 0' % (GRID_TABLE, key, kind))
+            conn.commit()
     return conn
 
 
@@ -1730,22 +1772,24 @@ def is_grid_current(mdx):
 def insert_grid(mdx, grid):
     old = get_grid(mdx)
     shift = old.shift if old is not None and old.shift else 0
+    phrase_shift = old.phrase_shift if old is not None and old.phrase_shift else 0
     if grid is None:
-        grid = Struct(bpm=0.0, downbeat=0.0, source='')
+        grid = Struct(bpm=0.0, downbeat=0.0, source='', phrase=0)
     conn = connect_grid()
     try:
-        conn.execute('INSERT OR REPLACE INTO %s VALUES (?,?,?,?,?,?,?)' % (GRID_TABLE),
+        conn.execute('INSERT OR REPLACE INTO %s VALUES (?,?,?,?,?,?,?,?,?)' % (GRID_TABLE),
                      (mdx, grid.bpm, grid.downbeat, shift, grid.source, GRID_VERSION,
-                      time.time()))
+                      time.time(), grid.phrase, phrase_shift))
         conn.commit()
     finally:
         conn.close()
 
 
-def set_grid_shift(mdx, shift):
+def set_grid_shift(mdx, shift, key='shift'):
+    # key: 'shift' (the bar, in beats) or 'phrase_shift' (the phrase, in bars)
     conn = connect_grid()
     try:
-        conn.execute('UPDATE %s SET shift=? WHERE mdx=?' % (GRID_TABLE), (int(shift) % 4, mdx))
+        conn.execute('UPDATE %s SET %s=? WHERE mdx=?' % (GRID_TABLE, key), (int(shift) % 4, mdx))
         conn.commit()
     finally:
         conn.close()

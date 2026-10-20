@@ -1742,7 +1742,8 @@ class PlayBoxWave(RectBox):
         bg = wx.Colour(self.parent.st.PLAY_BG_COLOR)
         color = wx.Colour(*[int(v + (255 - v) * 0.35) for v in (bg.Red(), bg.Green(), bg.Blue())])
         dc.SetPen(wx.Pen(color, 1))
-        seconds = self.parent.GetGridDownbeat()
+        # from the first phrase's start (the 16 bars are 4 phrases)
+        seconds = self.parent.GetGridPhraseStart() % span
         while seconds < duration:
             lx = int(x + seconds * w / duration)
             dc.DrawLine(lx, y, lx, y + h)
@@ -2104,7 +2105,7 @@ class PlayBoxWaveDetail(RectBox):
         # 2.5 ms a frame
         grid = self.parent.GetGrid()
         gridkey = None if grid is None or self.parent.IsGridShown() is False\
-            else (grid.bpm, grid.downbeat, grid.shift)
+            else (grid.bpm, grid.downbeat, grid.shift, grid.phrase, grid.phrase_shift)
         key = (id(waveform), duration, span, period, w, h, gridkey)
         if key != self.last_key or not w // 4 <= step - self.last_step <= w * 2 - w // 4:
             self.last_step = step - w
@@ -2249,6 +2250,10 @@ class PlayBoxPopupGrid(wx.Menu):
                                            self.OnAnalyzed)):
             self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
         self.AppendSeparator()
+        labels = ('Phrase starts on this bar', 'Phrase as analyzed')
+        for label, handler in zip(labels, (self.OnPhraseHere, self.OnPhraseAnalyzed)):
+            self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
+        self.AppendSeparator()
         source = 'Beat This!' if grid.source == 'beatthis' else 'the beats alone'
         item = self.Append(wx.ID_ANY, '%.3f BPM, bar from %s' % (grid.bpm, source))
         item.Enable(False)
@@ -2264,3 +2269,9 @@ class PlayBoxPopupGrid(wx.Menu):
 
     def OnAnalyzed(self, event):
         self.parent.SetGridShift(0)
+
+    def OnPhraseHere(self, event):
+        self.parent.SetGridPhraseAt(self.seconds)
+
+    def OnPhraseAnalyzed(self, event):
+        self.parent.SetGridPhraseShift(0)

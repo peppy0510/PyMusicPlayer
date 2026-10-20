@@ -885,7 +885,9 @@ class PlayBoxControl():
     def GetGrid(self):
         # the playing song's grid, or None (none yet, none found)
         grid = getattr(self.cue, 'grid', None)
-        if grid is None or grid.mdx != self.cue.mdx:
+        # one saved with the player's state by an older version is not taken
+        if grid is None or grid.mdx != self.cue.mdx\
+                or getattr(grid, 'version', None) != mfeats.GRID_VERSION:
             return None
         return grid
 
@@ -898,6 +900,16 @@ class PlayBoxControl():
         period = 60.0 / grid.bpm
         return (grid.downbeat + (grid.shift or 0) * period) % (period * 4)
 
+    def GetGridPhraseBars(self):
+        # bars from the (moved) downbeat to the first phrase's start
+        grid = self.GetGrid()
+        return ((grid.phrase or 0) + (grid.phrase_shift or 0)) % 4
+
+    def GetGridPhraseStart(self):
+        grid = self.GetGrid()
+        period = 60.0 / grid.bpm
+        return self.GetGridDownbeat() + self.GetGridPhraseBars() * period * 4
+
     def GetGridLines(self, start, end):
         '''[(seconds, level)] of the grid's beats from start to end; level 0 a beat, 1 a
         bar's first, 2 a phrase's (4 bars)'''
@@ -906,9 +918,10 @@ class PlayBoxControl():
             return []
         period = 60.0 / grid.bpm
         downbeat = self.GetGridDownbeat()
+        phrase = self.GetGridPhraseBars() * 4
         first = int(math.ceil((start - downbeat) / period))
         last = int(math.floor((end - downbeat) / period))
-        return [(downbeat + k * period, 2 if k % 16 == 0 else 1 if k % 4 == 0 else 0)
+        return [(downbeat + k * period, 2 if (k - phrase) % 16 == 0 else 1 if k % 4 == 0 else 0)
                 for k in range(first, last + 1)]
 
     def SetGridShift(self, shift):
@@ -920,6 +933,23 @@ class PlayBoxControl():
         self.ApplyGridToTimes()
         self.Wave.reInitBuffer = True
         self.WaveDetail.reInitBuffer = True
+
+    def SetGridPhraseShift(self, shift):
+        grid = self.GetGrid()
+        if grid is None:
+            return
+        grid.phrase_shift = shift % 4
+        mfeats.set_grid_shift(grid.mdx, grid.phrase_shift, key='phrase_shift')
+        self.Wave.reInitBuffer = True
+        self.WaveDetail.reInitBuffer = True
+
+    def SetGridPhraseAt(self, seconds):
+        # the phrase from the bar nearest seconds
+        grid = self.GetGrid()
+        if grid is None:
+            return
+        bar = int(round((seconds - self.GetGridDownbeat()) / (60.0 / grid.bpm * 4)))
+        self.SetGridPhraseShift(bar - (grid.phrase or 0))
 
     def SetGridBarAt(self, seconds):
         # the bar from the beat nearest seconds
