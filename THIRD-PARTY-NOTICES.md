@@ -59,6 +59,20 @@ embedding exception:
 Unifont releases from version 13.0.04 onward are additionally available under the SIL Open
 Font License 1.1. The build vendored here predates that, so GPL-2.0-or-later applies.
 
+## `assets/dlls/fpcalc.exe` — Chromaprint fpcalc 1.5.1
+
+Copyright (C) 2010-2016 Lukas Lalinsky — <https://acoustid.org/chromaprint>
+
+Chromaprint's own code is under the MIT licence; the official Windows build of `fpcalc` also
+contains parts of FFmpeg under the **GNU Lesser General Public License, version 2.1**, so the
+binary as a whole is LGPL-2.1.
+
+- Licence text: [`licenses/Chromaprint/lgpl-2.1.txt`](licenses/Chromaprint/lgpl-2.1.txt) and
+  [`licenses/Chromaprint/mit.txt`](licenses/Chromaprint/mit.txt)
+- Source code: <https://github.com/acoustid/chromaprint> (tag `v1.5.1`) and <https://ffmpeg.org>
+- Included **unmodified** (`chromaprint-fpcalc-1.5.1-windows-x86_64.zip` from the project's
+  GitHub releases), run as a separate program. You may replace it with your own build.
+
 ## `source/pybass/` — pybass
 
 Copyright (c) Maxim Kolosov. pybass 0.5.5, BSD licence.

@@ -13,6 +13,7 @@ import os
 import threading
 import time
 import webbrowser
+import webinfo
 import wx
 import wx.adv
 
@@ -1512,6 +1513,47 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.Destroy()
 
 
+class PreferenceWebInfoPanel(DialogPanel):
+
+    def __init__(self, parent):
+        DialogPanel.__init__(self, parent)
+        self.parent = parent
+        self.SetDoubleBuffered(True)
+        self.SetBackgroundColour((255, 255, 255))
+        labels = ('Discogs Personal Access Token', 'or Discogs Consumer Key',
+                  'and Discogs Consumer Secret', 'Last.fm API Key', 'AcoustID Client Key')
+        values = GetPreferences(webinfo.PREFERENCE_KEYS)
+        self.KeyTexts = list()
+        offset = 20
+        for label, value in zip(labels, values):
+            StaticText(self, label=label, pos=(20, offset + 3),
+                       size=(200, -1), style=wx.ALIGN_RIGHT)
+            self.KeyTexts.append(TextCtrl(self, value=value or '',
+                                          pos=(220 + 15, offset), size=(250, 22)))
+            offset += 30
+
+        offset += 10
+        fpcalc = webinfo.find_fpcalc()
+        if fpcalc is None:
+            label = u'fpcalc.exe not found: put it in assets\\dlls for AcoustID.'
+        else:
+            label = u'fpcalc: %s' % (fpcalc)
+        StaticText(self, label=label, pos=(20, offset), size=(470, -1))
+        offset += 30
+        label = u'Keys stay in this PC\'s user folder. Only the tracks you look up are sent,'
+        label += u'\nartist and title to Discogs and Last.fm, a fingerprint to AcoustID.'
+        StaticText(self, label=label, pos=(20, offset), size=(470, 40))
+
+    def OnSize(self, event):
+        width, height = self.parent.parent.GetClientSize()
+        self.SetSize((width - 16, height - 78))
+
+    def OnClose(self, event):
+        SetPreferences([(key, v.GetValue().strip())
+                        for key, v in zip(webinfo.PREFERENCE_KEYS, self.KeyTexts)])
+        self.Destroy()
+
+
 class PreferenceNotebook(wx.Notebook):
 
     def __init__(self, parent):
@@ -1526,6 +1568,8 @@ class PreferenceNotebook(wx.Notebook):
 
         self.ShortcutKeyPanel = ShortcutKeyPanel(self)
         self.AddPage(self.ShortcutKeyPanel, 'Shortcut Key')
+        self.WebInfoPanel = PreferenceWebInfoPanel(self)
+        self.AddPage(self.WebInfoPanel, 'Web Services')
         # self.WebLinkPanel = WebLinkEditorPanel(self)
         # self.AddPage(self.WebLinkPanel, 'Web Search')
 
@@ -1539,6 +1583,7 @@ class PreferenceNotebook(wx.Notebook):
         width, height = self.GetClientSize()
         self.MFEATSPanel.OnSize(None)
         self.ShortcutKeyPanel.OnSize(None)
+        self.WebInfoPanel.OnSize(None)
         # self.MFEATSPanel.SetSize((width - 20, height - 40))
         # self.AppearancePanel.SetSize((width-20, height-40))
         # self.ShortcutKeyPanel.SetSize((width - 20, height - 40))
@@ -1560,6 +1605,7 @@ class PreferenceNotebook(wx.Notebook):
     def OnClose(self, event):
         self.MFEATSPanel.OnClose(None)
         self.ShortcutKeyPanel.OnClose(None)
+        self.WebInfoPanel.OnClose(None)
         # self.AppearancePanel.OnClose(None)
         # self.WebLinkPanel.OnClose(None)
         self.Destroy()

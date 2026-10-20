@@ -9,6 +9,7 @@ import audio
 import ctypes
 import glob
 import images
+import io
 import math
 import os
 import stat
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
+import webinfo
 import wx
 
 from listboxlib import FileOpenDialog
@@ -37,6 +39,7 @@ from macroboxlib import EVT_GLOBAL
 from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_ITEM_SIZE
 from macroboxlib import GetPreference
+from macroboxlib import GetPreferences
 from macroboxlib import ItemTextEdit
 from macroboxlib import ListBoxColumn
 from macroboxlib import MakeMusicFileItem
@@ -2008,10 +2011,60 @@ class ItemEditBox(DialogBox):
         self.PrevButton = Button(self, label='Prev')
         self.PrevButton.Bind(wx.EVT_BUTTON, self.OnPrev)
         self.PrevButton.SetPosition((width - 95 - 80 * 2 + 3 + left, height))
+        self.LookUpButton = Button(self, label='Look Up')
+        self.LookUpButton.Bind(wx.EVT_BUTTON, self.OnLookUp)
+        self.LookUpButton.SetPosition((10, height))
+        self.LookUpButton.SetToolTip(wx.ToolTip(
+            'Find artist, title, album and genre on Discogs, Last.fm and AcoustID.'
+            '\nThe keys are set in Preference > Web Services.'))
         self.ItemEditPanel = ItemEditPanel(self)
         self.ItemEditPanel.SetPage(self.selectedItems[self.selected_idx])
         self.AutoSeButtonState()
         self.ItemEditPanel.Show(True)
+
+    def GetFieldText(self, label):
+        return self.ItemEditPanel.TextCtrls[self.ItemEditPanel.labels.index(label)]
+
+    def OnLookUp(self, event):
+        keys = dict(zip(webinfo.PREFERENCE_KEYS, GetPreferences(webinfo.PREFERENCE_KEYS)))
+        if not any(keys.values()):
+            wx.MessageBox('Set a key in Preference > Web Services first.',
+                          'Look Up', wx.OK | wx.ICON_INFORMATION, self)
+            return
+        itemIdx = self.selectedItems[self.selected_idx]
+        path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
+        artist = self.GetFieldText('Artist').GetValue().strip()
+        title = self.GetFieldText('Title').GetValue().strip()
+        self.LookUpButton.Disable()
+        self.LookUpButton.SetLabel('Looking...')
+        thread = threading.Thread(target=self.LookUpThread,
+                                  args=(self.selected_idx, path, artist, title, keys))
+        thread.daemon = True
+        thread.start()
+
+    def LookUpThread(self, selected_idx, path, artist, title, keys):
+        try:
+            candidates, errors = webinfo.lookup(path, artist, title, keys, webinfo.Cache())
+        except Exception as error:
+            candidates, errors = list(), [str(error)]
+        wx.CallAfter(self.OnLookedUp, selected_idx, candidates, errors)
+
+    def OnLookedUp(self, selected_idx, candidates, errors):
+        if not self:
+            return
+        self.LookUpButton.SetLabel('Look Up')
+        self.LookUpButton.Enable()
+        if selected_idx != self.selected_idx:
+            return
+        itemIdx = self.selectedItems[self.selected_idx]
+        length = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'duration')
+        dialog = WebInfoBox(self, candidates, errors, length)
+        if dialog.ShowModal() == wx.ID_OK and dialog.selected is not None:
+            chosen = candidates[dialog.selected]
+            for label in ('Artist', 'Title', 'Album', 'Genre'):
+                if chosen[label.lower()]:
+                    self.GetFieldText(label).SetValue(chosen[label.lower()])
+        dialog.Destroy()
 
     def OnAutoSave(self, event):
         if event.IsChecked():
@@ -2162,6 +2215,135 @@ class ItemEditBox(DialogBox):
             self.OnSave(None)
         self.EndModal(0)
         self.Destroy()
+
+
+class WebInfoBox(DialogBox):
+
+    COVER = 200
+
+    def __init__(self, parent, candidates, errors, length=''):
+        DialogBox.__init__(self, parent, size=(1150, 340))
+        title = 'Look Up: %d found' % (len(candidates))
+        if length:
+            title += ', this file %s' % (length)
+        self.SetTitle(title)
+        self.candidates = candidates
+        self.selected = None
+        self.cover_timer = None
+        width, height = self.GetClientSize()
+        self.List = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        columns = (('Source', 65), ('Artist', 120), ('Title', 140), ('Album', 120),
+                   ('Release', 230), ('Genre', 80), ('Length', 50), ('Year', 45), ('Score', 45))
+        for i, (title, column_width) in enumerate(columns):
+            self.List.InsertColumn(i, title, width=column_width)
+        for i, v in enumerate(candidates):
+            score = '' if v['score'] is None else '%.2f' % (v['score'])
+            values = (v['source'], v['artist'], v['title'], v['album'], v['release'],
+                      v['genre'], webinfo.format_duration(v['duration']), v['year'], score)
+            self.List.InsertItem(i, values[0])
+            for column, value in enumerate(values[1:], 1):
+                self.List.SetItem(i, column, value)
+        self.List.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnApply)
+        self.List.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.OnOpenLink)
+        self.List.Bind(wx.EVT_LIST_ITEM_SELECTED, self.OnSelected)
+        self.Cover = wx.StaticBitmap(self, bitmap=wx.Bitmap(self.COVER, self.COVER))
+        self.CoverText = StaticText(self, label='', style=wx.ALIGN_CENTER)
+        self.ApplyButton = Button(self, label='Apply')
+        self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
+        self.CancelButton = Button(self, label='Cancel')
+        self.CancelButton.Bind(wx.EVT_BUTTON, self.OnCancel)
+        w, h = self.CancelButton.GetSize()
+        bottom = height - h - 10
+        self.List.SetRect((10, 10, width - 30 - self.COVER,
+                           bottom - 20 - (20 if errors else 0)))
+        self.Cover.SetRect((width - 10 - self.COVER, 10, self.COVER, self.COVER))
+        self.CoverText.SetRect((width - 10 - self.COVER, 10 + self.COVER + 6, self.COVER, 18))
+        self.SetCover(None, '')
+        if errors:
+            StaticText(self, label=' / '.join(errors),
+                       pos=(10, bottom - 25), size=(width - 20, 18))
+        self.CancelButton.SetPosition((width - 95, bottom))
+        self.ApplyButton.SetPosition((width - 95 - 80, bottom))
+        if candidates:
+            self.List.Select(0)
+        else:
+            self.ApplyButton.Disable()
+
+    def OnApply(self, event):
+        idx = self.List.GetFirstSelected()
+        if idx < 0:
+            return
+        self.selected = idx
+        self.EndModal(wx.ID_OK)
+
+    def SetCover(self, data, label):
+        image = None
+        if data:
+            try:
+                image = wx.Image(io.BytesIO(data))
+            except Exception:
+                image = None
+        if image is not None and image.IsOk():
+            w, h = image.GetSize()
+            scale = min(self.COVER / w, self.COVER / h)
+            image = image.Scale(max(1, int(w * scale)), max(1, int(h * scale)),
+                                wx.IMAGE_QUALITY_HIGH)
+            image.Resize((self.COVER, self.COVER),
+                         ((self.COVER - image.GetWidth()) // 2,
+                          (self.COVER - image.GetHeight()) // 2), 230, 230, 230)
+            self.Cover.SetBitmap(wx.Bitmap(image))
+        else:
+            bmp = wx.Bitmap(self.COVER, self.COVER)
+            dc = wx.MemoryDC(bmp)
+            dc.SetBackground(wx.Brush(wx.Colour(230, 230, 230)))
+            dc.Clear()
+            dc.SelectObject(wx.NullBitmap)
+            self.Cover.SetBitmap(bmp)
+        self.CoverText.SetLabel(label)
+
+    def OnSelected(self, event):
+        # only the row the selection rests on is fetched, not every row passed over
+        if self.cover_timer is not None:
+            self.cover_timer.Stop()
+        self.cover_timer = wx.CallLater(250, self.LoadCover, event.GetIndex())
+
+    def LoadCover(self, idx):
+        url = self.candidates[idx]['image']
+        if not url:
+            self.SetCover(None, 'No cover')
+            return
+        self.SetCover(None, 'Loading...')
+        thread = threading.Thread(target=self.LoadCoverThread, args=(idx, url))
+        thread.daemon = True
+        thread.start()
+
+    def LoadCoverThread(self, idx, url):
+        try:
+            data, label = webinfo.fetch_image(url), ''
+        except Exception as error:
+            data, label = None, str(error)
+        wx.CallAfter(self.OnCoverLoaded, idx, data, label)
+
+    def OnCoverLoaded(self, idx, data, label):
+        if not self or self.List.GetFirstSelected() != idx:
+            return
+        self.SetCover(data, label)
+
+    def OnOpenLink(self, event):
+        url = self.candidates[event.GetIndex()]['url']
+        if url:
+            webbrowser.open(url)
+
+    def OnCancel(self, event):
+        self.EndModal(wx.ID_CANCEL)
+
+    def OnClose(self, event):
+        self.EndModal(wx.ID_CANCEL)
+
+    def Destroy(self):
+        if self.cover_timer is not None:
+            self.cover_timer.Stop()
+        return DialogBox.Destroy(self)
 
 
 class ListBoxPopupSearch(wx.Menu):
