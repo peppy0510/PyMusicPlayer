@@ -1532,7 +1532,28 @@ class PlayBoxWave(RectBox):
             self.DrawHighlightWave(dc)
         else:
             self.DrawNormalWave(dc)
+        self.DrawGridLines(dc)
         self.DrawCursor(dc)
+
+    def DrawGridLines(self, dc):
+        # every 16 bars across the whole song (each bar would run together)
+        grid = self.parent.GetGrid()
+        duration = self.parent.GetDurationTime()
+        if grid is None or duration <= 0 or self.wave_bitmaps is None\
+                or self.parent.IsGridShown() is False:
+            return
+        x, y, w, h = self.wave_rect
+        span = 60.0 / grid.bpm * 64
+        if span / duration * w < 6:
+            return
+        bg = wx.Colour(self.parent.st.PLAY_BG_COLOR)
+        color = wx.Colour(*[int(v + (255 - v) * 0.35) for v in (bg.Red(), bg.Green(), bg.Blue())])
+        dc.SetPen(wx.Pen(color, 1))
+        seconds = self.parent.GetGridDownbeat()
+        while seconds < duration:
+            lx = int(x + seconds * w / duration)
+            dc.DrawLine(lx, y, lx, y + h)
+            seconds += span
 
     def DrawNormalWave(self, dc):
         if self.wave_bitmaps is None:
@@ -1888,7 +1909,10 @@ class PlayBoxWaveDetail(RectBox):
         # a strip three windows wide on the same pixels, moved under the window
         # and painted again only near its ends: painted every frame it was about
         # 2.5 ms a frame
-        key = (id(waveform), duration, span, period, w, h)
+        grid = self.parent.GetGrid()
+        gridkey = None if grid is None or self.parent.IsGridShown() is False\
+            else (grid.bpm, grid.downbeat, grid.shift)
+        key = (id(waveform), duration, span, period, w, h, gridkey)
         if key != self.last_key or not w // 4 <= step - self.last_step <= w * 2 - w // 4:
             self.last_step = step - w
             start = self.last_step * pixel
@@ -1904,17 +1928,38 @@ class PlayBoxWaveDetail(RectBox):
             image = audio.paint_waveform_3band(
                 waveform, w * 3, h, ground=ground, dim=dim,
                 start=start * columns, end=(start + span * 3) * columns, spread=0)
+            self.PaintGridLines(image, start, pixel)
             self.last_bitmap = wx.Bitmap.FromBuffer(w * 3, h, image.tobytes())
             self.last_key = key
         dc.SetClippingRegion(self.margin, 0, w, h)
         dc.DrawBitmap(self.last_bitmap, self.margin - (step - self.last_step), 0)
         dc.DestroyClippingRegion()
 
+    def PaintGridLines(self, image, start, pixel):
+        # the beat grid lightened into the strip: told apart by strength and width, not
+        # by colour. a beat's line is left out when beats are closer than 4 pixels
+        height, width, _ = image.shape
+        lines = self.parent.GetGridLines(start, start + width * pixel)
+        if lines == []:
+            return
+        beat_pixels = 60.0 / self.parent.GetGrid().bpm / pixel
+        for seconds, level in lines:
+            if level == 0 and beat_pixels < 4:
+                continue
+            x = int((seconds - start) / pixel)
+            strength, thick = ((0.22, 1), (0.5, 1), (0.75, 2))[level]
+            left, right = max(x, 0), min(x + thick, width)
+            if right <= left:
+                continue
+            part = image[:, left:right].astype(numpy.float32)
+            image[:, left:right] = (part + (255 - part) * strength).astype(numpy.uint8)
+
     def CATCH_EVT_GLOBAL(self, event):
         if self.IsShown() is False:
             return
         if self.parent.parent.HasToSkipEvent() is False:
             self.HandleEventDrag(event)
+            self.HandleEventGridMenu(event)
         if self.parent.IsPlaying() is False:
             self.DirectDraw()
 
@@ -1972,6 +2017,13 @@ class PlayBoxWaveDetail(RectBox):
             return
         self.SeekTo(position)
 
+    def HandleEventGridMenu(self, event):
+        if event.RightUp is False or event.rectIdx is None or self.parent.IsGridShown() is False:
+            return
+        width = max(self.GetSize().width - self.margin * 2, 1)
+        seconds = self.GetCentre() + (1.0 * (event.X - self.margin) / width - 0.5) * self.GetSpan()
+        self.parent.parent.SetPopupMenu(PlayBoxPopupGrid(self.parent, seconds), (event.x, event.y))
+
     def SeekTo(self, position):
         duration = self.parent.GetDurationTime()
         position = min(max(position, 0.0), duration * 0.999999)
@@ -1984,3 +2036,38 @@ class PlayBoxWaveDetail(RectBox):
             self.parent.SetResumeTime(position)
             self.parent.Wave.reInitBuffer = True
         self.reInitBuffer = True
+
+
+class PlayBoxPopupGrid(wx.Menu):
+
+    def __init__(self, parent, seconds):
+        # parent: the PlayBox; seconds: where in the song the strip was clicked
+        wx.Menu.__init__(self)
+        self.parent = parent
+        self.seconds = seconds
+        grid = self.parent.GetGrid()
+        if grid is None:
+            item = self.Append(wx.ID_ANY, 'No beat grid yet')
+            item.Enable(False)
+            return
+        labels = ('Bar starts on this beat', 'Bar one beat earlier', 'Bar one beat later',
+                  'Bar as analyzed')
+        for label, handler in zip(labels, (self.OnHere, self.OnEarlier, self.OnLater,
+                                           self.OnAnalyzed)):
+            self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
+        self.AppendSeparator()
+        source = 'Beat This!' if grid.source == 'beatthis' else 'the beats alone'
+        item = self.Append(wx.ID_ANY, '%.3f BPM, bar from %s' % (grid.bpm, source))
+        item.Enable(False)
+
+    def OnHere(self, event):
+        self.parent.SetGridBarAt(self.seconds)
+
+    def OnEarlier(self, event):
+        self.parent.SetGridShift((self.parent.GetGrid().shift or 0) - 1)
+
+    def OnLater(self, event):
+        self.parent.SetGridShift((self.parent.GetGrid().shift or 0) + 1)
+
+    def OnAnalyzed(self, event):
+        self.parent.SetGridShift(0)

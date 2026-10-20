@@ -490,6 +490,7 @@ class MacroBoxPreference():
         self.playbox_top_show = False
         self.playbox_side_show = False
         self.waveform_detail_show = GetPreference('waveform_detail_show') is not False
+        self.beatgrid_show = GetPreference('beatgrid_show') is not False
         # self.maximize_loudness = False
         self.playbox_title_format = None
         self.playbox_title_format = None
@@ -570,6 +571,16 @@ class MacroBoxPreference():
         if self.IsPlayerOnlyModeOn():
             self.SetPlayerOnlyHeight()
         self.OnSize()
+
+    def IsBeatGridShowOn(self):
+        return self.beatgrid_show
+
+    def SetBeatGridShow(self, show):
+        self.beatgrid_show = show
+        SetPreference('beatgrid_show', show)
+        self.MenuBar.itemBeatGridShow.Check(show)
+        self.MainPanel.PlayBox.Wave.reInitBuffer = True
+        self.MainPanel.PlayBox.WaveDetail.reInitBuffer = True
 
     def SetPlayerOnlyHeight(self):
         # the least let go of first, so the least is never over the most while
@@ -1758,6 +1769,7 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnPlayerTopShow, self.MenuBar.itemPlayerTopShow)
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
         self.Bind(wx.EVT_MENU, self.OnWaveformDetailShow, self.MenuBar.itemWaveformDetailShow)
+        self.Bind(wx.EVT_MENU, self.OnBeatGridShow, self.MenuBar.itemBeatGridShow)
         self.Bind(wx.EVT_MENU, self.OnListTabShow, self.MenuBar.itemListTabShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
         # self.Bind(wx.EVT_MENU, self.OnMaximizeLoudness, self.MenuBar.itemMaximizeLoudness)
@@ -1829,6 +1841,9 @@ class MacroBoxMenuBar():
             self.SetWaveformDetailShowOn()
         else:
             self.SetWaveformDetailShowOff()
+
+    def OnBeatGridShow(self, event):
+        self.SetBeatGridShow(event.IsChecked())
 
     def ColorThemeMap(self):
         color_themes = list()
@@ -2075,6 +2090,12 @@ class MenuBar(wx.MenuBar):
         self.menuView.Append(self.itemWaveformDetailShow)
         if self.parent.IsWaveformDetailShowOn():
             self.itemWaveformDetailShow.Check()
+
+        self.itemBeatGridShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, 'Beat Grid', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuView.Append(self.itemBeatGridShow)
+        if self.parent.IsBeatGridShowOn():
+            self.itemBeatGridShow.Check()
 
         # self.menuView.AppendSeparator()
 

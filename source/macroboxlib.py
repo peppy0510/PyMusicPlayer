@@ -582,6 +582,8 @@ class MFEATS_Scheduler(ThreadTimer):
         self.procpath = []
         self.taskpath = []
         self.proclist = []
+        # asked for again though analyzed (Analyze): all of it, not the grid alone
+        self.forcedpath = set()
         self.stop = False
         self.redraw_pending = False
         # DeepRhythm's process for the workers (StartModel): started with the first,
@@ -688,9 +690,12 @@ class MFEATS_Scheduler(ThreadTimer):
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
-        # analyzed by an older version: analyzed again
+        # analyzed by an older version: analyzed again; analyzed, its grid not: the grid
         if resp is not None and resp.version == mfeats.MFEATS_VERSION and forced is False:
-            return
+            if resp.error != 0 or mfeats.is_grid_current(resp.mdx):
+                return
+        if forced:
+            self.forcedpath.add(path)
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
         if urgent is False:
             if len(pnt) > 0:
@@ -786,7 +791,7 @@ class MFEATS_Scheduler(ThreadTimer):
             self.UpdateItemsValue(path)
             return
         try:
-            idle[0].conn.send(path)
+            idle[0].conn.send(self.GetJobMessage(path))
         except (EOFError, OSError):
             # died idle: the song waits for the next worker
             idle[0].retired = True
@@ -833,11 +838,21 @@ class MFEATS_Scheduler(ThreadTimer):
         worker_conn.close()
         try:
             # its song as it is now (renamed meanwhile: ResetItemValue)
-            this.conn.send(this.path)
+            this.conn.send(self.GetJobMessage(this.path))
         except (EOFError, OSError):
             # died at once: seen as dead (HandleFinishedJob), its song left
             pass
         this.proc = proc
+
+    def GetJobMessage(self, path):
+        # the song's path for its whole analysis, ('grid', path) when only its grid is due
+        if path in self.forcedpath:
+            self.forcedpath.discard(path)
+            return path
+        resp = mfeats.getby_key_value('path', path, waveform=False)
+        if resp is not None and resp.version == mfeats.MFEATS_VERSION and resp.error == 0:
+            return ('grid', path)
+        return path
 
     def ResetItemValue(self, old_path, new_path):
         idx = [i for i in range(len(self.taskpath))

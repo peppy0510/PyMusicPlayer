@@ -499,8 +499,10 @@ class PlayBoxControl():
     def InitControlEvent(self):
         self.reInitWave = True
         self.waveform_length = 1500
+        # grid: the last look for the song's beat grid (False: not looked for), so the
+        # song the app opens with is looked up too
         self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False, early=False,
-                              dbresp_lap=0.0, wave_since=0.0)
+                              dbresp_lap=0.0, wave_since=0.0, grid=0.0, grid_since=time.time())
         self.failed_count = 0
         self.skip_silence = GetPreference('skip_silence') is True
         # the waveform detail strip's mode: 'vinyl' (a record to scratch) or 'seek'
@@ -586,6 +588,9 @@ class PlayBoxControl():
         if self.pending.wave:
             self.SetAudioEventWithWAVE()
 
+        if self.pending.grid is not False:
+            self.SetAudioEventWithGRID()
+
         if self.HandleEventOpenFailure():
             return
         if self.cue.hStream:
@@ -661,6 +666,9 @@ class PlayBoxControl():
         self.cue.fffr_static = 15.0
         self.cue.fffr_variable = 15.0
         self.cue.mdx = self.GetMDX(self.cue.path)
+        self.cue.grid = None
+        self.pending.grid = 0.0
+        self.pending.grid_since = time.time()
         duration = audio.get_duration(self.cue.hStream)
         self.cue.duration = duration
         self.SetTrackOffsetTime(0.0)
@@ -748,6 +756,71 @@ class PlayBoxControl():
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
         self.reInitWave = True
+
+    def SetAudioEventWithGRID(self):
+        # once a second until the song's grid is in (a grid alone takes seconds, a
+        # whole analysis more), given up on after a while
+        if self.pending.mdx or self.cue.mdx is None:
+            return
+        if time.time() - self.pending.grid < 1.0:
+            return
+        if time.time() - self.pending.grid_since > 600:
+            self.pending.grid = False
+            return
+        self.pending.grid = time.time()
+        grid = mfeats.get_grid(self.cue.mdx)
+        if grid is None or grid.version != mfeats.GRID_VERSION:
+            return
+        self.pending.grid = False
+        self.cue.grid = grid if grid.bpm > 0 else None
+        self.Wave.reInitBuffer = True
+        self.WaveDetail.reInitBuffer = True
+
+    def GetGrid(self):
+        # the playing song's grid, or None (none yet, none found)
+        grid = getattr(self.cue, 'grid', None)
+        if grid is None or grid.mdx != self.cue.mdx:
+            return None
+        return grid
+
+    def IsGridShown(self):
+        # View > Beat Grid
+        return self.parent.parent.IsBeatGridShowOn()
+
+    def GetGridDownbeat(self):
+        grid = self.GetGrid()
+        period = 60.0 / grid.bpm
+        return (grid.downbeat + (grid.shift or 0) * period) % (period * 4)
+
+    def GetGridLines(self, start, end):
+        '''[(seconds, level)] of the grid's beats from start to end; level 0 a beat, 1 a
+        bar's first, 2 a phrase's (4 bars)'''
+        grid = self.GetGrid()
+        if grid is None or end <= start or self.IsGridShown() is False:
+            return []
+        period = 60.0 / grid.bpm
+        downbeat = self.GetGridDownbeat()
+        first = int(math.ceil((start - downbeat) / period))
+        last = int(math.floor((end - downbeat) / period))
+        return [(downbeat + k * period, 2 if k % 16 == 0 else 1 if k % 4 == 0 else 0)
+                for k in range(first, last + 1)]
+
+    def SetGridShift(self, shift):
+        grid = self.GetGrid()
+        if grid is None:
+            return
+        grid.shift = shift % 4
+        mfeats.set_grid_shift(grid.mdx, grid.shift)
+        self.Wave.reInitBuffer = True
+        self.WaveDetail.reInitBuffer = True
+
+    def SetGridBarAt(self, seconds):
+        # the bar from the beat nearest seconds
+        grid = self.GetGrid()
+        if grid is None:
+            return
+        period = 60.0 / grid.bpm
+        self.SetGridShift(int(round((seconds - grid.downbeat) / period)))
 
     def SetEarlyAnalysis(self, highlight=True):
         # being analyzed: its waveform and highlight as soon as the worker has them,
