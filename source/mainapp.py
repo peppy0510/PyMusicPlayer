@@ -162,6 +162,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.VectorScope.CatchEvent(event)
         self.PlayBox.Apic.CatchEvent(event)
         self.PlayBox.VolumeSlider.CatchEvent(event)
+        self.PlayBox.TempoButton.CatchEvent(event)
         self.ListSash.CatchEvent(event)
         if self.ListBox.IsAnyListLocked() is False and self.ListSash.IsOnSize() is False:
             self.ListTab.TabList.CatchEvent(event)

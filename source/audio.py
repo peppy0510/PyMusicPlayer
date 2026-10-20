@@ -525,14 +525,31 @@ def load_bass_fx():
     return BASS_FX_ReverseCreate
 
 
-def create_play_stream(path, flags):
+def create_play_stream(path, flags, keylock=False):
     # (stream, True) playing either way, or (stream, False) a plain one when
-    # bass_fx is not there
+    # bass_fx is not there. keylock: a tempo stream over the reverse one, its tempo
+    # changed without its pitch (set_tempo_percent)
     reverse_create = load_bass_fx()
     if reverse_create:
         source = pybass.BASS_StreamCreateFile(False, path, 0, 0, flags | pybass.BASS_STREAM_DECODE)
         if source == 0:
             return (0, False)
+        tempo_create = load_bass_fx_tempo()[0] if keylock else None
+        if tempo_create:
+            # bass_fx takes no reverse stream over a tempo one, only this way round
+            reverse = reverse_create(source, REVERSE_BLOCK_SECONDS,
+                                     BASS_FX_FREESOURCE | pybass.BASS_STREAM_DECODE)
+            hstream = tempo_create(reverse, BASS_FX_FREESOURCE) if reverse else 0
+            if hstream:
+                set_direction(hstream, BASS_FX_RVS_FORWARD)
+                pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_SRC, 2.0)
+                return (hstream, True)
+            if reverse:
+                pybass.BASS_StreamFree(reverse)
+            source = pybass.BASS_StreamCreateFile(
+                False, path, 0, 0, flags | pybass.BASS_STREAM_DECODE)
+            if source == 0:
+                return (0, False)
         hstream = reverse_create(source, REVERSE_BLOCK_SECONDS, BASS_FX_FREESOURCE)
         if hstream:
             set_direction(hstream, BASS_FX_RVS_FORWARD)
@@ -543,7 +560,41 @@ def create_play_stream(path, flags):
     return (pybass.BASS_StreamCreateFile(False, path, 0, 0, flags), False)
 
 
+# bass_fx's tempo stream: its tempo in percent, the pitch kept
+BASS_ATTRIB_TEMPO = 0x10000
+BASS_FX_TEMPO = None
+
+
+def load_bass_fx_tempo():
+    # (BASS_FX_TempoCreate, BASS_FX_TempoGetSource), both False without bass_fx
+    global BASS_FX_TEMPO
+    if BASS_FX_TEMPO is None:
+        try:
+            bass_module, func_type = pybass.bass.load('bass_fx.dll')
+            BASS_FX_TEMPO = (
+                func_type(ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong)(
+                    ('BASS_FX_TempoCreate', bass_module)),
+                func_type(ctypes.c_ulong, ctypes.c_ulong)(('BASS_FX_TempoGetSource', bass_module)))
+        except Exception:
+            BASS_FX_TEMPO = (False, False)
+    return BASS_FX_TEMPO
+
+
+def get_tempo_source(hstream):
+    # the reverse stream under a tempo stream, 0 for any other
+    get_source = load_bass_fx_tempo()[1]
+    if not get_source or not hstream:
+        return 0
+    return get_source(hstream)
+
+
+def set_tempo_percent(hstream, percent):
+    pybass.BASS_ChannelSetAttribute(hstream, BASS_ATTRIB_TEMPO, float(percent))
+
+
 def set_direction(hstream, direction):
+    # a tempo stream turns the reverse stream under it
+    hstream = get_tempo_source(hstream) or hstream
     pybass.BASS_ChannelSetAttribute(hstream, BASS_ATTRIB_REVERSE_DIR, float(direction))
 
 
@@ -603,6 +654,13 @@ def get_channel(path):
     if duration * fs == 0:
         return 0
     return int(round(1.0 * length_s / (duration * fs * 2)))
+
+
+def get_native_fs(hstream):
+    info = pybass.BASS_CHANNELINFO()
+    if not pybass.BASS_ChannelGetInfo(hstream, ctypes.byref(info)):
+        return 0
+    return int(info.freq)
 
 
 def get_fs(input_data):
@@ -806,8 +864,9 @@ def get_spectrum_bins(length, spectrum_scale):
     edges = numpy.array([int(v) for v in freqbin])
     values = numpy.array(freqbin[:-1], dtype=float)
     idx = numpy.arange(len(values))
-    # each bin is spectrum[edge:next edge + 1] (the next edge included)
-    starts = edges[:-1]
+    # each bin is spectrum[edge:next edge + 1] (the next edge included); a note
+    # just past the spectrum's end at some lengths began a bin out of it
+    starts = numpy.minimum(edges[:-1], length - 1)
     included = numpy.minimum(edges[1:], length - 1)
     weights = numpy.log2(1 + values) * (values**0.25)
     powers = 1.4 * ((2 + idx) / (1 + idx))
@@ -823,7 +882,9 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     amplify = 1.25 * pow(spectrum_scale, 0.5)
     # amplify = 0.99
     fftrex = 1
-    fs = get_fs(hstream)
+    # the file's own rate: the tempo control moves the playing rate, and the
+    # spectrum's length with it
+    fs = get_native_fs(hstream) or get_fs(hstream)
     if fs == 0:
         return None, None
     freqmax = int(round(fs / fftrex))
@@ -856,7 +917,9 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
 
     # the vectorscope's samples as they are (-1 to 1): its gain and its dots
     # are its own (PlayBoxVectorScope.SetSamples)
-    return log_spcetrum, (dataL[:768] / 32768.0, dataR[:768] / 32768.0)
+    # the two sides as long as each other (an odd count of samples split one longer)
+    n = min(len(dataL), len(dataR), 768)
+    return log_spcetrum, (dataL[:n] / 32768.0, dataR[:n] / 32768.0)
 
 
 def get_id3(filename, field_keys):

@@ -96,6 +96,11 @@ class AudioControl(threading.Thread):
         # plays the record at the hand's speed (LoopScratchEvent)
         self.reversible = False
         self.base_freq = 44100.0
+        # the tempo control: the file's own rate, and whether the stream keeps the
+        # pitch (a tempo stream, built only for key lock off 0%)
+        self.native_freq = 44100.0
+        self.keylocked = False
+        self.reopen = False
         self.scratch = Struct(active=False, held=False, moves=collections.deque(),
                               lap=0.0, speed=1.0, seconds_per_pixel=0.0, event_x=0,
                               direction=audio.BASS_FX_RVS_FORWARD)
@@ -177,6 +182,32 @@ class AudioControl(threading.Thread):
             return 0.0
         return sum((t - mt) * (v - mv) for t, v in moves) / stt
 
+    def ApplyTempo(self):
+        # key locked: the tempo stream's percent; else the rate, the pitch with it (the
+        # scratch's speeds are of this rate)
+        rate = self.parent.GetTempoRate()
+        if self.keylocked:
+            self.base_freq = self.native_freq
+            audio.set_tempo_percent(self.hStream, (rate - 1.0) * 100.0)
+        else:
+            self.base_freq = self.native_freq * rate
+        if self.hStream and self.scratch.active is False:
+            audio.set_frequency(self.hStream, self.base_freq)
+
+    def SetTempo(self):
+        # from the GUI: a stream of the other kind is opened again (key lock on or
+        # off, or off 0% with it); paused, it is opened so when played
+        if self.hStream == 0:
+            return
+        # a tempo stream back at 0% is kept (opened again it was a gap), not made
+        wanted = self.parent.IsTempoKeyLockOn() and (
+            self.parent.IsTempoKeyLockWanted() or self.keylocked)
+        if wanted != self.keylocked:
+            if self.IsSeekable():
+                self.reopen = True
+            return
+        self.ApplyTempo()
+
     def LoopScratchEvent(self):
         scratch = self.scratch
         if scratch.active is False:
@@ -235,6 +266,14 @@ class AudioControl(threading.Thread):
             return
         if self.parent.cue.path is None:
             return
+        if self.reopen:
+            # key lock on or off while it plays: opened again where it is
+            self.reopen = False
+            if self.path == self.parent.cue.path and self.IsSeekable():
+                self.resume = audio.get_position(self.hStream)
+                self.pending = True
+                self.InitAudio()
+                return
         if self.path != self.parent.cue.path:
             self.pending = True
             self.InitAudio()
@@ -372,7 +411,8 @@ class AudioControl(threading.Thread):
             self.path = self.path.encode(sys.getfilesystemencoding())
 
         # self.hStream = pybass.BASS_StreamCreateFile(False, self.path, 0, 0, flags)
-        self.hStream, self.reversible = audio.create_play_stream(self.path, flags)
+        self.hStream, self.reversible = audio.create_play_stream(
+            self.path, flags, keylock=self.parent.IsTempoKeyLockWanted())
         self.scratch.active = False
         self.scratch.speed = 1.0
         self.scratch.direction = audio.BASS_FX_RVS_FORWARD
@@ -383,7 +423,9 @@ class AudioControl(threading.Thread):
             self.resume = None
             self.pending = False
             return
-        self.base_freq = audio.get_frequency(self.hStream)
+        self.native_freq = audio.get_frequency(self.hStream)
+        self.keylocked = audio.get_tempo_source(self.hStream) != 0
+        self.ApplyTempo()
 
         ######
         # print(dir(pybass))
@@ -504,6 +546,11 @@ class PlayBoxControl():
         self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False, early=False,
                               dbresp_lap=0.0, wave_since=0.0, grid=0.0, grid_since=time.time())
         self.failed_count = 0
+        # the tempo control: a rate kept from song to song (1.0 at every start), the
+        # key lock and the slider's range (percent) kept
+        self.tempo_rate = 1.0
+        self.tempo_keylock = GetPreference('tempo_keylock') is True
+        self.tempo_range = GetPreference('tempo_range') or 8
         self.skip_silence = GetPreference('skip_silence') is True
         # the waveform detail strip's mode: 'vinyl' (a record to scratch) or 'seek'
         # (click or drag to a place); before it, a scratch on/off of its own
@@ -773,8 +820,67 @@ class PlayBoxControl():
             return
         self.pending.grid = False
         self.cue.grid = grid if grid.bpm > 0 else None
+        self.ApplyGridToTimes()
         self.Wave.reInitBuffer = True
         self.WaveDetail.reInitBuffer = True
+
+    def ApplyGridToTimes(self):
+        # the highlight on a bar and the jumps in bars, once the grid is in (where it
+        # plays is not moved)
+        if self.GetGrid() is None:
+            return
+        self.SetBestFFFRVariableTime()
+        offset = self.GetHighlightOffsetTime()
+        if offset is None or self.cue.highlight_variable is None:
+            return
+        self.SetHighlightOffsetTime(offset)
+        self.SetBestHighlightVariablePeriodTime()
+        if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
+            offset = self.GetHighlightOffsetTime()
+            self.SetTrackOffsetTime(offset)
+            self.SetTrackFinishTime(offset + self.GetHighlightVariablePeriodTime())
+        self.reInitWave = True
+
+    def GetTempoRate(self):
+        return self.tempo_rate
+
+    def SetTempoRate(self, rate):
+        limit = self.tempo_range / 100.0
+        rate = min(max(rate, 1.0 - limit), 1.0 + limit)
+        if abs(rate - self.tempo_rate) < 1e-6:
+            return
+        self.tempo_rate = rate
+        self.AudioControl.SetTempo()
+        self.Info.reInitBuffer = True
+
+    def IsTempoKeyLockOn(self):
+        return self.tempo_keylock
+
+    def SetTempoKeyLock(self, on):
+        self.tempo_keylock = on
+        SetPreference('tempo_keylock', on)
+        self.AudioControl.SetTempo()
+
+    def IsTempoKeyLockWanted(self):
+        # the tempo stream only when it changes something
+        return self.tempo_keylock and abs(self.tempo_rate - 1.0) > 1e-6
+
+    def GetTempoRange(self):
+        return self.tempo_range
+
+    def SetTempoRange(self, percent):
+        self.tempo_range = percent
+        SetPreference('tempo_range', percent)
+        self.SetTempoRate(self.tempo_rate)
+
+    def GetPlayingTempo(self):
+        # the BPM heard: the grid's (or the analysis') times the rate
+        grid = self.GetGrid()
+        tempo = grid.bpm if grid is not None else self.cue.tempo
+        try:
+            return float(tempo) * self.tempo_rate
+        except (TypeError, ValueError):
+            return 0.0
 
     def GetGrid(self):
         # the playing song's grid, or None (none yet, none found)
@@ -811,6 +917,7 @@ class PlayBoxControl():
             return
         grid.shift = shift % 4
         mfeats.set_grid_shift(grid.mdx, grid.shift)
+        self.ApplyGridToTimes()
         self.Wave.reInitBuffer = True
         self.WaveDetail.reInitBuffer = True
 
@@ -1086,6 +1193,10 @@ class PlayBoxControl():
         self.cue.tempo = tempo
 
     def GetNearestBeatTime(self, period, tempo):
+        # the grid's tempo when there is one (the analysis' own is in 0.1 BPM steps)
+        grid = self.GetGrid()
+        if grid is not None:
+            tempo = float(grid.bpm)
         if isinstance(tempo, float) is False:
             return period
         if tempo == 0:
@@ -1122,6 +1233,14 @@ class PlayBoxControl():
         return self.cue.highlight_offset
 
     def SetHighlightOffsetTime(self, offset):
+        # on the nearest bar's first beat when the song has a grid
+        grid = self.GetGrid()
+        if grid is not None and offset is not None:
+            bar = 60.0 / grid.bpm * 4
+            downbeat = self.GetGridDownbeat()
+            offset = downbeat + round((offset - downbeat) / bar) * bar
+            if offset < 0:
+                offset += bar
         self.cue.highlight_offset = offset
 
     def SetBestHighlightVariablePeriodTime(self, static=None, tempo=None):
@@ -1163,6 +1282,11 @@ class PlayBoxControl():
         else:
             static = self.cue.fffr_static
         self.cue.fffr_variable = self.GetNearestBeatTime(static, tempo)
+        # 16 bars on the grid (4 in a highlight, GetFFFRVariableTime): a jump lands
+        # on the same place in the beat
+        grid = self.GetGrid()
+        if grid is not None:
+            self.cue.fffr_variable = 60.0 / grid.bpm * 64
 
     def IsPlaying(self):
         return audio.is_playing(self.cue.hStream)

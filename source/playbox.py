@@ -67,6 +67,8 @@ class PlayBox(RectBox, PlayBoxControl):
         self.ControlButton = PlayBoxControlButton(self)
         self.VolumeSlider = VolumeSlider(self)
         self.VolumeDropdown = VolumeDropdown(self)
+        self.TempoButton = TempoButton(self)
+        self.TempoDropdown = TempoDropdown(self)
         self.AudioControl = AudioControl(self)
         self.InitBuffer()
 
@@ -99,6 +101,7 @@ class PlayBox(RectBox, PlayBoxControl):
         self.Apic.OnSize(None)
         self.ControlButton.OnSize(None)
         self.VolumeSlider.OnSize(None)
+        self.TempoButton.OnSize(None)
         self.DirectDraw()
         self.Thaw()
 
@@ -787,6 +790,196 @@ class VolumeDropdown(wx.PopupWindow):
             self.SetPosition(position)
 
 
+class TempoButton(VolumeSlider):
+
+    # beside VOL, its slider dropping down the same way: the tempo in percent, the
+    # key lock and the range under it
+    LENGTH = 40
+
+    def IsPopupShown(self):
+        dropdown = getattr(self.parent, 'TempoDropdown', None)
+        return dropdown is not None and dropdown.IsShown()
+
+    def SetRectDraw(self, dc):
+        # off 0%: toggled on (red), its percent the label
+        percent = (self.parent.GetTempoRate() - 1.0) * 100.0
+        text = 'TEMPO'
+        if abs(percent) > 1e-6:
+            fill, label, text = ((255, 120, 120), (0, 0, 0), '%+.1f' % (percent))
+        elif self.IsPopupShown():
+            fill, label = ((180, 180, 180), (0, 0, 0))
+        else:
+            fill, label = ((0, 0, 0), (125, 125, 125))
+        dc.SetPen(wx.Pen((10, 10, 10), 1))
+        dc.SetBrush(wx.Brush(fill))
+        dc.DrawRectangle(1, 2, 37, 19)
+        dc.DrawLineList([(0, 0, 40, 0), (0, 22, 40, 22), (39, 0, 39, 23)],
+                        pens=wx.Pen((0, 0, 0), 1))
+        dc.SetFont(self.font)
+        dc.SetTextForeground(label)
+        w, h = dc.GetTextExtent(text)
+        dc.DrawText(text, int((39 - w) * 0.5), int(1 + (21 - h) * 0.5))
+
+    def CATCH_EVT_GLOBAL(self, event):
+        if self.IsPopupShown():
+            self.parent.TempoDropdown.FollowButton(event)
+        if self.parent.parent.HasToSkipEvent():
+            return
+        self.HandleButtonStatus(event)
+
+    def CATCH_EVT_MOUSEWHEEL(self, event):
+        if self.onClient is False:
+            return
+        self.parent.TempoDropdown.StepTempo(event.WheelRotation)
+        self.reInitBuffer = True
+
+    def ShowPopup(self):
+        if self.IsPopupShown():
+            self.parent.TempoDropdown.HideDropdown()
+        else:
+            self.parent.TempoDropdown.ShowDropdown()
+
+    def HidePopup(self):
+        if self.IsPopupShown():
+            self.parent.TempoDropdown.HideDropdown()
+
+    def IsMuted(self):
+        return False
+
+    def OnSize(self, event=None):
+        x = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH + VolumeSlider.LENGTH
+        self.SetRect((x, 5, self.LENGTH, 23))
+        self.DirectDraw()
+
+
+class TempoDropdown(VolumeDropdown):
+
+    RANGES = (8, 16, 50)
+    # within this share of the range from 0 a drag stops at 0
+    DETENT = 0.03
+
+    def __init__(self, parent):
+        VolumeDropdown.__init__(self, parent)
+        height = 182
+        self.SetSize((41, height))
+        self.rect_reset = (2, height - 3 - 19, 37, 19)
+        self.rect_range = (2, height - 3 - 19 * 2 - 3, 37, 19)
+        self.rect_key = (2, height - 3 - 19 * 3 - 6, 37, 19)
+
+    def GetSliderRange(self):
+        return (self.pad, self.rect_key[1] - self.pad)
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        w, h = self.GetClientSize()
+        dc.SetPen(wx.Pen((0, 0, 0), 1))
+        dc.SetBrush(wx.Brush((35, 35, 35)))
+        dc.DrawRectangle(0, 0, w, h)
+        x = (w - self.width) * 0.5
+        top, bottom = self.GetSliderRange()
+        centre = (top + bottom) * 0.5
+        share = (self.parent.GetTempoRate() - 1.0) * 100.0 / self.parent.GetTempoRange()
+        st = self.parent.st
+        rects = [(x - 1, top - 1, self.width + 2, bottom - top + 2),
+                 (x, centre, self.width, -share * (bottom - top) * 0.5)]
+        rects = [[int(v) for v in rect] for rect in rects]
+        pens = [wx.Pen(st.VOLUME_PN_COLOR, 1), wx.Pen(st.VOLUME_FG_COLOR, 1)]
+        brushes = [wx.Brush(st.VOLUME_BG_COLOR), wx.Brush(st.VOLUME_FG_COLOR)]
+        dc.DrawRectangleList(rects, pens=pens, brushes=brushes)
+        # 0% marked across the track
+        dc.SetPen(wx.Pen(st.VOLUME_PN_COLOR, 1))
+        dc.DrawLine(int(x - 5), int(centre), int(x + self.width + 5), int(centre))
+        self.DrawButton(dc, self.rect_key, 'KEY', self.parent.IsTempoKeyLockOn())
+        self.DrawButton(dc, self.rect_range, '%d%%' % (self.parent.GetTempoRange()), False)
+        self.DrawButton(dc, self.rect_reset, '0%', False)
+
+    def DrawButton(self, dc, rect, text, on):
+        # drawn as the control buttons are: red while toggled on
+        if on:
+            fill, label = ((255, 120, 120), (0, 0, 0))
+        else:
+            fill, label = ((0, 0, 0), (125, 125, 125))
+        x, y, w, h = rect
+        dc.SetPen(wx.Pen((10, 10, 10), 1))
+        dc.SetBrush(wx.Brush(fill))
+        dc.DrawRectangle(x, y, w, h)
+        dc.SetFont(self.parent.TempoButton.font)
+        dc.SetTextForeground(label)
+        tw, th = dc.GetTextExtent(text)
+        dc.DrawText(text, int(x + (w - tw) * 0.5), int(y + (h - th) * 0.5))
+
+    def OnMouse(self, event):
+        position = event.GetPosition()
+        if event.LeftDown():
+            self.sliding = False
+            if wx.Rect(*self.rect_key).Contains(position):
+                self.parent.SetTempoKeyLock(self.parent.IsTempoKeyLockOn() is False)
+            elif wx.Rect(*self.rect_range).Contains(position):
+                ranges = self.RANGES
+                current = self.parent.GetTempoRange()
+                index = ranges.index(current) if current in ranges else -1
+                self.parent.SetTempoRange(ranges[(index + 1) % len(ranges)])
+            elif wx.Rect(*self.rect_reset).Contains(position):
+                self.parent.SetTempoRate(1.0)
+            else:
+                self.sliding = True
+            if self.sliding is False:
+                self.Changed()
+                return
+        if event.LeftIsDown() is False:
+            self.sliding = False
+        if self.sliding is False:
+            return
+        top, bottom = self.GetSliderRange()
+        share = ((top + bottom) * 0.5 - event.GetY()) / ((bottom - top) * 0.5)
+        if abs(share) < self.DETENT:
+            share = 0.0
+        self.parent.SetTempoRate(1.0 + share * self.parent.GetTempoRange() / 100.0)
+        self.Changed()
+
+    def OnMouseWheel(self, event):
+        self.StepTempo(event.GetWheelRotation())
+
+    def StepTempo(self, rotation):
+        # 0.1% a notch, up faster
+        percent = (self.parent.GetTempoRate() - 1.0) * 100.0 + rotation / 120.0 * 0.1
+        self.parent.SetTempoRate(1.0 + round(percent, 1) / 100.0)
+        self.Changed()
+
+    def Changed(self):
+        self.Refresh(False)
+        self.parent.TempoButton.reInitBuffer = True
+
+    def GetBestPosition(self):
+        x, y = self.parent.TempoButton.ClientToScreen((-1, 22))
+        return (x, y)
+
+    def ShowDropdown(self):
+        self.SetPosition(self.GetBestPosition())
+        self.Show()
+        self.Refresh(False)
+        self.parent.TempoButton.reInitBuffer = True
+
+    def HideDropdown(self):
+        self.Hide()
+        self.parent.TempoButton.reInitBuffer = True
+
+    def FollowButton(self, event):
+        if self.IsShown() is False:
+            return
+        foreground = ctypes.windll.user32.GetForegroundWindow()
+        if foreground not in (wx.GetTopLevelParent(self.parent).GetHandle(), self.GetHandle()):
+            self.HideDropdown()
+            return
+        if event.LeftDown and self.GetScreenRect().Contains((event.x, event.y)) is False\
+                and self.parent.TempoButton.onClient is False:
+            self.HideDropdown()
+            return
+        position = self.GetBestPosition()
+        if tuple(self.GetPosition()) != tuple(position):
+            self.SetPosition(position)
+
+
 class PlayBoxTitle(RectBox):
 
     def __init__(self, parent):
@@ -945,7 +1138,7 @@ class PlayBoxInfo(RectBox):
         # autogain = self.parent.cue.autogain
         # decibel =  autogain/0.14
         key = self.parent.cue.key
-        tempo = self.parent.cue.tempo
+        tempo = self.parent.GetPlayingTempo()
         if key == '':
             key = ' '
         if key == '-':
@@ -975,7 +1168,7 @@ class PlayBoxInfo(RectBox):
         # vol_align = 12
         x, y, w, h = self.parent.GetRect()
         left = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH
-        left += VolumeSlider.LENGTH + 8
+        left += VolumeSlider.LENGTH + TempoButton.LENGTH + 8
         right = w - 5
         width = max(0, min(250, right - left))
         self.SetRect((right - width, 5, width, 23))
