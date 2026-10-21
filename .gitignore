@@ -18,3 +18,8 @@ desktop.ini
 .sublime-workspace
 *.sublime-workspace
 /CLAUDE.md
+# fetched or put by the user into %LOCALAPPDATA%\PyMusicPlayer\addons, never in the repository
+assets/dlls/LoudMax*.dll
+assets/dlls/bass_aac.dll
+assets/dlls/fpcalc.exe
+/plugin/build

@@ -2,7 +2,7 @@
 ## Features
 
 * Music player implemented with python.
-* Uses wxPython, numpy, scipy, pybass, un4seen BASS, LoudMax VST.
+* Uses wxPython, numpy, scipy, pybass, un4seen BASS, and Auto Master (a VST built from `plugin/`).
 * Drag and drop following audio files and playlists are supported.
 * mp2, mp3, mp4, wav, m4a, ape, flac, aac, ac3, aiff, wma, ogg, m3u
 * Displays waveform as a seek bar.
@@ -15,7 +15,7 @@
 * Ultra fast and accurate global BPM detection.
 * ID3Tag edit supported.
 * Editable hotkeys supported.
-* Automatic gain control with LoudMax VST plug-in.
+* Automatic gain control and limiting (LOUD) with Auto Master, for tracks and internet radio.
 * When you drag and drop audio files or playlists red bar icon will be displayed on the left side of the playlist which means that the track has not been analyzed. As soon as the player starts to analyze each track the icon will instantly changed to blue color. Wen the analysis of each track is finished the icon will be disappeared.
 * Analyzing is done by multi-processing and analyzed music files' information and waveforms are cached with SQLite database.
 * If you see exclamation icon on the left side of the playlist which means that the track has been moved or deleted. In this case, you can perform the Check File Consistency on the menu.
@@ -85,7 +85,8 @@
 The code in `source/` is released under the MIT license, see [LICENSE](LICENSE).
 
 Third-party binaries and assets bundled in this repository — including BASS (un4seen),
-BASS_VST (GNU LGPL v3), LoudMax and GNU Unifont — are **not** covered by that license and
-remain under their own terms. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the
+BASS_VST (GNU LGPL v3) and GNU Unifont — are **not** covered by that license and remain under
+their own terms. fpcalc and BASS_AAC are fetched when the player
+starts. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the
 full list, and `licenses/` for the license texts.
 

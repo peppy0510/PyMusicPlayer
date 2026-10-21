@@ -561,6 +561,34 @@ def mfeats_single(path, queue=None, on_wave=None):
         return mfeats_data
 
 
+def get_live_waveform_columns(mono, fs):
+    '''waveform columns as mfeats_single makes them (uint8: sqrt peak, sqrt level, the low,
+    mid and high shares), one each WAVEFORM_COLUMN_SECONDS of mono samples (-1 to 1) as they
+    are heard: the radio's, drawn as a track's is. the bands from the samples' last
+    WAVEFORM_BAND_SECONDS'''
+    size = max(int(fs * WAVEFORM_COLUMN_SECONDS), 1)
+    count = len(mono) // size
+    if count == 0:
+        return numpy.zeros((0, 5), dtype=numpy.uint8)
+    subs = numpy.abs(mono[:count * size]).reshape(count, size)
+    band_length = max(int(fs * WAVEFORM_BAND_SECONDS), 2)
+    block = numpy.zeros(band_length)
+    tail = mono[-band_length:]
+    block[band_length - len(tail):] = tail
+    power = numpy.abs(numpy.fft.rfft(block * numpy.hanning(band_length))) ** 2
+    freqs = numpy.fft.rfftfreq(band_length, 1.0 / fs)
+    bands = numpy.array([power[v].sum() for v in (
+        freqs < WAVEFORM_LOW_TOP,
+        (freqs >= WAVEFORM_LOW_TOP) & (freqs < WAVEFORM_HIGH_BOTTOM),
+        (freqs >= WAVEFORM_HIGH_BOTTOM) & (freqs < WAVEFORM_HIGH_TOP))])
+    shares = numpy.sqrt(bands)
+    shares = shares / max(shares.sum(), 1e-12)
+    columns = numpy.column_stack([
+        numpy.sqrt(numpy.clip(subs.max(axis=1), 0, 1)),
+        numpy.sqrt(numpy.clip(subs.mean(axis=1), 0, 1)), numpy.tile(shares, (count, 1))])
+    return numpy.uint8(numpy.round(255 * columns))
+
+
 def note_to_chroma_by_sum(notes):
     return [sum(notes[i::12]) for i in range(12)]
 
@@ -655,6 +683,15 @@ def convert_chord_type(chord, type_idx):
         chord_idx = [i for i, v in enumerate(chords) if v == chord]
         if chord_idx != []:
             return chord_type_definition[type_idx][chord_idx[0]]
+    return chord
+
+
+def transpose_chord(chord, semitones):
+    # the key moved by semitones, written as it was (flat, sharp or Camelot)
+    for names in get_chord_type_definition():
+        if chord in names:
+            idx = names.index(chord)
+            return names[(idx % 12 + semitones) % 12 + idx // 12 * 12]
     return chord
 
 
@@ -1194,7 +1231,7 @@ def fix_tempo_octave(tempo, mono, fs):
 # Beat This! over the highlight. scored on 268 hand-gridded EDM edits (2026-10-20): all
 # within 0.005 BPM, 98-99% of beats within 15 ms, downbeats 87%
 
-GRID_VERSION = '1.1.0'
+GRID_VERSION = '1.2.0'
 GRID_TABLE = 'mfeats_grid'
 GRID_FS = 11025
 GRID_HOP = 11
@@ -1212,6 +1249,16 @@ BEATTHIS = Struct(predictor=None, failed=False, lock=threading.Lock())
 # the right bar), chance 25%
 PHRASE_WINDOW = 4
 PHRASE_BANDS = numpy.geomspace(40, 5000, 13)
+# Beat This!'s bar given up for the one the song's changes fall on (check_grid_bar)
+BAR_OVERRIDE = 3.0
+# a phrase drawn only when its score leads the next by this share: 94% right on the edits
+# for the 73% of songs sure enough (all of them, 85%)
+PHRASE_SURE = 0.2
+# a drop's start: the low band's rise over its spread more than the chosen start's
+# (refine_highlight_start); a calm bar (breakdown, outro): under this share of the body's
+# level or low band (choose_long_highlight)
+HIGHLIGHT_LOW_RISE = 1.0
+HIGHLIGHT_CALM = 0.5
 
 
 def read_mono_all(path, fs_out):
@@ -1374,18 +1421,160 @@ def analyze_grid(path, tempo, highlight):
         found = get_grid_bar(downbeats, phase, period)
         if found is not None:
             bar, source = found, 'beatthis'
-    downbeat = (phase + bar * period) % (period * 4)
+    phrase, margin = 0, 0.0
     try:
-        phrase = get_grid_phrase(mono, GRID_FS * 4, downbeat, period)
+        change = get_beat_changes(mono, GRID_FS * 4, phase % period, period)
+        # beat numbers from the grid's first beat (phase % period: the quarter-beat move
+        # can take phase past a beat)
+        bar = (bar + int(round((phase - phase % period) / period))) % 4
+        checked = check_grid_bar(change, bar)
+        if checked != bar:
+            bar, source = checked, source + '+changes'
+        phrase, margin = get_grid_phrase(change, bar)
     except Exception:
-        phrase = 0
-    return Struct(bpm=bpm, downbeat=downbeat, source=source, phrase=phrase)
+        pass
+    downbeat = (phase % period + bar * period) % (period * 4)
+    return Struct(bpm=bpm, downbeat=downbeat, source=source, phrase=phrase,
+                  phrase_margin=margin)
 
 
-def get_grid_phrase(mono, fs, downbeat, period):
-    '''bars (0 to 3) from downbeat to the first phrase's start'''
+def get_highlight_taper(count, duration):
+    '''the author's weight along the song (mfeats_single): its head and its tail eased in and
+    out with a Hamming window, the first and the last quarter of a song over four minutes
+    (60 s of a shorter one), so the highlight is found away from the intro and the outro'''
+    limit_factor = 1 - (duration - 60.0) / duration
+    if limit_factor > 1.00:
+        limit_factor = 0.00
+    if limit_factor < 0.25:
+        limit_factor = 0.25
+    taper = numpy.ones(count)
+    htlength = int(count * limit_factor)
+    if htlength > 0:
+        window = numpy.hamming(htlength * 2)
+        taper[:htlength] = window[:htlength]
+        taper[-htlength:] = window[htlength:]
+    return taper
+
+
+def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=None,
+                            earliest=None, latest=None):
+    '''(start, scores) of the highlight on the grid. the author's choice (mfeats_single: the
+    loudest stretch of the length by the mean amplitude, its head and tail eased so it is
+    found away from the intro and the outro) made of phrase starts only (4 bars), and then
+    preferring a stretch that starts on a rise (a drop) and holds (no bar falling away).
+    earliest, latest: the starts allowed (None when none of them fits in the song)'''
+    period = 60.0 / bpm
+    bar = period * 4
+    phrase = step or period * 16
+    columns = len(waveform) / duration
+    # the waveform keeps the level square-rooted: back to the mean amplitude
+    amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
+    weighted = amplitude * get_highlight_taper(len(amplitude), duration)
+    low = waveform[:, 2].astype(float)
+
+    def mean(values, start, end):
+        a, b = int(max(start, 0) * columns), int(min(end, duration) * columns)
+        return values[a:b].mean() if b > a else 0.0
+
+    first = phrase_start % bar
+    count = int((duration - first) / bar)
+    if count < 8:
+        return None, []
+    bars = numpy.array([mean(amplitude, first + i * bar, first + (i + 1) * bar)
+                        for i in range(count)])
+    lows = numpy.array([mean(low, first + i * bar, first + (i + 1) * bar) for i in range(count)])
+    spread = bars.std() + 1e-9
+    low_spread = lows.std() + 1e-9
+    size = max(1, int(round(length / bar)))
+    scored = []
+    start = phrase_start % phrase
+    while start + bar * size <= duration + 1e-6 or not scored:
+        i = int(round((start - first) / bar))
+        inside = bars[i:i + size]
+        if len(inside) == 0:
+            break
+        before = bars[max(0, i - 4):i]
+        rise = (inside[:2].mean() - before.mean()) / spread if len(before) else 0.0
+        dip = (inside.mean() - inside.min()) / spread
+        # the author's measure first, in the song's own spread; the rest corrects it
+        score = (mean(weighted, start, start + length) - bars.mean()) / spread\
+            + 0.25 * (lows[i:i + size].mean() - lows.mean()) / low_spread\
+            + 0.2 * min(max(rise, 0.0), 2.0) - 0.4 * dip
+        if (earliest is None or start >= earliest - 1e-6) and \
+                (latest is None or start <= latest + 1e-6):
+            scored.append((score, start))
+        start += phrase
+        if not scored and start > duration:
+            break
+    return (max(scored)[1] if scored else None), scored
+
+
+def get_bar_levels(waveform, duration, bar, first):
+    """(level, low) per bar from first: the mean amplitude, and the low band's share of it
+    (kick and bass) in the same amplitude"""
+    columns = len(waveform) / duration
+    amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
+    low = amplitude * waveform[:, 2].astype(float) / 255.0
+    levels, lows = [], []
+    for i in range(max(0, int((duration - first) / bar))):
+        a, b = int((first + i * bar) * columns), int((first + (i + 1) * bar) * columns)
+        levels.append(amplitude[a:b].mean() if b > a else 0.0)
+        lows.append(low[a:b].mean() if b > a else 0.0)
+    return numpy.array(levels), numpy.array(lows)
+
+
+def refine_highlight_start(waveform, duration, bpm, start):
+    """start moved a bar on or back to where the kick and bass come back: a drum fill bar
+    before a drop has them pulled out (its start was taken for the drop's when the phrase
+    was a bar off, or any bar could start it). moved only when the low band rises there
+    by HIGHLIGHT_LOW_RISE of its bar to bar spread more than at start"""
+    bar = 4 * 60.0 / bpm
+    first = start % bar
+    _, lows = get_bar_levels(waveform, duration, bar, first)
+    if len(lows) < 8:
+        return start
+    rises = numpy.diff(lows)
+    spread = rises.std() + 1e-12
+    i = int(round((start - first) / bar))
+
+    def rise(k):
+        return lows[k] - lows[k - 1] if 1 <= k < len(lows) else -numpy.inf
+
+    best = max((-1, 0, 1), key=lambda k: (rise(i + k), -abs(k)))
+    if best != 0 and rise(i + best) > 0 and \
+            rise(i + best) - rise(i) > HIGHLIGHT_LOW_RISE * spread:
+        return start + best * bar
+    return start
+
+
+def choose_long_highlight(waveform, duration, bpm, phrase_start, length, step, earliest,
+                          latest):
+    """start of a highlight longer than the chosen one (choose_phrase_highlight between
+    earliest and latest): the one with the fewest calm bars in it (a breakdown or the outro:
+    the level, or the kick and bass, under HIGHLIGHT_CALM of the song's body, its loudest
+    quarter), then by the author's measure. None when no start is allowed"""
+    _, scored = choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step,
+                                        earliest, latest)
+    if not scored:
+        return None
+    bar = 4 * 60.0 / bpm
+    first = phrase_start % bar
+    levels, lows = get_bar_levels(waveform, duration, bar, first)
+    calm = (levels < HIGHLIGHT_CALM * numpy.quantile(levels, 0.75)) | \
+        (lows < HIGHLIGHT_CALM * numpy.quantile(lows, 0.75))
+    size = max(1, int(round(length / bar)))
+
+    def count(start):
+        i = int(round((start - first) / bar))
+        return int(calm[max(i, 0):i + size].sum())
+
+    return min(scored, key=lambda v: (count(v[1]), -v[0]))[1]
+
+
+def get_beat_changes(mono, fs, start, period):
+    '''how much the sound changes at each beat from start: 4 beats after against the 4 before
+    (12 bands' log energy and the loudness)'''
     feats = []
-    start = downbeat % period
     for k in range(int((len(mono) / fs - start) / period)):
         segment = mono[int((start + k * period) * fs):int((start + (k + 1) * period) * fs)]
         power = numpy.abs(numpy.fft.rfft(segment * numpy.hanning(len(segment)))) ** 2
@@ -1396,15 +1585,37 @@ def get_grid_phrase(mono, fs, downbeat, period):
                               numpy.log1p(numpy.sqrt(numpy.mean(segment ** 2)) * 100)])
     feats = numpy.array(feats)
     w = PHRASE_WINDOW
-    if len(feats) < w * 2 + 16:
-        return 0
     change = numpy.zeros(len(feats))
     for k in range(w, len(feats) - w):
         change[k] = numpy.linalg.norm(feats[k:k + w].mean(0) - feats[k - w:k].mean(0))
-    # beat numbers from the grid's first beat; the downbeat's among them
-    bar0 = int(round((downbeat - start) / period)) % 4
-    scores = [change[(bar0 + 4 * q) % 16::16].sum() for q in range(4)]
-    return int(numpy.argmax(scores))
+    return change
+
+
+def check_grid_bar(change, bar):
+    '''the bar's first beat (0 to 3 from the grid's first beat) the song's biggest changes say,
+    when they say it clearly: the changes on another beat at least BAR_OVERRIDE times those on
+    bar (else bar). 253 of 268 hand-gridded edits against 244 for Beat This! alone'''
+    peaks = [k for k in range(1, len(change) - 1)
+             if change[k] > 0 and change[k] == change[max(0, k - 3):k + 4].max()]
+    if len(peaks) < 8:
+        return bar
+    values = numpy.array([change[k] for k in peaks])
+    top = [k for k in peaks if change[k] >= numpy.quantile(values, 0.7)]
+    weights = numpy.bincount([k % 4 for k in top], weights=[change[k] for k in top], minlength=4)
+    best = int(weights.argmax())
+    if best != bar and weights[best] >= BAR_OVERRIDE * max(weights[bar], 1e-9):
+        return best
+    return bar
+
+
+def get_grid_phrase(change, bar):
+    '''(bars 0 to 3 from the bar's first beat to the first phrase's start, how far its score
+    leads the next one's as a share of it)'''
+    if len(change) < PHRASE_WINDOW * 2 + 16:
+        return 0, 0.0
+    scores = numpy.array([change[(bar + 4 * q) % 16::16].sum() for q in range(4)])
+    ranked = numpy.sort(scores)[::-1]
+    return int(numpy.argmax(scores)), float((ranked[0] - ranked[1]) / (ranked[0] + 1e-9))
 
 
 def get_tempi_using_overlap_sum_fft(audata, samplerate):
@@ -1736,7 +1947,9 @@ def delete_mfeats_wave(mdx):
 # move of it, kept as shift is
 GRID_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('bpm', 'REAL'), ('downbeat', 'REAL'),
                    ('shift', 'INTEGER'), ('source', 'TEXT'), ('version', 'TEXT'),
-                   ('date', 'REAL'), ('phrase', 'INTEGER'), ('phrase_shift', 'INTEGER'))
+                   ('date', 'REAL'), ('phrase', 'INTEGER'), ('phrase_shift', 'INTEGER'),
+                   ('phrase_margin', 'REAL'), ('phrase_set', 'INTEGER'),
+                   ('bpm_scale', 'REAL'))
 
 
 def connect_grid():
@@ -1764,6 +1977,20 @@ def get_grid(mdx):
     return Struct(**dict(zip([key for key, _ in GRID_DEFINITION], row)))
 
 
+def get_done_mdx():
+    '''the songs with nothing left to analyze: their analysis this version's, and their grid
+    too (or the analysis failed, so no grid comes)'''
+    conn = connect_grid()
+    try:
+        rows = conn.execute(
+            'SELECT m.mdx FROM mfeats m LEFT JOIN %s g ON g.mdx = m.mdx '
+            'WHERE m.version = ? AND (m.error != 0 OR g.version = ?)' % (GRID_TABLE),
+            (MFEATS_VERSION, GRID_VERSION)).fetchall()
+    finally:
+        conn.close()
+    return set(row[0] for row in rows)
+
+
 def is_grid_current(mdx):
     grid = get_grid(mdx)
     return grid is not None and grid.version == GRID_VERSION
@@ -1771,25 +1998,75 @@ def is_grid_current(mdx):
 
 def insert_grid(mdx, grid):
     old = get_grid(mdx)
-    shift = old.shift if old is not None and old.shift else 0
-    phrase_shift = old.phrase_shift if old is not None and old.phrase_shift else 0
     if grid is None:
-        grid = Struct(bpm=0.0, downbeat=0.0, source='', phrase=0)
+        grid = Struct(bpm=0.0, downbeat=0.0, source='', phrase=0, phrase_margin=0.0)
+    # the user's tempo scale (x2, /2) kept through a new analysis
+    scale = old.bpm_scale if old is not None and old.bpm_scale else 1.0
+    shift, phrase_shift = get_kept_moves(old, grid, scale)
+    # a phrase the user set stays set through a new analysis
+    phrase_set = 1 if old is not None and old.phrase_set else 0
     conn = connect_grid()
     try:
-        conn.execute('INSERT OR REPLACE INTO %s VALUES (?,?,?,?,?,?,?,?,?)' % (GRID_TABLE),
+        conn.execute('INSERT OR REPLACE INTO %s VALUES (?,?,?,?,?,?,?,?,?,?,?,?)' % (GRID_TABLE),
                      (mdx, grid.bpm, grid.downbeat, shift, grid.source, GRID_VERSION,
-                      time.time(), grid.phrase, phrase_shift))
+                      time.time(), grid.phrase, phrase_shift, grid.phrase_margin, phrase_set,
+                      scale))
         conn.commit()
     finally:
         conn.close()
 
 
-def set_grid_shift(mdx, shift, key='shift'):
-    # key: 'shift' (the bar, in beats) or 'phrase_shift' (the phrase, in bars)
+def get_kept_moves(old, grid, scale=1.0):
+    '''(shift, phrase_shift) for a new analysis, so that a bar or phrase the user moved stays
+    where they put it in the song (not the same count of beats from a new downbeat); the moves
+    are in beats of the user's tempo scale'''
+    if old is None or not (old.shift or old.phrase_shift) or not old.bpm or not grid.bpm:
+        return 0, 0
+    period = 60.0 / (grid.bpm * scale)
+    old_period = 60.0 / (old.bpm * (old.bpm_scale or 1.0))
+    bar = (old.downbeat + (old.shift or 0) * old_period) % (old_period * 4)
+    phrase = bar + ((old.phrase or 0) + (old.phrase_shift or 0)) % 4 * old_period * 4
+    shift = int(round((bar - grid.downbeat) / period)) % 4 if old.shift else 0
+    downbeat = grid.downbeat + shift * period
+    phrase_shift = (int(round((phrase - downbeat) / (period * 4))) - (grid.phrase or 0)) % 4\
+        if old.phrase_shift or old.shift else 0
+    return shift, phrase_shift
+
+
+def apply_grid_scale(grid):
+    '''the grid as played: its tempo times the user's scale; a phrase found at the analysis'
+    tempo is not known at another (unless the user set it)'''
+    scale = grid.bpm_scale or 1.0
+    if scale == 1.0:
+        return grid
+    played = Struct(**vars(grid))
+    played.bpm = grid.bpm * scale
+    played.downbeat = grid.downbeat % (60.0 / played.bpm * 4)
+    if not grid.phrase_set:
+        played.phrase_margin = 0.0
+    return played
+
+
+def set_grid_scale(mdx, scale):
+    # a new scale: the moves were in the old one's beats, so they start again
+    conn = connect_grid()
+    try:
+        conn.execute('UPDATE %s SET bpm_scale=?, shift=0, phrase_shift=0, phrase_set=0 '
+                     'WHERE mdx=?' % (GRID_TABLE), (scale, mdx))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
+    # key: 'shift' (the bar, in beats) or 'phrase_shift' (the phrase, in bars); phrase_set:
+    # the phrase put by the user (1) or back to the analysis (0)
     conn = connect_grid()
     try:
         conn.execute('UPDATE %s SET %s=? WHERE mdx=?' % (GRID_TABLE, key), (int(shift) % 4, mdx))
+        if phrase_set is not None:
+            conn.execute('UPDATE %s SET phrase_set=? WHERE mdx=?' % (GRID_TABLE),
+                         (phrase_set, mdx))
         conn.commit()
     finally:
         conn.close()

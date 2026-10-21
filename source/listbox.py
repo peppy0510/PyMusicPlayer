@@ -10,6 +10,8 @@ import ctypes
 import glob
 import images
 import io
+import library
+import listimages
 import math
 import os
 import stat
@@ -31,6 +33,7 @@ from listboxtab import ListBoxTabDnD
 from listboxtab import ListBoxTabSliderV
 from listboxtab import TabRenameBox
 from macroboxlib import Button
+from macroboxlib import CheckBox
 from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
 from macroboxlib import DialogBox
@@ -347,11 +350,17 @@ class ListBoxList(RectBox):
         orderIdx = self.parent.GetColumnKeyToIdx('order')
         statusIdx = self.parent.GetColumnKeyToIdx('status')
         # itemslen = len(self.parent.innerList[listIdx].items)
+        listColumns = self.parent.innerList[listIdx].columns
+        pictures = list()
         for row, item in enumerate(shownItemIdx):
 
             for i, col in enumerate(shownColIdx):
                 column = columns[i]
                 if item > len(self.parent.innerList[listIdx].items):
+                    continue
+                # a cover or a waveform: drawn after the text, over the row's ground
+                if listColumns[col].key in ('cover', 'wave'):
+                    pictures.append((listColumns[col].key, row, item, column))
                     continue
 
                 string = self.parent.innerList[listIdx].items[item][col]
@@ -426,6 +435,8 @@ class ListBoxList(RectBox):
         dc.DrawTextList(s_texts, s_xys, foregrounds=wx.Colour(r, g, b))
         color = self.parent.st.LIST_PN_COLOR
         dc.DrawLineList(lines, pens=wx.Pen(color, 0))
+        self.DrawPictures(dc, pictures, listIdx, row_size, rect.y - row_offset,
+                          bgcolor_odd, bgcolor_even, shownItemIdx)
 
         # draw status column
         procpath = self.parent.parent.MFEATS.GetProcPath()
@@ -491,6 +502,31 @@ class ListBoxList(RectBox):
                     dc.DrawRectangleList(rects,
                                          pens=(wx.Pen(font_color, 1),), brushes=(wx.Brush(font_color),))
                 break
+
+    def DrawPictures(self, dc, pictures, listIdx, row_size, top, bgcolor_odd, bgcolor_even,
+                     shownItemIdx):
+        if pictures == []:
+            return
+        if getattr(self, 'images', None) is None:
+            self.images = listimages.ListImages(self.parent.parent.MFEATS.RequestListRedraw)
+        items = self.parent.innerList[listIdx].items
+        mdxIdx = self.parent.GetColumnKeyToIdx('mdx')
+        pathIdx = self.parent.GetColumnKeyToIdx('path')
+        selected = self.parent.st.SELECTED_BG_COLOR
+        for kind, row, item, column in pictures:
+            if item >= len(items):
+                continue
+            if self.parent.IsHighlightedItem(item):
+                ground = selected
+            else:
+                ground = bgcolor_odd if shownItemIdx[row] % 2 == 0 else bgcolor_even
+            width, height = (column.width - 4, row_size - 2)
+            if width < 4 or height < 4:
+                continue
+            bitmap = self.images.GetBitmap(kind, items[item][mdxIdx], items[item][pathIdx],
+                                           width, height, ground)
+            if bitmap:
+                dc.DrawBitmap(bitmap, column.x + 2, row_size * row + top + 1)
 
     def DrawInsertItemLine(self, dc):
         row_size = self.parent.GetRowsHeight()
@@ -1286,6 +1322,9 @@ class ListBoxSash():
     def SetHot(self, event):
         if self.IsOnSize():
             self.hot = True
+        elif getattr(event, 'covered', False):
+            # a dialog over the divider: its resize cursor was forced in the dialog
+            self.hot = False
         elif self.hot:
             self.hot = self.IsInSashPoint((event.x, event.y), LIST_SASH_HOT_MARGIN)
         else:
@@ -2217,6 +2256,81 @@ class ItemEditBox(DialogBox):
         self.Destroy()
 
 
+def show_library_results(mainpanel, title, songs):
+    # the found songs in their tab, the tab chosen and drawn as a new one is
+    library.show_results(mainpanel.ListBox, title, songs)
+    mainpanel.ListBox.Header.SetAutoColumnWidth()
+    mainpanel.ListBox.reInitBuffer = True
+    mainpanel.ListBox.List.reInitBuffer = True
+    mainpanel.ListTab.reInitBuffer = True
+    mainpanel.ListTab.TabList.DirectDraw()
+
+
+class LibrarySearchBox(DialogBox):
+
+    # the library (every playlist's songs) searched: words, a BPM range, a key and a genre
+    # together; what matches goes to the Search tab
+    def __init__(self, parent, mainpanel):
+        DialogBox.__init__(self, parent, size=(440, 250))
+        self.mainpanel = mainpanel
+        self.SetTitle('Find in Library')
+        x, y = (90, 16)
+        style = wx.TE_PROCESS_ENTER
+        StaticText(self, label='Words', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
+        self.Words = TextCtrl(self, pos=(x, y), size=(320, 22), style=style)
+        y += 32
+        StaticText(self, label='BPM', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
+        self.Low = TextCtrl(self, pos=(x, y), size=(60, 22), style=style)
+        StaticText(self, label='to', pos=(x + 66, y + 3), size=(16, -1))
+        self.High = TextCtrl(self, pos=(x + 86, y), size=(60, 22), style=style)
+        self.Octave = CheckBox(self, label='Half and double too', pos=(x + 160, y + 4))
+        y += 32
+        StaticText(self, label='Key', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
+        self.Key = TextCtrl(self, pos=(x, y), size=(60, 22), style=style)
+        self.Compatible = CheckBox(self, label='Compatible keys too', pos=(x + 160, y + 4))
+        y += 32
+        StaticText(self, label='Genre', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
+        self.Genre = TextCtrl(self, pos=(x, y), size=(150, 22), style=style)
+        for control in (self.Words, self.Low, self.High, self.Key, self.Genre):
+            control.Bind(wx.EVT_TEXT_ENTER, self.OnSearch)
+        width, height = self.GetClientSize()
+        self.Status = StaticText(self, label='', pos=(10, height - 60), size=(width - 20, 18))
+        self.PlayingButton = Button(self, label='From playing song')
+        self.PlayingButton.SetRect((10, height - 36, 130, 26))
+        self.PlayingButton.Bind(wx.EVT_BUTTON, self.OnPlaying)
+        self.SearchButton = Button(self, label='Search')
+        self.SearchButton.SetPosition((width - 175, height - 36))
+        self.SearchButton.Bind(wx.EVT_BUTTON, self.OnSearch)
+        self.CloseButton = Button(self, label='Close')
+        self.CloseButton.SetPosition((width - 90, height - 36))
+        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+
+    def OnPlaying(self, event):
+        playbox = self.mainpanel.PlayBox
+        tempo = playbox.GetPlayingTempo()
+        if tempo > 0:
+            self.Low.SetValue('%.1f' % (tempo * 0.97))
+            self.High.SetValue('%.1f' % (tempo * 1.03))
+            self.Octave.SetValue(True)
+        key = playbox.GetPlayingKey()
+        if key and key not in ('-', ' '):
+            self.Key.SetValue(key)
+            self.Compatible.SetValue(True)
+
+    def OnSearch(self, event):
+        songs = library.collect(self.mainpanel.ListBox)
+        found = library.search(
+            songs, text=self.Words.GetValue(), low=library.to_float(self.Low.GetValue()),
+            high=library.to_float(self.High.GetValue()), octave=self.Octave.GetValue(),
+            key=self.Key.GetValue().strip(), compatible=self.Compatible.GetValue(),
+            genre=self.Genre.GetValue())
+        show_library_results(self.mainpanel, library.SEARCH_TITLE, found)
+        self.Status.SetLabel('%d of %d songs in the library' % (len(found), len(songs)))
+
+    def OnClose(self, event):
+        self.Destroy()
+
+
 class WebInfoBox(DialogBox):
 
     COVER = 200
@@ -2501,6 +2615,10 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             name = 'Open Containing Folder'
             self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
             self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
+            idx = 6
+            name = 'Find Similar'
+            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
 
         self.AppendSeparator()
 
@@ -2594,12 +2712,41 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             self.AnalyzeSelectedItems(forced=True)
         elif event.Id == 5:
             self.OpenContainingFolder()
+        elif event.Id == 6:
+            self.FindSimilar()
         # elif event.Id == 7-diff:
         #   self.AnalyzeSelectedItems()
         # elif event.Id == 8-diff:
         #   self.AnalyzeSelectedItems(forced=True)
         # elif event.Id == 8-diff:
         #   self.CheckItemsConsistency()
+
+    def FindSimilar(self):
+        # the library ranked against the song on a thread (each song's waveform is read
+        # once), the result in the Similar tab
+        listbox = self.parent.parent
+        mainpanel = listbox.parent
+        selected = listbox.GetSelectedItems()
+        if selected == []:
+            return
+        path = listbox.GetItemValueByColumnKey(selected[0], 'path')
+        songs = library.collect(listbox)
+        target = [v for v in songs if v.path == path]
+        if target == []:
+            return
+        mainpanel.StatusBox.alarm = 'Finding songs like %s ...' % (os.path.basename(path))
+        mainpanel.StatusBox.alarm_timer = 0
+
+        def work():
+            found = library.similar(songs, target[0])
+            wx.CallAfter(done, found)
+
+        def done(found):
+            show_library_results(mainpanel, library.SIMILAR_TITLE, [target[0]] + found)
+            mainpanel.StatusBox.alarm = '%d songs like it in the Similar tab' % (len(found))
+            mainpanel.StatusBox.alarm_timer = 0
+
+        threading.Thread(target=work, daemon=True).start()
 
     def EditSelectedItem(self):
         self.parent.parent.parent.DialogBox = ItemEditBox(self.parent)

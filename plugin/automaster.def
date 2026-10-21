@@ -1,0 +1,4 @@
+LIBRARY PyMusicPlayerAutoMaster
+EXPORTS
+    VSTPluginMain
+    main=VSTPluginMain

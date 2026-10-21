@@ -70,9 +70,8 @@ a = Analysis([os.path.join('source', 'main.pyw')],
 a.datas += grapdatas(path.assets, 'icon', 2, 'DATA', ['icon.ico'])
 a.datas += grapdatas(path.assets, 'fonts', 2, 'DATA', ['unifont.ttf'])
 a.datas += grapdatas(path.assets, 'dlls', 2, 'DATA', [
-    'LoudMax.dll', 'LoudMax64.dll', 'LoudMaxLite.dll', 'LoudMaxLite64.dll'])
-a.datas += grapdatas(path.assets, 'dlls', 2, 'DATA', [
-    'bass.dll', 'bass_fx.dll', 'bass_vst.dll', 'bassmidi.dll', 'bassmix.dll', 'tags.dll'])
+    'bass.dll', 'bass_fx.dll', 'bass_vst.dll', 'bassmidi.dll', 'bassmix.dll', 'basshls.dll',
+    'tags.dll', 'PyMusicPlayerAutoMaster.dll'])
 # licence texts must ship with the build too, not just with the repository
 a.datas += grapdatas(path.home, os.path.join('licenses', 'BASS_VST'), 2, 'DATA')
 a.datas += grapdatas(path.home, os.path.join('licenses', 'Unifont'), 2, 'DATA')

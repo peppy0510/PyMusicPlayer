@@ -10,6 +10,7 @@ import images
 import io
 import macroboxstyle
 import os
+import radio
 import threading
 import time
 import webbrowser
@@ -24,6 +25,8 @@ from dialogbox import DialogPanel
 from dialogbox import UpdateBox
 from listbox import FileOpenDialog
 from listbox import FileSaveDialog
+from listbox import LibrarySearchBox
+from macroboxlib import AddMissingColumns
 from macroboxlib import Button
 from macroboxlib import CheckBox
 from macroboxlib import ComboBox
@@ -39,6 +42,9 @@ from macroboxlib import TextCtrl
 from operator import itemgetter
 from utilities import Struct
 from wininstance import get_current_real_cwd
+
+
+ROW_HEIGHTS = (22, 26, 32, 40, 48)
 # from dialogbox import LicenseBox
 # from macroboxlib import *
 # from scripteditor import *
@@ -764,6 +770,8 @@ class MacroBoxPreference():
 
         innerList = GetPreference('innerlist')
         if innerList is not None:
+            for each in innerList:
+                AddMissingColumns(each)
             self.MainPanel.ListBox.innerList = innerList
         selectedList = GetPreference('selectedlist')
         if selectedList is not None:
@@ -1077,15 +1085,7 @@ class AppearancePanel(wx.Panel):
         dutaionTypeId = event.Id - 201
         value = [v for i, v in enumerate(
             self.MenuBar.highlightDurationItems) if dutaionTypeId == i][0]
-        self.MainPanel.PlayBox.SetBestHighlightVariablePeriodTime(static=value)
-        if self.MainPanel.PlayBox.IsPlaying() and self.MainPanel.PlayBox.IsHighlightOn():
-            self.MainPanel.PlayBox.GotoTrackOffsetTime()
-            self.MainPanel.PlayBox.reInitWave = True
-            self.MainPanel.PlayBox.OnSize()
-        elif self.MainPanel.PlayBox.IsHighlightOn():
-            self.MainPanel.PlayBox.GotoTrackOffsetTime()
-            self.MainPanel.PlayBox.reInitWave = True
-            self.MainPanel.PlayBox.OnSize()
+        self.MainPanel.PlayBox.ChangeHighlightLength(value)
         for i in range(len(self.MenuBar.highlightDurationItems)):
             if i == dutaionTypeId:
                 self.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check()
@@ -1546,7 +1546,7 @@ class PreferenceWebInfoPanel(DialogPanel):
         offset += 10
         fpcalc = webinfo.find_fpcalc()
         if fpcalc is None:
-            label = u'fpcalc.exe not found: put it in assets\\dlls for AcoustID.'
+            label = u'fpcalc.exe not fetched yet: it is fetched when the player starts.'
         else:
             label = u'fpcalc: %s' % (fpcalc)
         StaticText(self, label=label, pos=(20, offset), size=(470, -1))
@@ -1761,6 +1761,8 @@ class MacroBoxMenuBar():
         self.default_style = self.GetWindowStyle()
         self.Bind(wx.EVT_MENU, self.OnExportTracklist, self.MenuBar.itemExportTracklist)
         self.Bind(wx.EVT_MENU, self.OnImportTracks, self.MenuBar.itemImportTracks)
+        self.Bind(wx.EVT_MENU, self.OnFindInLibrary, self.MenuBar.itemFindInLibrary)
+        self.Bind(wx.EVT_MENU, self.OnInternetRadio, self.MenuBar.itemInternetRadio)
         self.Bind(wx.EVT_MENU, self.OnExit, self.MenuBar.itemExit)
         self.Bind(wx.EVT_MENU, self.OnAlwaysOnTop, self.MenuBar.itemAlwaysOnTop)
         self.Bind(wx.EVT_MENU, self.OnAutoAnalyze, self.MenuBar.itemAutoAnalyze)
@@ -1770,6 +1772,9 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
         self.Bind(wx.EVT_MENU, self.OnWaveformDetailShow, self.MenuBar.itemWaveformDetailShow)
         self.Bind(wx.EVT_MENU, self.OnBeatGridShow, self.MenuBar.itemBeatGridShow)
+        for itemId in self.MenuBar.rowHeightItems:
+            self.Bind(wx.EVT_MENU, self.OnRowHeight, id=itemId)
+        self.CheckRowHeightItem()
         self.Bind(wx.EVT_MENU, self.OnListTabShow, self.MenuBar.itemListTabShow)
         self.Bind(wx.EVT_MENU, self.OnPreference, self.MenuBar.itemPreference)
         # self.Bind(wx.EVT_MENU, self.OnMaximizeLoudness, self.MenuBar.itemMaximizeLoudness)
@@ -1799,6 +1804,23 @@ class MacroBoxMenuBar():
         # if self.MainPanel.ListTab.TextEdit is not None:
         #     self.MainPanel.ListTab.TextEdit.destroy = True
         event.Skip()
+
+    def OnInternetRadio(self, event):
+        box = getattr(self, 'RadioBox', None)
+        if box:
+            box.Raise()
+            return
+        self.RadioBox = radio.RadioBox(self, self.MainPanel)
+        self.RadioBox.Show()
+
+    def OnFindInLibrary(self, event):
+        # left open to search again; one at a time
+        box = getattr(self, 'LibrarySearchBox', None)
+        if box:
+            box.Raise()
+            return
+        self.LibrarySearchBox = LibrarySearchBox(self, self.MainPanel)
+        self.LibrarySearchBox.Show()
 
     def OnImportTracks(self, event):
         # if self.IsTextEditTurnedOn(): return
@@ -1844,6 +1866,21 @@ class MacroBoxMenuBar():
 
     def OnBeatGridShow(self, event):
         self.SetBeatGridShow(event.IsChecked())
+
+    def OnRowHeight(self, event):
+        height = self.MenuBar.rowHeightItems[event.GetId()]
+        listbox = self.MainPanel.ListBox
+        listbox.line_space = height
+        listbox.SetRowsHeightAll(height)
+        SetPreference('listbox_line_space', height)
+        listbox.List.reInitBuffer = True
+        listbox.reInitBuffer = True
+
+    def CheckRowHeightItem(self):
+        height = self.MainPanel.ListBox.line_space
+        for itemId, value in self.MenuBar.rowHeightItems.items():
+            if value == height:
+                self.MenuBar.menuRowHeight.Check(itemId, True)
 
     def ColorThemeMap(self):
         color_themes = list()
@@ -1998,16 +2035,7 @@ class MacroBoxMenuBar():
         dutaionTypeId = event.Id - 201
         value = [v for i, v in enumerate(
             self.MenuBar.highlightDurationItems) if dutaionTypeId == i][0]
-        self.MainPanel.PlayBox.SetBestHighlightVariablePeriodTime(static=value)
-        if self.MainPanel.PlayBox.IsPlaying()\
-                and self.MainPanel.PlayBox.IsHighlightOn():
-            self.MainPanel.PlayBox.GotoTrackOffsetTime()
-            self.MainPanel.PlayBox.reInitWave = True
-            self.MainPanel.PlayBox.OnSize()
-        elif self.MainPanel.PlayBox.IsHighlightOn():
-            self.MainPanel.PlayBox.GotoTrackOffsetTime()
-            self.MainPanel.PlayBox.reInitWave = True
-            self.MainPanel.PlayBox.OnSize()
+        self.MainPanel.PlayBox.ChangeHighlightLength(value)
         for i in range(len(self.MenuBar.highlightDurationItems)):
             if i == dutaionTypeId:
                 self.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check()
@@ -2054,6 +2082,14 @@ class MenuBar(wx.MenuBar):
             self.menuFile, wx.ID_ANY, u'Export Tracklist', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuFile.Append(self.itemExportTracklist)
 
+        self.itemFindInLibrary = wx.MenuItem(
+            self.menuFile, wx.ID_ANY, u'Find in Library...', wx.EmptyString, wx.ITEM_NORMAL)
+        self.menuFile.Append(self.itemFindInLibrary)
+
+        self.itemInternetRadio = wx.MenuItem(
+            self.menuFile, wx.ID_ANY, u'Internet Radio...', wx.EmptyString, wx.ITEM_NORMAL)
+        self.menuFile.Append(self.itemInternetRadio)
+
         self.menuFile.AppendSeparator()
 
         self.itemExit = wx.MenuItem(self.menuFile, wx.ID_ANY, u'Quit',
@@ -2096,6 +2132,14 @@ class MenuBar(wx.MenuBar):
         self.menuView.Append(self.itemBeatGridShow)
         if self.parent.IsBeatGridShowOn():
             self.itemBeatGridShow.Check()
+
+        # taller rows for the list's cover and waveform columns
+        self.menuRowHeight = wx.Menu()
+        self.rowHeightItems = dict()
+        for height in ROW_HEIGHTS:
+            item = self.menuRowHeight.AppendRadioItem(wx.ID_ANY, '%d px' % (height))
+            self.rowHeightItems[item.GetId()] = height
+        self.menuView.AppendSubMenu(self.menuRowHeight, 'Row Height')
 
         # self.menuView.AppendSeparator()
 

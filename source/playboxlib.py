@@ -5,6 +5,7 @@
 # email: peppy0510@hotmail.com
 
 
+import addons
 import audio
 import collections
 import ctypes
@@ -15,6 +16,7 @@ import mfeats
 # import modpybass as pybass
 import numpy
 import os
+import radio
 import sys
 import threading
 import time
@@ -69,6 +71,8 @@ SCRATCH_FOLLOW_SECONDS = 0.010
 # clean): the view's own scale is used down to this; at 12 s across a pixel was
 # 8.6 ms of sound, too coarse to scratch with
 SCRATCH_PIXELS_PER_SECOND = 250.0
+# the key's move either way, in semitones
+TEMPO_SEMITONES = 6
 SCRATCH_RELEASE_SECONDS = 0.04
 SCRATCH_DEADBAND = 0.05
 SCRATCH_INTERVAL = 0.002
@@ -187,8 +191,15 @@ class AudioControl(threading.Thread):
         # scratch's speeds are of this rate)
         rate = self.parent.GetTempoRate()
         if self.keylocked:
-            self.base_freq = self.native_freq
-            audio.set_tempo_percent(self.hStream, (rate - 1.0) * 100.0)
+            # the tempo stream: the tempo there with the key lock, else by the rate as
+            # without it; the key's move on top of either
+            if self.parent.IsTempoKeyLockOn():
+                self.base_freq = self.native_freq
+                audio.set_tempo_percent(self.hStream, (rate - 1.0) * 100.0)
+            else:
+                self.base_freq = self.native_freq * rate
+                audio.set_tempo_percent(self.hStream, 0.0)
+            audio.set_tempo_pitch(self.hStream, self.parent.GetTempoSemitones())
         else:
             self.base_freq = self.native_freq * rate
         if self.hStream and self.scratch.active is False:
@@ -200,8 +211,8 @@ class AudioControl(threading.Thread):
         if self.hStream == 0:
             return
         # a tempo stream back at 0% is kept (opened again it was a gap), not made
-        wanted = self.parent.IsTempoKeyLockOn() and (
-            self.parent.IsTempoKeyLockWanted() or self.keylocked)
+        wanted = self.parent.IsTempoKeyLockWanted() or (self.keylocked and (
+            self.parent.IsTempoKeyLockOn() or self.parent.GetTempoSemitones() != 0))
         if wanted != self.keylocked:
             if self.IsSeekable():
                 self.reopen = True
@@ -430,24 +441,9 @@ class AudioControl(threading.Thread):
         ######
         # print(dir(pybass))
         # from pybass import pybass_vst
-        vst_plugin_name = 'LoudMax64.dll'
-        vst_plugin_name = 'LoudMaxLite64.dll'
-        # vst_plugin_path = os.path.join(os.path.dirname(__file__), 'packages', vst_plugin_name)
-        vst_plugin_path = os.path.join('assets', 'dlls', vst_plugin_name)
-        if hasattr(sys, '_MEIPASS'):
-            vst_plugin_path = os.path.join(sys._MEIPASS, vst_plugin_path)
-        else:
-            vst_plugin_path = os.path.join(os.path.dirname(
-                os.path.dirname(__file__)), vst_plugin_path)
-        # BASS_VST_KEEP_CHANS = 0x00000001
-        flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
-        self.vstHandle = pybass.BASS_VST_ChannelSetDSP(self.hStream, vst_plugin_path, flags, 0)
-        pybass.BASS_VST_SetParam(self.vstHandle, 0, 0.0)
-        # loudness_value = 1.0 if self.maximize_loudness else 0.0
-        # pybass.BASS_VST_SetParam(self.vstHandle, 1, loudness_value)
-        pybass.BASS_VST_SetParam(self.vstHandle, 1, 1.0)
-        pybass.BASS_VST_SetParam(self.vstHandle, 2, 0.0)
-        pybass.BASS_VST_SetParam(self.vstHandle, 3, 0.0)
+        # LOUD: Auto Master (audio.set_automaster), in LoudMax's place (not allowed to be
+        # shipped)
+        self.vstHandle = audio.set_automaster(self.hStream, self.parent.IsLoudOn())
         self.SetVSTBypass()
         # print(os.path.join(os.path.dirname(__file__), 'packages', 'LoudMax64.dll'))
         # self.parent.Show()
@@ -511,6 +507,8 @@ class AudioControl(threading.Thread):
     #     pybass.BASS_VST_SetParam(self.vstHandle, 1, 0.0)
 
     def SetVSTBypass(self):
+        # the radio's too: LOUD is the player's switch for both
+        radio.PLAYER.SetLoud(self.parent.IsLoudOn())
         if not self.vstHandle:
             return
         pybass.BASS_VST_SetBypass(self.vstHandle, self.parent.IsLoudOn() is False)
@@ -532,6 +530,9 @@ class PlayBoxControl():
         self.parent = parent
         self.InitControlEvent()
         audio.init_bass_play()
+        # the add-ons the repository may not carry, fetched once when missing (AAC loaded
+        # as soon as it is in)
+        addons.fetch_missing(lambda names: wx.CallAfter(audio.load_bass_plugins))
         playcue = GetPreference('playcue')
         if playcue is None:
             SetPreference('playcue', self.cue)
@@ -549,6 +550,8 @@ class PlayBoxControl():
         # the tempo control: a rate kept from song to song (1.0 at every start), the
         # key lock and the slider's range (percent) kept
         self.tempo_rate = 1.0
+        # the key moved in semitones, its tempo kept (0 at every start too)
+        self.tempo_semitones = 0
         self.tempo_keylock = GetPreference('tempo_keylock') is True
         self.tempo_range = GetPreference('tempo_range') or 8
         self.skip_silence = GetPreference('skip_silence') is True
@@ -710,6 +713,7 @@ class PlayBoxControl():
         self.cue.highlight = None
         self.cue.highlight_offset = None
         self.cue.highlight_variable = None
+        self.cue.highlight_analyzed = None
         self.cue.fffr_static = 15.0
         self.cue.fffr_variable = 15.0
         self.cue.mdx = self.GetMDX(self.cue.path)
@@ -751,9 +755,13 @@ class PlayBoxControl():
         self.SetMFEATSTempo(resp.tempo)
         self.SetBestFFFRVariableTime()
         self.cue.duration = resp.duration
-        self.SetHighlightOffsetTime(resp.highlight[0])
-        self.SetBestHighlightVariablePeriodTime()
+        # the length first: the highlight's place is chosen for its length; on the grid
+        # if the song has one. The waveform before the place: chosen without it, it was the
+        # phrase nearest the analysis' start, and a length change moved it to the chosen one
+        self.LoadGridNow()
         self.SetWaveImage(resp.waveform)
+        self.SetBestHighlightVariablePeriodTime()
+        self.SetHighlightOffsetTime(resp.highlight[0])
         self.SkipLeadingSilence()
         if resp.version != mfeats.MFEATS_VERSION:
             # analyzed before the current waveform: analyze again for it
@@ -762,8 +770,9 @@ class PlayBoxControl():
             self.pending.wave_since = time.time()
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
-            # gone to already with the early highlight (the same offset)
-            if self.pending.early is False:
+            # gone to already with the early highlight, unless the grid moved it (the
+            # range drawn and the one played were apart)
+            if self.pending.early is False or self.IsOutsideHighlight():
                 self.GotoTrackOffsetTime()
         self.pending.dbresp = False
         self.reInitWave = True
@@ -796,12 +805,18 @@ class PlayBoxControl():
         self.SetMFEATSTempo(resp.tempo)
         self.SetBestFFFRVariableTime()
         self.cue.duration = resp.duration
-        self.SetHighlightOffsetTime(resp.highlight[0])
-        self.SetBestHighlightVariablePeriodTime()
+        # the length first: the highlight's place is chosen for its length; on the grid
+        # if the song has one. The waveform before the place: chosen without it, it was the
+        # phrase nearest the analysis' start, and a length change moved it to the chosen one
+        self.LoadGridNow()
         self.SetWaveImage(resp.waveform)
+        self.SetBestHighlightVariablePeriodTime()
+        self.SetHighlightOffsetTime(resp.highlight[0])
         self.SkipLeadingSilence()
         if self.IsHighlightOn():
             self.SetTrackTimeWithHighlight()
+            if self.IsOutsideHighlight():
+                self.GotoTrackOffsetTime()
         self.reInitWave = True
 
     def SetAudioEventWithGRID(self):
@@ -815,14 +830,23 @@ class PlayBoxControl():
             self.pending.grid = False
             return
         self.pending.grid = time.time()
+        if self.LoadGridNow():
+            self.ApplyGridToTimes()
+            self.Wave.reInitBuffer = True
+            self.WaveDetail.reInitBuffer = True
+
+    def LoadGridNow(self):
+        # the song's grid if it is in (True): read with the analysis' values too, so the
+        # highlight is placed once on the grid and not moved under the play a second later
+        if self.pending.grid is False or self.pending.mdx or self.cue.mdx is None:
+            return False
         grid = mfeats.get_grid(self.cue.mdx)
         if grid is None or grid.version != mfeats.GRID_VERSION:
-            return
+            return False
         self.pending.grid = False
-        self.cue.grid = grid if grid.bpm > 0 else None
-        self.ApplyGridToTimes()
-        self.Wave.reInitBuffer = True
-        self.WaveDetail.reInitBuffer = True
+        self.cue.grid = mfeats.apply_grid_scale(grid) if grid.bpm > 0 else None
+        self.SetBestFFFRVariableTime()
+        return True
 
     def ApplyGridToTimes(self):
         # the highlight on a bar and the jumps in bars, once the grid is in (where it
@@ -830,15 +854,26 @@ class PlayBoxControl():
         if self.GetGrid() is None:
             return
         self.SetBestFFFRVariableTime()
-        offset = self.GetHighlightOffsetTime()
+        offset = getattr(self.cue, 'highlight_analyzed', None) or self.GetHighlightOffsetTime()
         if offset is None or self.cue.highlight_variable is None:
             return
-        self.SetHighlightOffsetTime(offset)
         self.SetBestHighlightVariablePeriodTime()
+        self.SetHighlightOffsetTime(offset, analyzed=False)
         if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
+            before = self.GetTrackOffsetTime()
             offset = self.GetHighlightOffsetTime()
+            finish = offset + self.GetHighlightVariablePeriodTime()
             self.SetTrackOffsetTime(offset)
-            self.SetTrackFinishTime(offset + self.GetHighlightVariablePeriodTime())
+            self.SetTrackFinishTime(finish)
+            # the highlight moved while it plays: played from its new start, or a place
+            # past its new end ended the song at once and one before it played outside it
+            position = self.GetPositionTime()
+            if before is None or abs(offset - before) > 0.01:
+                # outside the new range, or still at the old start (the highlight is
+                # played from where it is drawn)
+                started = before is not None and 0.0 <= position - before < 5.0
+                if started or position < offset - 0.5 or position >= finish:
+                    self.GotoTrackOffsetTime()
         self.reInitWave = True
 
     def GetTempoRate(self):
@@ -862,8 +897,31 @@ class PlayBoxControl():
         self.AudioControl.SetTempo()
 
     def IsTempoKeyLockWanted(self):
-        # the tempo stream only when it changes something
-        return self.tempo_keylock and abs(self.tempo_rate - 1.0) > 1e-6
+        # the tempo stream only when it changes something: the tempo with its key kept,
+        # or the key moved
+        return (self.tempo_keylock and abs(self.tempo_rate - 1.0) > 1e-6)\
+            or self.tempo_semitones != 0
+
+    def GetTempoSemitones(self):
+        return self.tempo_semitones
+
+    def SetTempoSemitones(self, semitones):
+        semitones = int(min(max(semitones, -TEMPO_SEMITONES), TEMPO_SEMITONES))
+        if semitones == self.tempo_semitones:
+            return
+        self.tempo_semitones = semitones
+        self.AudioControl.SetTempo()
+        self.Info.reInitBuffer = True
+
+    def GetPlayingKey(self):
+        # the key heard: moved by the semitones, and with the rate when the pitch goes with it
+        shift = self.tempo_semitones
+        if self.tempo_keylock is False:
+            shift += 12.0 * math.log2(self.tempo_rate)
+        shift = int(round(shift))
+        if shift == 0:
+            return self.cue.key
+        return mfeats.transpose_chord(self.cue.key, shift)
 
     def GetTempoRange(self):
         return self.tempo_range
@@ -885,9 +943,11 @@ class PlayBoxControl():
     def GetGrid(self):
         # the playing song's grid, or None (none yet, none found)
         grid = getattr(self.cue, 'grid', None)
-        # one saved with the player's state by an older version is not taken
+        # one saved with the player's state by an older version is not taken, nor one
+        # read before the table had all its columns (the app did not start)
         if grid is None or grid.mdx != self.cue.mdx\
-                or getattr(grid, 'version', None) != mfeats.GRID_VERSION:
+                or getattr(grid, 'version', None) != mfeats.GRID_VERSION\
+                or any(hasattr(grid, key) is False for key, _ in mfeats.GRID_DEFINITION):
             return None
         return grid
 
@@ -899,6 +959,11 @@ class PlayBoxControl():
         grid = self.GetGrid()
         period = 60.0 / grid.bpm
         return (grid.downbeat + (grid.shift or 0) * period) % (period * 4)
+
+    def IsGridPhraseKnown(self):
+        # the phrase drawn and used when the analysis was sure of it, or the user set it
+        grid = self.GetGrid()
+        return bool(grid.phrase_set) or (grid.phrase_margin or 0.0) >= mfeats.PHRASE_SURE
 
     def GetGridPhraseBars(self):
         # bars from the (moved) downbeat to the first phrase's start
@@ -921,7 +986,9 @@ class PlayBoxControl():
         phrase = self.GetGridPhraseBars() * 4
         first = int(math.ceil((start - downbeat) / period))
         last = int(math.floor((end - downbeat) / period))
-        return [(downbeat + k * period, 2 if (k - phrase) % 16 == 0 else 1 if k % 4 == 0 else 0)
+        known = self.IsGridPhraseKnown()
+        return [(downbeat + k * period,
+                 2 if known and (k - phrase) % 16 == 0 else 1 if k % 4 == 0 else 0)
                 for k in range(first, last + 1)]
 
     def SetGridShift(self, shift):
@@ -934,12 +1001,31 @@ class PlayBoxControl():
         self.Wave.reInitBuffer = True
         self.WaveDetail.reInitBuffer = True
 
-    def SetGridPhraseShift(self, shift):
+    def SetGridScale(self, factor):
+        # the tempo doubled or halved (a song analyzed at half or twice its tempo), or back
+        # to the analysis' (factor None)
+        grid = self.GetGrid()
+        if grid is None:
+            return
+        scale = 1.0 if factor is None else (grid.bpm_scale or 1.0) * factor
+        scale = min(max(scale, 0.25), 4.0)
+        mfeats.set_grid_scale(grid.mdx, scale)
+        stored = mfeats.get_grid(grid.mdx)
+        self.cue.grid = mfeats.apply_grid_scale(stored) if stored is not None else None
+        self.ApplyGridToTimes()
+        self.Wave.reInitBuffer = True
+        self.WaveDetail.reInitBuffer = True
+        self.Info.reInitBuffer = True
+
+    def SetGridPhraseShift(self, shift, set_by_user=True):
         grid = self.GetGrid()
         if grid is None:
             return
         grid.phrase_shift = shift % 4
-        mfeats.set_grid_shift(grid.mdx, grid.phrase_shift, key='phrase_shift')
+        grid.phrase_set = 1 if set_by_user else 0
+        mfeats.set_grid_shift(grid.mdx, grid.phrase_shift, key='phrase_shift',
+                              phrase_set=grid.phrase_set)
+        self.ApplyGridToTimes()
         self.Wave.reInitBuffer = True
         self.WaveDetail.reInitBuffer = True
 
@@ -971,10 +1057,11 @@ class PlayBoxControl():
         if audio.is_waveform_3band(self.cue.waveform) is False:
             self.SetWaveImage(wave.waveform)
         if highlight:
+            self.LoadGridNow()
             self.SetHighlightOffsetTime(wave.highlight[0])
             # its length in beats of the tempo before its octave: half a beat at most
             # from the one to come (the tempo itself is not shown before it)
-            value = self.GetNearestBeatTime(self.cue.highlight_static, wave.tempo)
+            value = self.GetHighlightLength(self.cue.highlight_static, wave.tempo)
             self.cue.highlight_variable = min(value, self.GetDurationTime())
             if self.IsHighlightOn():
                 self.SetTrackTimeWithHighlight()
@@ -996,6 +1083,29 @@ class PlayBoxControl():
     def SetAutoGainOff(self):
         self.cue.autogain_on = False
         self.SetVolume()
+
+    def ChangeHighlightLength(self, static, turn_on=False):
+        # a new length from the keys or the menu: it plays on where it is when that is still
+        # in the highlight (it jumped to the start every time, and the start can move with
+        # the length near the song's end); turn_on: the keys turn the highlight on too
+        was_on = self.IsHighlightOn()
+        self.SetBestHighlightVariablePeriodTime(static=static)
+        if was_on is False:
+            if turn_on:
+                self.SetHighlightOn()
+                self.GotoTrackOffsetTime()
+        elif self.IsHighlightSkipOn() or self.IsOutsideHighlight():
+            self.GotoTrackOffsetTime()
+        self.reInitWave = True
+        self.OnSize()
+
+    def IsOutsideHighlight(self):
+        # where it plays is not in the highlight's range (it moved after the play began)
+        offset, finish = self.GetTrackTime()
+        if offset is None or finish is None:
+            return False
+        position = self.GetPositionTime()
+        return position < offset - 0.5 or position >= finish
 
     def SetTrackTimeWithHighlight(self):
         offset = self.GetHighlightOffsetTime()
@@ -1222,6 +1332,27 @@ class PlayBoxControl():
     def SetMFEATSTempo(self, tempo):
         self.cue.tempo = tempo
 
+    def GetHighlightTempo(self, tempo):
+        # the tempo the highlight is counted in: the grid's when there is one, doubled at 95
+        # BPM and under as the author's analysis does (mfeats_single's xtempo)
+        grid = self.GetGrid()
+        if grid is not None:
+            tempo = float(grid.bpm)
+        try:
+            tempo = float(tempo)
+        except (TypeError, ValueError):
+            return 0.0
+        return tempo * 2.0 if 0 < tempo <= 95 else tempo
+
+    def GetHighlightLength(self, static, tempo):
+        # the menu's length: its bars (seconds / 2, the bars of a song at 120 BPM, as the
+        # menu names them), whole bars at the song's tempo; seconds without a tempo
+        tempo = self.GetHighlightTempo(tempo)
+        if tempo <= 0:
+            return static
+        bars = max(1, int(round(static / 2.0)))
+        return bars * 4 * 60.0 / tempo
+
     def GetNearestBeatTime(self, period, tempo):
         # the grid's tempo when there is one (the analysis' own is in 0.1 BPM steps)
         grid = self.GetGrid()
@@ -1262,16 +1393,88 @@ class PlayBoxControl():
     def GetHighlightOffsetTime(self):
         return self.cue.highlight_offset
 
-    def SetHighlightOffsetTime(self, offset):
-        # on the nearest bar's first beat when the song has a grid
+    def SetHighlightOffsetTime(self, offset, analyzed=True):
+        # with a grid, on a phrase's start (4 bars): of the phrases nearest the analysis'
+        # start, the one loudest over the highlight. analyzed: offset is the analysis'
+        # own, kept so a later move is made from it, not from where it was moved to
+        if analyzed:
+            self.cue.highlight_analyzed = offset
         grid = self.GetGrid()
         if grid is not None and offset is not None:
-            bar = 60.0 / grid.bpm * 4
-            downbeat = self.GetGridDownbeat()
-            offset = downbeat + round((offset - downbeat) / bar) * bar
-            if offset < 0:
-                offset += bar
+            offset = self.GetPhraseHighlightStart(offset)
+        elif offset is not None:
+            # no grid: the analysis' start, pulled back when the length runs past the end
+            offset = self.GetFittedHighlightStart(offset)
         self.cue.highlight_offset = offset
+
+    def GetPhraseHighlightStart(self, offset, keep=None):
+        # the whole song's phrases weighed (mfeats.choose_phrase_highlight); without the
+        # waveform yet, the phrase nearest the analysis' start
+        grid = self.GetGrid()
+        period = 60.0 / grid.bpm
+        phrase = period * 16
+        start = self.GetGridPhraseStart()
+        nearest = start + round((offset - start) / phrase) * phrase
+        if nearest < 0:
+            nearest += phrase
+        duration = self.GetDurationTime()
+        waveform = self.cue.waveform
+        if audio.is_waveform_3band(waveform) is False or duration <= 0:
+            return self.GetFittedHighlightStart(nearest)
+        # placed as the author placed it, for 64 beats (mfeats_single's highlight) whatever
+        # the length played from it: a shorter one is that section's beginning
+        tempo = self.GetHighlightTempo(grid.bpm)
+        choose = 64 * 60.0 / tempo
+        # a phrase not known: any bar may start it
+        step = period * 16 if self.IsGridPhraseKnown() else period * 4
+        chosen, _ = mfeats.choose_phrase_highlight(waveform, duration, grid.bpm, start, choose,
+                                                   step)
+        if chosen is None:
+            return self.KeepHighlightStart(self.GetFittedHighlightStart(nearest), keep)
+        # on the drop, not the drum fill a bar before it
+        chosen = mfeats.refine_highlight_start(waveform, duration, grid.bpm, chosen)
+        length = self.cue.highlight_variable or choose
+        if length <= choose + 1e-6:
+            return self.KeepHighlightStart(self.GetFittedHighlightStart(chosen), keep)
+        # a longer one holds those 64 beats and grows, in steps from their start, to the
+        # side with the fewest calm bars (a breakdown, the outro), then the side the author's
+        # measure likes; never past the song's end
+        earliest = max(chosen + choose - length, 0.0)
+        latest = min(chosen, duration - length)
+        longer = mfeats.choose_long_highlight(waveform, duration, grid.bpm, chosen, length,
+                                              step, earliest, latest)
+        chosen = self.GetFittedHighlightStart(chosen if longer is None else longer)
+        return self.KeepHighlightStart(chosen, keep)
+
+    def KeepHighlightStart(self, start, keep):
+        # keep: where it plays, in the highlight before the length changed; the start placed
+        # when it holds that place, else the one it had (fitted in the song) so the play is
+        # not moved, else the placed one (the play goes to it)
+        if keep is None:
+            return start
+        length = self.cue.highlight_variable or 0.0
+        if start <= keep < start + length:
+            return start
+        kept = self.GetFittedHighlightStart(self.cue.highlight_offset)
+        if kept <= keep < kept + length:
+            return kept
+        return start
+
+    def GetFittedHighlightStart(self, offset):
+        # the start kept when the highlight fits before the song's end, else the last step
+        # it fits after (phrase, or bar), or the song's start when none does
+        length = self.cue.highlight_variable or 0.0
+        duration = self.GetDurationTime()
+        if offset + length <= duration + 1e-6:
+            return offset
+        grid = self.GetGrid()
+        if grid is None:
+            return max(0.0, duration - length)
+        period = 60.0 / grid.bpm
+        step = period * 16 if self.IsGridPhraseKnown() else period * 4
+        first = self.GetGridPhraseStart() % step
+        steps = math.floor((duration - length - first) / step + 1e-9)
+        return first + steps * step if steps >= 0 else 0.0
 
     def SetBestHighlightVariablePeriodTime(self, static=None, tempo=None):
         if tempo is not None:
@@ -1282,11 +1485,29 @@ class PlayBoxControl():
             self.cue.highlight_static = static
         else:
             static = self.cue.highlight_static
-        value = self.GetNearestBeatTime(static, tempo)
+        value = self.GetHighlightLength(static, tempo)
         duration = self.GetDurationTime()
         if value > duration:
             value = duration
+        changed = static is not None and value != self.cue.highlight_variable
         self.cue.highlight_variable = value
+        # a length the user chose: placed again for it (GetPhraseHighlightStart), with where
+        # it plays kept in it when it can be (it moved off and the play jumped); the range
+        # played with it (only the drawn one followed, and the old end was played)
+        if changed and self.cue.highlight_offset is not None:
+            analyzed = getattr(self.cue, 'highlight_analyzed', None)
+            if self.GetGrid() is not None and analyzed is not None:
+                keep = None
+                if self.IsHighlightOn() and self.IsOutsideHighlight() is False:
+                    keep = self.GetPositionTime()
+                self.cue.highlight_offset = self.GetPhraseHighlightStart(analyzed, keep)
+            else:
+                self.cue.highlight_offset = self.GetFittedHighlightStart(
+                    self.cue.highlight_offset)
+            if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
+                offset = self.GetHighlightOffsetTime()
+                self.SetTrackOffsetTime(offset)
+                self.SetTrackFinishTime(offset + value)
 
     def GetFFFRStaticTime(self):
         return self.cue.fffr_static
@@ -1320,6 +1541,19 @@ class PlayBoxControl():
 
     def IsPlaying(self):
         return audio.is_playing(self.cue.hStream)
+
+    def IsVisualPlaying(self):
+        # the spectrum and the vectorscope move with the player, or with the radio
+        return self.IsPlaying() or radio.PLAYER.IsPlaying()
+
+    def GetVisualStream(self):
+        # (stream, channels, autogain) the spectrum and the vectorscope read: the player's,
+        # else the radio's (its channels from the stream, no gain of the analysis)
+        if self.IsPlaying() or not radio.PLAYER.IsPlaying():
+            return self.cue.hStream, self.cue.channel, self.cue.autogain
+        info = pybass.BASS_CHANNELINFO()
+        pybass.BASS_ChannelGetInfo(radio.PLAYER.handle, ctypes.byref(info))
+        return radio.PLAYER.handle, info.chans or 2, 1.0
 
     def GetDurationTime(self):
         duration = audio.get_duration(self.cue.hStream)
@@ -1376,6 +1610,7 @@ class PlayBoxControl():
             self.SetVolume(value)
 
     def OnPlay(self):
+        radio.stop()
         self.parent.ListBox.List.pending.SkipStopIcon = True
         audio.set_volume(self.cue.hStream, 0.0)
         self.AudioControl.resume = 0.0
@@ -1401,6 +1636,7 @@ class PlayBoxControl():
         self.parent.ListBox.List.reInitBuffer = True
 
     def OnResume(self):
+        radio.stop()
         self.AudioControl.resume = self.cue.resume
         self.SetVolume(self.cue.volume)
 

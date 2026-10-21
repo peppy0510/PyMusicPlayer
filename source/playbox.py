@@ -13,6 +13,9 @@ import math
 import mutagen
 import numpy
 import os
+import mfeats
+import playboxlib
+import radio
 import threading
 import time
 import wx
@@ -207,17 +210,7 @@ class PlayBox(RectBox, PlayBoxControl):
                 return
             value = self.parent.parent.MenuBar.highlightDurationItems[dutaionTypeId]
             # value = (8, 16, 32, 48, 64)[dutaionTypeId]
-            self.SetBestHighlightVariablePeriodTime(static=value)
-            if self.IsHighlightOn() is False:
-                self.SetHighlightOn()
-            if self.IsPlaying() and self.IsHighlightOn():
-                self.GotoTrackOffsetTime()
-                self.reInitWave = True
-                self.OnSize()
-            elif self.IsHighlightOn():
-                self.GotoTrackOffsetTime()
-                self.reInitWave = True
-                self.OnSize()
+            self.ChangeHighlightLength(value, turn_on=True)
             for i in range(len(self.parent.parent.MenuBar.highlightDurationItems)):
                 if i == dutaionTypeId:
                     self.parent.parent.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check()
@@ -295,7 +288,7 @@ class PlayBoxVisualClock(threading.Thread):
         if self.loop is False or not self.parent:
             return
         PaintUnpainted()
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             return
         for box in self.GetBoxes():
             if box is not None and box.IsShown():
@@ -316,6 +309,26 @@ class PlayBoxVisualClock(threading.Thread):
     def Quit(self):
         self.loop = False
         self.sizing.Stop()
+
+
+def draw_radio_trace(dc, parent, rect, seconds, spread=audio.WAVEFORM_BAND_SPREAD):
+    '''the radio's last seconds in rect, painted as a track's waveform is (the same
+    painter, ground and colours), the newest at the right edge, moving left: an
+    oscilloscope of what plays. False when the player plays or the radio does not'''
+    if parent.IsPlaying() or radio.PLAYER.IsPlaying() is False:
+        return False
+    trace = radio.PLAYER.GetTrace()
+    x, y, w, h = rect
+    if trace is None or len(trace) == 0 or w <= 0 or h <= 0:
+        return True
+    count = len(trace)
+    end = count
+    start = end - seconds / mfeats.WAVEFORM_COLUMN_SECONDS
+    image = audio.paint_waveform_3band(
+        trace, w, h, ground=numpy.array(parent.st.PLAY_BG_COLOR, dtype=float),
+        start=start, end=end, spread=spread)
+    dc.DrawBitmap(wx.Bitmap.FromBuffer(w, h, image.tobytes()), x, y)
+    return True
 
 
 class PlayBoxControlButton(RectBox):
@@ -803,9 +816,12 @@ class TempoButton(VolumeSlider):
     def SetRectDraw(self, dc):
         # off 0%: toggled on (red), its percent the label
         percent = (self.parent.GetTempoRate() - 1.0) * 100.0
+        semitones = self.parent.GetTempoSemitones()
         text = 'TEMPO'
         if abs(percent) > 1e-6:
             fill, label, text = ((255, 120, 120), (0, 0, 0), '%+.1f' % (percent))
+        elif semitones != 0:
+            fill, label, text = ((255, 120, 120), (0, 0, 0), 'K%+d' % (semitones))
         elif self.IsPopupShown():
             fill, label = ((180, 180, 180), (0, 0, 0))
         else:
@@ -854,20 +870,30 @@ class TempoButton(VolumeSlider):
 
 class TempoDropdown(VolumeDropdown):
 
+    # two sliders side by side: the tempo (left, in percent) and the key (right, in
+    # semitones), each with its buttons under it
     RANGES = (8, 16, 50)
     # within this share of the range from 0 a drag stops at 0
     DETENT = 0.03
+    COLUMN = 41
 
     def __init__(self, parent):
         VolumeDropdown.__init__(self, parent)
-        height = 182
-        self.SetSize((41, height))
-        self.rect_reset = (2, height - 3 - 19, 37, 19)
+        height = 196
+        self.SetSize((self.COLUMN * 2 - 1, height))
+        right = self.COLUMN - 1
+        self.text_top = 3
         self.rect_range = (2, height - 3 - 19 * 2 - 3, 37, 19)
-        self.rect_key = (2, height - 3 - 19 * 3 - 6, 37, 19)
+        self.rect_reset = (2, height - 3 - 19, 37, 19)
+        self.rect_lock = (right + 2, height - 3 - 19 * 2 - 3, 37, 19)
+        self.rect_key_reset = (right + 2, height - 3 - 19, 37, 19)
+        self.side = None
 
     def GetSliderRange(self):
-        return (self.pad, self.rect_key[1] - self.pad)
+        return (self.text_top + 18, self.rect_range[1] - self.pad)
+
+    def GetSliderX(self, column):
+        return column * (self.COLUMN - 1) + (self.COLUMN - self.width) * 0.5
 
     def OnPaint(self, event):
         dc = wx.AutoBufferedPaintDC(self)
@@ -875,23 +901,35 @@ class TempoDropdown(VolumeDropdown):
         dc.SetPen(wx.Pen((0, 0, 0), 1))
         dc.SetBrush(wx.Brush((35, 35, 35)))
         dc.DrawRectangle(0, 0, w, h)
-        x = (w - self.width) * 0.5
         top, bottom = self.GetSliderRange()
         centre = (top + bottom) * 0.5
-        share = (self.parent.GetTempoRate() - 1.0) * 100.0 / self.parent.GetTempoRange()
+        percent = (self.parent.GetTempoRate() - 1.0) * 100.0
+        semitones = self.parent.GetTempoSemitones()
+        shares = (percent / self.parent.GetTempoRange(),
+                  1.0 * semitones / playboxlib.TEMPO_SEMITONES)
         st = self.parent.st
-        rects = [(x - 1, top - 1, self.width + 2, bottom - top + 2),
-                 (x, centre, self.width, -share * (bottom - top) * 0.5)]
-        rects = [[int(v) for v in rect] for rect in rects]
-        pens = [wx.Pen(st.VOLUME_PN_COLOR, 1), wx.Pen(st.VOLUME_FG_COLOR, 1)]
-        brushes = [wx.Brush(st.VOLUME_BG_COLOR), wx.Brush(st.VOLUME_FG_COLOR)]
-        dc.DrawRectangleList(rects, pens=pens, brushes=brushes)
-        # 0% marked across the track
-        dc.SetPen(wx.Pen(st.VOLUME_PN_COLOR, 1))
-        dc.DrawLine(int(x - 5), int(centre), int(x + self.width + 5), int(centre))
-        self.DrawButton(dc, self.rect_key, 'KEY', self.parent.IsTempoKeyLockOn())
+        for column, share in enumerate(shares):
+            x = self.GetSliderX(column)
+            rects = [(x - 1, top - 1, self.width + 2, bottom - top + 2),
+                     (x, centre, self.width, -share * (bottom - top) * 0.5)]
+            rects = [[int(v) for v in rect] for rect in rects]
+            dc.DrawRectangleList(rects, pens=[wx.Pen(st.VOLUME_PN_COLOR, 1),
+                                              wx.Pen(st.VOLUME_FG_COLOR, 1)],
+                                 brushes=[wx.Brush(st.VOLUME_BG_COLOR),
+                                          wx.Brush(st.VOLUME_FG_COLOR)])
+            # 0 marked across the track
+            dc.SetPen(wx.Pen(st.VOLUME_PN_COLOR, 1))
+            dc.DrawLine(int(x - 5), int(centre), int(x + self.width + 5), int(centre))
+        dc.SetFont(self.parent.TempoButton.font)
+        dc.SetTextForeground((125, 125, 125))
+        for column, text in enumerate(('%+.1f%%' % (percent), 'KEY %+d' % (semitones))):
+            tw, th = dc.GetTextExtent(text)
+            dc.DrawText(text, int(column * (self.COLUMN - 1) + (self.COLUMN - tw) * 0.5),
+                        self.text_top)
         self.DrawButton(dc, self.rect_range, '%d%%' % (self.parent.GetTempoRange()), False)
         self.DrawButton(dc, self.rect_reset, '0%', False)
+        self.DrawButton(dc, self.rect_lock, 'LOCK', self.parent.IsTempoKeyLockOn())
+        self.DrawButton(dc, self.rect_key_reset, 'KEY 0', False)
 
     def DrawButton(self, dc, rect, text, on):
         # drawn as the control buttons are: red while toggled on
@@ -911,8 +949,8 @@ class TempoDropdown(VolumeDropdown):
     def OnMouse(self, event):
         position = event.GetPosition()
         if event.LeftDown():
-            self.sliding = False
-            if wx.Rect(*self.rect_key).Contains(position):
+            self.side = None
+            if wx.Rect(*self.rect_lock).Contains(position):
                 self.parent.SetTempoKeyLock(self.parent.IsTempoKeyLockOn() is False)
             elif wx.Rect(*self.rect_range).Contains(position):
                 ranges = self.RANGES
@@ -921,23 +959,34 @@ class TempoDropdown(VolumeDropdown):
                 self.parent.SetTempoRange(ranges[(index + 1) % len(ranges)])
             elif wx.Rect(*self.rect_reset).Contains(position):
                 self.parent.SetTempoRate(1.0)
+            elif wx.Rect(*self.rect_key_reset).Contains(position):
+                self.parent.SetTempoSemitones(0)
             else:
-                self.sliding = True
-            if self.sliding is False:
+                self.side = 0 if position.x < self.COLUMN - 1 else 1
+            if self.side is None:
                 self.Changed()
                 return
         if event.LeftIsDown() is False:
-            self.sliding = False
-        if self.sliding is False:
+            self.side = None
+        if self.side is None:
             return
         top, bottom = self.GetSliderRange()
         share = ((top + bottom) * 0.5 - event.GetY()) / ((bottom - top) * 0.5)
-        if abs(share) < self.DETENT:
-            share = 0.0
-        self.parent.SetTempoRate(1.0 + share * self.parent.GetTempoRange() / 100.0)
+        if self.side == 0:
+            if abs(share) < self.DETENT:
+                share = 0.0
+            self.parent.SetTempoRate(1.0 + share * self.parent.GetTempoRange() / 100.0)
+        else:
+            self.parent.SetTempoSemitones(round(share * playboxlib.TEMPO_SEMITONES))
         self.Changed()
 
     def OnMouseWheel(self, event):
+        # over the key's slider a semitone a notch, else the tempo's
+        if event.GetPosition().x >= self.COLUMN - 1:
+            step = 1 if event.GetWheelRotation() > 0 else -1
+            self.parent.SetTempoSemitones(self.parent.GetTempoSemitones() + step)
+            self.Changed()
+            return
         self.StepTempo(event.GetWheelRotation())
 
     def StepTempo(self, rotation):
@@ -1137,7 +1186,7 @@ class PlayBoxInfo(RectBox):
     def HandleInfoChange(self, event=None):
         # autogain = self.parent.cue.autogain
         # decibel =  autogain/0.14
-        key = self.parent.cue.key
+        key = self.parent.GetPlayingKey()
         tempo = self.parent.GetPlayingTempo()
         if key == '':
             key = ' '
@@ -1199,7 +1248,8 @@ class PlayBoxApic(RectBox):
 
     def IsStreamImage(self, stream):
         # http://www.wxpython.org/docs/api/wx.ImageHandler-class.html#SetType
-        for v in ('JPEG', 'BMP', 'PNG', 'GIF',):
+        # ICO too: a radio station's picture is often its favicon
+        for v in ('JPEG', 'BMP', 'PNG', 'GIF', 'ICO'):
             # exec('handler = wx.%sHandler()' % (v))
             # handler = eval('wx.%sHandler()' % (v))
             if hasattr(wx, v + 'Handler'):
@@ -1214,6 +1264,9 @@ class PlayBoxApic(RectBox):
         # access APIC frame and grab the image
         # mutagen can automatically detect format and type of tags
         # APIC:cover.jpg, APIC:Cover Image, APIC:desc, APIC:
+        if isinstance(path, tuple):
+            # the radio's station: its picture (radio.PLAYER.picture)
+            return self.GetApicBitmap(path[2]), path
 
         try:
             file = mutagen.File(path)
@@ -1223,11 +1276,16 @@ class PlayBoxApic(RectBox):
             artwork = file.tags[key[0]].data
         except Exception:
             return None, path
+        return self.GetApicBitmap(artwork), path
 
+    def GetApicBitmap(self, artwork):
+        # the picture's bytes scaled into the box, or None
+        if not artwork:
+            return None
         buf = io.BytesIO(artwork)
         if self.IsStreamImage(buf) is False:
             buf.close()
-            return None, path
+            return None
         im = Image.open(buf)
         if 'icc_profile' in im.info:
             im.info.pop('icc_profile')
@@ -1249,10 +1307,10 @@ class PlayBoxApic(RectBox):
         elif ratio > 1:
             h = int(round(h / ratio))
         if w <= 0 or h <= 0:
-            return None, path
+            return None
         bmp = bmp.Rescale(w, h, quality=wx.IMAGE_QUALITY_HIGH)
         bmp = bmp.ConvertToBitmap()
-        return bmp, path
+        return bmp
 
     def GetApicThread(self):
         bmp, path = self.GetApic(self.path)
@@ -1295,11 +1353,19 @@ class PlayBoxApic(RectBox):
             dc.DrawBitmap(self.apic, int(x + self.margin), int(y + self.margin), useMask=False)
         dc.DrawBitmap(self.overlap_mask, 0, 0, useMask=False)
 
+    def GetApicSource(self):
+        # the playing track's file; with the radio playing alone, its station and picture
+        player = radio.PLAYER
+        if self.parent.IsPlaying() is False and player.IsPlaying() and player.station:
+            return ('radio', player.station.get('url'), player.picture)
+        return self.parent.cue.path
+
     def HandleApicChange(self, forced=False):
-        if self.parent.cue.path == self.path and forced is False:
+        source = self.GetApicSource()
+        if source == self.path and forced is False:
             return
         self.apic = None
-        self.path = self.parent.cue.path
+        self.path = source
         if hasattr(self, 'Thread') and self.Thread.is_alive():
             # print(dir(self.Thread))
             self.Thread._delete()
@@ -1396,17 +1462,18 @@ class PlayBoxSpectrum(RectBox):
 
     def CATCH_EVT_GLOBAL(self, event):
         # while playing the visual clock draws it (PlayBoxVisualClock)
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             self.DirectDraw()
 
     def GetSpectrumVectorScope(self):
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             return None, None
         if self.IsShown() is False and self.parent.VectorScope.IsShown() is False:
             return None, None
+        hstream, channel, autogain = self.parent.GetVisualStream()
         return audio.get_stream_spectrum_vectorscope(
-            self.parent.cue.hStream, self.parent.VectorScope.size,
-            self.parent.cue.channel, self.parent.cue.autogain, spectrum_scale=self.scale)
+            hstream, self.parent.VectorScope.size, channel, autogain,
+            spectrum_scale=self.scale)
 
     def SetRectDraw(self, dc):
         spectrum, vectorscope = self.GetSpectrumVectorScope()
@@ -1524,7 +1591,7 @@ class PlayBoxVectorScope(RectBox):
         self.InitBuffer()
 
     def GetVectorScope(self):
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             self.vectorscope = None
             return
         return self.vectorscope
@@ -1572,14 +1639,14 @@ class PlayBoxVectorScope(RectBox):
         return wx.Bitmap.FromBufferRGBA(w, h, numpy.dstack([rgb, alpha[..., None]]).tobytes())
 
     def SetRectDraw(self, dc):
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             self.SetSamples(None)
             self.DrawVectorScope(dc, None)
             return
         self.DrawVectorScope(dc, self.vectorscope)
 
     def CATCH_EVT_GLOBAL(self, event):
-        if self.parent.IsPlaying() is False:
+        if self.parent.IsVisualPlaying() is False:
             self.DirectDraw()
 
     def DrawVectorScope(self, dc, vectorscope):
@@ -1718,6 +1785,9 @@ class PlayBoxWave(RectBox):
             self.SetRectHighlight()
 
     def SetRectDraw(self, dc):
+        # the radio playing alone: what it plays, the last half minute
+        if draw_radio_trace(dc, self.parent, self.wave_rect, radio.TRACE_SECONDS):
+            return
         draw_highlight = self.parent.IsHighlightKnown()\
             and self.parent.IsHighlightOn()\
             and self.parent.IsHighlightSkipOn() is False
@@ -1733,7 +1803,7 @@ class PlayBoxWave(RectBox):
         grid = self.parent.GetGrid()
         duration = self.parent.GetDurationTime()
         if grid is None or duration <= 0 or self.wave_bitmaps is None\
-                or self.parent.IsGridShown() is False:
+                or self.parent.IsGridShown() is False or self.parent.IsGridPhraseKnown() is False:
             return
         x, y, w, h = self.wave_rect
         span = 60.0 / grid.bpm * 64
@@ -1877,8 +1947,18 @@ class PlayBoxWave(RectBox):
         if self.parent.parent.HasToSkipEvent() is False:
             self.HandleEventLeftIsDown(event)
             self.HandleEventHighlight(event)
+            self.HandleEventGridMenu(event)
         if self.parent.IsPlaying() is False:
             self.DirectDraw()
+
+    def HandleEventGridMenu(self, event):
+        # the grid's menu here too, at the time clicked on the whole song
+        if event.RightUp is False or event.rectIdx is None or self.parent.IsGridShown() is False:
+            return
+        width = max(self.GetSize().width - self.margin * 2, 1)
+        share = min(max(1.0 * (event.X - self.margin) / width, 0.0), 1.0)
+        seconds = share * self.parent.GetDurationTime()
+        self.parent.parent.SetPopupMenu(PlayBoxPopupGrid(self.parent, seconds), (event.x, event.y))
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
         if self.onClient is False:
@@ -2059,6 +2139,10 @@ class PlayBoxWaveDetail(RectBox):
         w -= self.margin * 2
         if w <= 0 or h <= 0:
             return
+        # the radio playing alone: its last seconds at the strip's zoom
+        if draw_radio_trace(dc, self.parent, (self.margin, 0, w, h),
+                            min(self.span, radio.TRACE_SECONDS), spread=0):
+            return
         waveform = self.parent.GetWaveform()
         duration = self.parent.GetDurationTime()
         if audio.is_waveform_3band(waveform) and duration > 0:
@@ -2105,7 +2189,8 @@ class PlayBoxWaveDetail(RectBox):
         # 2.5 ms a frame
         grid = self.parent.GetGrid()
         gridkey = None if grid is None or self.parent.IsGridShown() is False\
-            else (grid.bpm, grid.downbeat, grid.shift, grid.phrase, grid.phrase_shift)
+            else (grid.bpm, grid.downbeat, grid.shift, grid.phrase, grid.phrase_shift,
+                  grid.phrase_set)
         key = (id(waveform), duration, span, period, w, h, gridkey)
         if key != self.last_key or not w // 4 <= step - self.last_step <= w * 2 - w // 4:
             self.last_step = step - w
@@ -2244,22 +2329,52 @@ class PlayBoxPopupGrid(wx.Menu):
             item = self.Append(wx.ID_ANY, 'No beat grid yet')
             item.Enable(False)
             return
-        labels = ('Bar starts on this beat', 'Bar one beat earlier', 'Bar one beat later',
-                  'Bar as analyzed')
-        for label, handler in zip(labels, (self.OnHere, self.OnEarlier, self.OnLater,
-                                           self.OnAnalyzed)):
+        # the time clicked in the labels: where it lands is seen before it is chosen
+        at = '%d:%04.1f' % (seconds // 60, seconds % 60)
+        labels = ('Bar starts on this beat (%s)' % (at), 'Bar starts at the play position',
+                  'Bar one beat earlier', 'Bar one beat later', 'Bar as analyzed')
+        for label, handler in zip(labels, (self.OnHere, self.OnHerePlaying, self.OnEarlier,
+                                           self.OnLater, self.OnAnalyzed)):
             self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
         self.AppendSeparator()
-        labels = ('Phrase starts on this bar', 'Phrase as analyzed')
-        for label, handler in zip(labels, (self.OnPhraseHere, self.OnPhraseAnalyzed)):
+        labels = ('Phrase starts on this bar (%s)' % (at), 'Phrase starts at the play position',
+                  'Phrase as analyzed')
+        for label, handler in zip(labels, (self.OnPhraseHere, self.OnPhraseHerePlaying,
+                                           self.OnPhraseAnalyzed)):
             self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
         self.AppendSeparator()
-        source = 'Beat This!' if grid.source == 'beatthis' else 'the beats alone'
+        source = 'Beat This!' if grid.source.startswith('beatthis') else 'the beats alone'
+        if grid.source.endswith('+changes'):
+            source += ', moved by the song\'s changes'
         item = self.Append(wx.ID_ANY, '%.3f BPM, bar from %s' % (grid.bpm, source))
+        item.Enable(False)
+        self.AppendSeparator()
+        scale = grid.bpm_scale or 1.0
+        labels = [('Tempo x2 (%.2f BPM)' % (grid.bpm * 2), self.OnTempoDouble),
+                  ('Tempo /2 (%.2f BPM)' % (grid.bpm / 2), self.OnTempoHalf)]
+        if scale != 1.0:
+            labels.append(('Tempo as analyzed (%.2f BPM)' % (grid.bpm / scale),
+                           self.OnTempoAnalyzed))
+        for label, handler in labels:
+            self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
+        self.AppendSeparator()
+        if grid.phrase_set:
+            phrase = 'Phrase set by you'
+        elif self.parent.IsGridPhraseKnown():
+            phrase = 'Phrase from the song\'s changes'
+        else:
+            phrase = 'Phrase unsure, not drawn: set it on a bar above'
+        item = self.Append(wx.ID_ANY, phrase)
         item.Enable(False)
 
     def OnHere(self, event):
         self.parent.SetGridBarAt(self.seconds)
+
+    def OnHerePlaying(self, event):
+        self.parent.SetGridBarAt(self.parent.GetPositionTime())
+
+    def OnPhraseHerePlaying(self, event):
+        self.parent.SetGridPhraseAt(self.parent.GetPositionTime())
 
     def OnEarlier(self, event):
         self.parent.SetGridShift((self.parent.GetGrid().shift or 0) - 1)
@@ -2273,5 +2388,14 @@ class PlayBoxPopupGrid(wx.Menu):
     def OnPhraseHere(self, event):
         self.parent.SetGridPhraseAt(self.seconds)
 
+    def OnTempoDouble(self, event):
+        self.parent.SetGridScale(2.0)
+
+    def OnTempoHalf(self, event):
+        self.parent.SetGridScale(0.5)
+
+    def OnTempoAnalyzed(self, event):
+        self.parent.SetGridScale(None)
+
     def OnPhraseAnalyzed(self, event):
-        self.parent.SetGridPhraseShift(0)
+        self.parent.SetGridPhraseShift(0, set_by_user=False)

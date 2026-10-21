@@ -7,6 +7,7 @@ email: peppy0510@hotmail.com
 '''
 
 
+import addons
 import contextlib
 import hashlib
 import json
@@ -143,6 +144,10 @@ def split_artist_title(filename):
 
 
 def find_fpcalc():
+    # fetched into the user's folder (addons.py), else in assets or on PATH
+    path = addons.find_addon('fpcalc.exe')
+    if path is not None:
+        return path
     if hasattr(sys, '_MEIPASS'):
         assets = os.path.join(sys._MEIPASS, 'assets')
     else:

@@ -1,7 +1,8 @@
 # Third-Party Notices
 
 The MIT licence in [`LICENSE`](LICENSE) covers the code written for this project — `source/`,
-excluding `source/pybass/`. It does **not** cover the third-party binaries and assets vendored
+excluding `source/pybass/`, and `plugin/` (Auto Master, from the same author's PyWinAudio) with
+the `assets/dlls/PyMusicPlayerAutoMaster.dll` built from it. It does **not** cover the third-party binaries and assets vendored
 in this repository. Those remain under their own terms, held by their own copyright holders,
 and are listed below.
 
@@ -24,24 +25,13 @@ Licensed under the **GNU Lesser General Public License, version 3**.
 
 VST PlugIn Interface Technology by Steinberg Media Technologies GmbH.
 
-## `assets/dlls/bass.dll`, `bass_fx.dll`, `bassmidi.dll`, `bassmix.dll`, `tags.dll` — BASS
+## `assets/dlls/bass.dll`, `bass_fx.dll`, `bassmidi.dll`, `bassmix.dll`, `basshls.dll`, `tags.dll` — BASS
 
 Copyright (c) Un4seen Developments Ltd. — <https://www.un4seen.com>
 
 Used in PyMusicPlayer under a commercial licence purchased from Un4seen Developments.
 **That licence covers this application only; it is not sublicensed to you.** BASS is free for
 non-commercial use. Any other use requires your own licence from Un4seen.
-
-## `assets/dlls/LoudMax.dll`, `LoudMax64.dll`, `LoudMaxLite.dll`, `LoudMaxLite64.dll` — LoudMax
-
-Copyright (c) 2019 Thomas Mundt — <https://loudmax.blogspot.com>
-
-LoudMax is freeware. The author's stated terms:
-
-> LoudMax is freeware and not commercial in any mean. However, you may not distribute and/or
-> modify LoudMax without having an explicit permission from me.
-
-Please obtain LoudMax from the author's site above.
 
 ## `assets/fonts/unifont.ttf` — GNU Unifont
 
@@ -59,19 +49,20 @@ embedding exception:
 Unifont releases from version 13.0.04 onward are additionally available under the SIL Open
 Font License 1.1. The build vendored here predates that, so GPL-2.0-or-later applies.
 
-## `assets/dlls/fpcalc.exe` — Chromaprint fpcalc 1.5.1
+## Fetched when the player starts — not included
 
-Copyright (C) 2010-2016 Lukas Lalinsky — <https://acoustid.org/chromaprint>
+These are not in this repository or the build. When one is missing, the player downloads it from
+its maker into `%LOCALAPPDATA%\PyMusicPlayer\addons` and uses it only if it is the exact file
+tested (SHA-256 in `source/addons.py`). Each stays under its own licence.
 
-Chromaprint's own code is under the MIT licence; the official Windows build of `fpcalc` also
-contains parts of FFmpeg under the **GNU Lesser General Public License, version 2.1**, so the
-binary as a whole is LGPL-2.1.
-
-- Licence text: [`licenses/Chromaprint/lgpl-2.1.txt`](licenses/Chromaprint/lgpl-2.1.txt) and
-  [`licenses/Chromaprint/mit.txt`](licenses/Chromaprint/mit.txt)
-- Source code: <https://github.com/acoustid/chromaprint> (tag `v1.5.1`) and <https://ffmpeg.org>
-- Included **unmodified** (`chromaprint-fpcalc-1.5.1-windows-x86_64.zip` from the project's
-  GitHub releases), run as a separate program. You may replace it with your own build.
+- `fpcalc.exe` — Chromaprint fpcalc 1.5.1, (C) 2010-2016 Lukas Lalinsky,
+  <https://acoustid.org/chromaprint>. The official Windows build
+  (`chromaprint-fpcalc-1.5.1-windows-x86_64.zip`, the project's GitHub releases) includes parts
+  of FFmpeg, so the binary is LGPL-2.1. Source: <https://github.com/acoustid/chromaprint>
+  (tag `v1.5.1`). Run as a separate program for AcoustID look-ups.
+- `bass_aac.dll` — BASS_AAC 2.4, (C) 2002-2012 Sebastian Andersson, portions (C) 2006
+  M. Bakker, Nero AG. GPL (its package's `gpl.txt`); commercial use needs a licence from Nero
+  AG. From <https://www.un4seen.com> (`files/z/2/bass_aac24.zip`). Plays AAC streams.
 
 ## `source/pybass/` — pybass
 

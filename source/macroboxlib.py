@@ -9,6 +9,8 @@ email: peppy0510@hotmail.com
 
 import audio
 import bisect
+import ctypes
+import ctypes.wintypes
 import mfeats
 import multiprocessing
 import mutagen
@@ -148,6 +150,24 @@ class ListBoxColumn(ColumnDefinition):
         self.AddColumn(key='channel', title='channel', show=False, private=True)
         self.AddColumn(key='path', title='path', show=False, private=True)
         self.AddColumn(key='mdx', title='mdx', show=False, private=True)
+        # pictures, not text (listimages): shown from the header's menu
+        self.AddColumn(key='cover', title='cover', width=24, min_width=24, max_width=200,
+                       show=False, sortable=False)
+        self.AddColumn(key='wave', title='wave', width=160, min_width=40, show=False,
+                       sortable=False)
+
+
+def AddMissingColumns(innerList):
+    # columns added since the list was saved: put at its end, an empty value in each row
+    keys = [v.key for v in innerList.columns]
+    for column in ListBoxColumn():
+        if column.key in keys:
+            continue
+        innerList.columns.append(column)
+        # rows are tuples, replaced whole (SetItemValueByColumnIdxLocal)
+        for rows in (getattr(innerList, 'items', None), getattr(innerList, 'filterCache', None)):
+            for i in range(len(rows or [])):
+                rows[i] = tuple(rows[i]) + ('',)
 
 
 class InnerList():
@@ -162,6 +182,7 @@ class InnerList():
             self.columns = ListBoxColumn()
         else:
             self.columns = columns
+            AddMissingColumns(self)
         self.selectedItems = []
         self.filterCache = None
         self.filterQuery = None
@@ -640,7 +661,33 @@ class MFEATS_Scheduler(ThreadTimer):
     def AutoAnalyzer(self):
         if self.IsAutoAnalyzerOn() is False:
             return
-        for listIdx in range(len(self.parent.ListBox.innerList)):
+        # a list's status is saved with it: songs since outdated (a newer analysis, or a
+        # grid not made yet) marked to be analyzed again, ahead of being played
+        threading.Thread(target=self.FindOutdated, daemon=True).start()
+
+    def FindOutdated(self):
+        try:
+            done = mfeats.get_done_mdx()
+        except Exception:
+            done = None
+        wx.CallAfter(self.QueueOutdated, done)
+
+    def QueueOutdated(self, done):
+        if not self.parent or self.IsAutoAnalyzerOn() is False:
+            return
+        lists = self.parent.ListBox.innerList
+        if done is not None:
+            for listIdx in range(len(lists)):
+                statusIdx = self.parent.ListBox.GetColumnKeyToIdx('status', listIdx)
+                mdxIdx = self.parent.ListBox.GetColumnKeyToIdx('mdx', listIdx)
+                items = lists[listIdx].items
+                for i in range(len(items)):
+                    if items[i][statusIdx] == 'analyzed' and items[i][mdxIdx] not in done:
+                        # rows are tuples, replaced whole
+                        item = list(items[i])
+                        item[statusIdx] = ''
+                        items[i] = tuple(item)
+        for listIdx in range(len(lists)):
             itemsIdx = self.parent.ListBox\
                 .GetItemsIdxByColumnKeyValue('status', '', listIdx)
             if itemsIdx == []:
@@ -871,6 +918,10 @@ class MFEATS_Scheduler(ThreadTimer):
     def UpdateItemsValue(self, path):
         mdx = audio.makemdx(path)
         resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
+        # the list's waveform cell made again from the new analysis
+        images = getattr(self.parent.ListBox.List, 'images', None)
+        if images is not None:
+            images.Forget(mdx)
         if resp is None:
             # analyzing status uses GetProcPath
             self.parent.ListBox.SetListItemsValueWhereColumnKey(
@@ -1202,6 +1253,29 @@ KEY_EVENT_TYPES = (wx.EVT_KEY_DOWN.evtType[0], wx.EVT_KEY_UP.evtType[0],
 MOUSE_EVENT_TYPES = tuple(wx.EVT_MOUSE_EVENTS.evtType)
 
 
+# the mouse is read off the whole screen (wx.GetMouseState), not from the player's own
+# events: a press over another window lying on the player (the radio's, a menu) was taken
+# by the box under it too
+user32 = ctypes.windll.user32 if hasattr(ctypes, 'windll') else None
+if user32 is not None:
+    user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
+    user32.WindowFromPoint.restype = ctypes.wintypes.HWND
+    user32.GetAncestor.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint]
+    user32.GetAncestor.restype = ctypes.wintypes.HWND
+
+
+def is_pointer_covered(x, y, window):
+    # another top-level window under the pointer than the player's own
+    if user32 is None or not window:
+        return False
+    try:
+        root = user32.GetAncestor(user32.WindowFromPoint(ctypes.wintypes.POINT(x, y)), 2)
+        main = wx.GetTopLevelParent(window).GetHandle()
+    except Exception:
+        return False
+    return bool(root) and root != main
+
+
 class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
 
     def __init__(self, parent):
@@ -1227,6 +1301,7 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
         if self.stop:
             return
         event = self.MakeEvent()
+        event.covered = is_pointer_covered(event.x, event.y, self.parent)
         self.CatchCurserEvent(event)
         if not hasattr(self.parent, 'StatusBox'):
             return
@@ -1520,10 +1595,15 @@ class EventCatcher():
     def MakeupGlobalEvent(self, event):
         event.X, event.Y = self.ScreenToClient((event.x, event.y))
         event.rectIdx = self.GetRectIdx((event.X, event.Y))
+        # another window over the player there (a dialog, a menu): not this box's
+        if getattr(event, 'covered', False):
+            event.rectIdx = None
 
         if event.LeftDown or event.RightDown or event.MiddleDown:
             event.down.X, event.down.Y = self.ScreenToClient((event.down.x, event.down.y))
             event.down.rectIdx = self.GetRectIdx((event.down.X, event.down.Y))
+            if getattr(event, 'covered', False):
+                event.down.rectIdx = None
             self.cache.down.X, self.cache.down.Y, self.cache.down.rectIdx\
                 = (event.down.X, event.down.Y, event.down.rectIdx)
         elif (event.down.x, event.down.y) != (None, None):

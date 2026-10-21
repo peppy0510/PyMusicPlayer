@@ -10,6 +10,7 @@ email: peppy0510@hotmail.com
 import codecs
 import ctypes
 import math
+import addons
 import mutagen
 import mutagen.id3
 import mutagen.mp3
@@ -592,6 +593,13 @@ def set_tempo_percent(hstream, percent):
     pybass.BASS_ChannelSetAttribute(hstream, BASS_ATTRIB_TEMPO, float(percent))
 
 
+BASS_ATTRIB_TEMPO_PITCH = 0x10001
+
+
+def set_tempo_pitch(hstream, semitones):
+    pybass.BASS_ChannelSetAttribute(hstream, BASS_ATTRIB_TEMPO_PITCH, float(semitones))
+
+
 def set_direction(hstream, direction):
     # a tempo stream turns the reverse stream under it
     hstream = get_tempo_source(hstream) or hstream
@@ -608,33 +616,63 @@ def set_frequency(hstream, freq):
     pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_FREQ, freq)
 
 
+# BASS add-ons in assets/dlls, the ones there loaded (AAC, and HLS for internet radio)
+BASS_PLUGINS = ['bass_aac.dll', 'basshls.dll', 'bass_ac3.dll', 'bassape.dll', 'bassflac.dll',
+                'bass_mpc.dll', 'bassopus.dll', 'basswma.dll']
+
+
+def load_bass_plugins():
+    # BASS_PluginLoad takes the file's path (the module and its function type were given,
+    # an argument error swallowed, and no add-on was ever loaded); bass_vst is not an
+    # add-on, loaded into the process as before
+    try:
+        pybass.bass.load('bass_vst.dll')
+    except Exception:
+        pass
+    for plugin in BASS_PLUGINS:
+        # fetched into the user's folder (addons.py), or in assets
+        path = addons.find_addon(plugin)
+        if path is None:
+            try:
+                path = pybass.bass.load(plugin)[0]._name
+            except FileNotFoundError:
+                continue
+        pybass.BASS_PluginLoad(path.encode('mbcs'), 0)
+
+
+# LOUD: Auto Master (PyWinAudio's, built here from plugin/automaster.c) on a stream as a VST
+# DSP. its defaults, with the limiter pushed to the ceiling as the PyWinAudio rack runs it
+# (about LoudMax's sound, 0.2 to 0.7 dB RMS apart): Ceiling 0 dB, Drive +30 dB, Smooth on
+AUTOMASTER = 'PyMusicPlayerAutoMaster.dll'
+AUTOMASTER_PARAMS = ((13, 1.0), (14, 1.0), (15, 1.0))
+
+
+def set_automaster(hstream, on=True):
+    '''the VST handle of Auto Master put on the stream (0 when it is not there), bypassed
+    when on is False'''
+    try:
+        path = pybass.bass.load(AUTOMASTER)[0]._name
+    except FileNotFoundError:
+        return 0
+    flags = pybass.BASS_UNICODE | pybass.BASS_VST_KEEP_CHANS
+    handle = pybass.BASS_VST_ChannelSetDSP(hstream, path, flags, 0)
+    if not handle:
+        return 0
+    for index, value in AUTOMASTER_PARAMS:
+        pybass.BASS_VST_SetParam(handle, index, value)
+    pybass.BASS_VST_SetBypass(handle, on is False)
+    return handle
+
+
 def init_bass_play():
-    plugins = ['bass_vst.dll', 'bassaac.dll', 'bassac3.dll', 'bassape.dll',
-               'bassflac.dll', 'bass_mpc.dll', 'bassopus.dll', 'basswma.dll']
-    # 'bass_spx.dll', 'bass_tta.dll', 'bass_aix.dll'
-    for plugin in plugins:
-        try:
-            bass_module, func_type = pybass.bass.load(plugin)
-            pybass.BASS_PluginLoad(bass_module, func_type)
-        except Exception:
-            pass
-        # pybass.BASS_PluginLoad(packctrl.findPath(plugin, ['', 'packages']), 0)
+    load_bass_plugins()
     pybass.BASS_SetConfig(pybass.BASS_CONFIG_UPDATEPERIOD, PLAY_UPDATE_PERIOD_MS)
     pybass.BASS_SetConfig(pybass.BASS_CONFIG_BUFFER, PLAY_BUFFER_MS)
     pybass.BASS_Init(-1, 44100, 0, 0, 0)
 
 
 def init_bass_decode():
-    plugins = ['bass_vst.dll', 'bassaac.dll', 'bassac3.dll', 'bassape.dll',
-               'bassflac.dll', 'bassmpc.dll', 'bassopus.dll', 'basswma.dll']
-    # 'bass_spx.dll', 'bass_tta.dll', 'bass_aix.dll'
-    for plugin in plugins:
-        try:
-            bass_module, func_type = pybass.bass.load(plugin)
-            pybass.BASS_PluginLoad(bass_module, func_type)
-        except Exception:
-            pass
-        # pybass.BASS_PluginLoad(packctrl.findPath(plugin, ['', 'packages']), 0)
+    load_bass_plugins()
     # pybass.BASS_Init(0, 0, 0, 0, 0)
     pybass.BASS_Init(-1, 44100, 0, 0, 0)
 
