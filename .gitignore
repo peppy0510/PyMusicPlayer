@@ -8,8 +8,8 @@
 *.log
 /log
 /.venv
-/dist
-/build
+/.dist
+/.build
 /scipy
 source/dist
 source/build
@@ -22,4 +22,4 @@ desktop.ini
 assets/dlls/LoudMax*.dll
 assets/dlls/bass_aac.dll
 assets/dlls/fpcalc.exe
-/plugin/build
+/plugin/.build

@@ -25,8 +25,8 @@ from PIL import Image
 class BuildBase():
 
     class path():
-        dist = 'dist'
-        build = 'build'
+        dist = '.dist'
+        build = '.build'
         icondir = os.path.join('assets', 'icon')
         iconsrc = os.path.join(icondir, 'icon.png')
         icondst = os.path.join(icondir, 'icon.ico')
@@ -105,7 +105,8 @@ class BuildBase():
 
     @classmethod
     def make_build(self):
-        command = 'pyinstaller {}'.format(self.path.spec)
+        command = 'pyinstaller --distpath "{}" --workpath "{}" {}'.format(
+            self.path.dist, self.path.build, self.path.spec)
         proc = subprocess.Popen(command, shell=True)
         proc.communicate()
 

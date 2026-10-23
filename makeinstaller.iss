@@ -11,7 +11,7 @@ AppPublisher="Taehong Kim"
 UninstallDisplayIcon="{app}\PyMusicPlayer.exe"
 Compression=lzma2/max
 SolidCompression=yes
-OutputDir="dist"
+OutputDir=".dist"
 OutputBaseFilename="PyMusicPlayer-1.1.0-Setup"
 ; VersionInfoVersion="1.1.0"
 VersionInfoProductVersion="1.1.0"
@@ -20,7 +20,7 @@ VersionInfoCopyright="Taehong Kim"
 ArchitecturesInstallIn64BitMode="x64compatible"
 
 [Files]
-Source: "dist\PyMusicPlayer\*"; DestDir: "{app}"; Flags: recursesubdirs
+Source: ".dist\PyMusicPlayer\*"; DestDir: "{app}"; Flags: recursesubdirs
 
 [Icons]
 Name: "{group}\PyMusicPlayer"; Filename: "{app}\PyMusicPlayer.exe"
