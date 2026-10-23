@@ -1259,6 +1259,16 @@ PHRASE_SURE = 0.2
 # level or low band (choose_long_highlight)
 HIGHLIGHT_LOW_RISE = 1.0
 HIGHLIGHT_CALM = 0.5
+# the radio edit (choose_radio_edit): a 4 bar block of the main part at this share of the
+# body's level, and full: its level, mids and highs together at EDIT_FULL of the body's (an
+# intro or an outro of drums and bass is as loud, but without the mids and highs of the
+# pads, the lead and the voice); a breakdown's block under HIGHLIGHT_CALM of its low band;
+# of a breakdown the first block and the last two (the build) kept, the rest cut in whole
+# 8 bars
+EDIT_MAIN = 0.85
+EDIT_FULL = 0.75
+EDIT_BREAK_HEAD = 1
+EDIT_BREAK_TAIL = 2
 
 
 def read_mono_all(path, fs_out):
@@ -1569,6 +1579,110 @@ def choose_long_highlight(waveform, duration, bpm, phrase_start, length, step, e
         return int(calm[max(i, 0):i + size].sum())
 
     return min(scored, key=lambda v: (count(v[1]), -v[0]))[1]
+
+
+def get_phrase_start(grid):
+    # the first phrase's start (seconds) of a grid row with its moves (shift, phrase_shift)
+    period = 60.0 / grid.bpm
+    downbeat = (grid.downbeat + (grid.shift or 0) * period) % (period * 4)
+    return downbeat + (((grid.phrase or 0) + (grid.phrase_shift or 0)) % 4) * period * 4
+
+
+def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None):
+    """(start, end, cuts) of a DJ track played as a radio edit, or None (too short, or no
+    main part): from the first block of its main part (the intro skipped) to the last one's
+    end (the outro skipped), its long breakdowns shortened, cuts [(from, to)] jumped over.
+    blocks of 4 bars from the phrase's start; a cut is whole 8 bars, so the song's phrases
+    go on across it. target: about this many seconds (shorten_edit), the edit as it is
+    without"""
+    bar = 4 * 60.0 / bpm
+    block = bar * 4
+    first = phrase_start % block
+    levels, lows = get_bar_levels(waveform, duration, bar, first)
+    count = len(levels) // 4
+    if count < 8:
+        return None
+    body, body_low = numpy.quantile(levels, 0.75), numpy.quantile(lows, 0.75)
+    if body <= 0 or body_low <= 0:
+        return None
+    level = levels[:count * 4].reshape(count, 4).mean(axis=1) / body
+    low = lows[:count * 4].reshape(count, 4).mean(axis=1) / body_low
+    # the mids and the highs in the same amplitude, block by block, against their body's
+    columns = len(waveform) / duration
+    amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
+    full = level.copy()
+    for band in (3, 4):
+        share = amplitude * waveform[:, band].astype(float) / 255.0
+        values = numpy.array([share[int((first + i * block) * columns):
+                                    int((first + (i + 1) * block) * columns)].mean()
+                              for i in range(count)])
+        full += values / (numpy.quantile(values, 0.75) + 1e-12)
+    main = (level >= EDIT_MAIN) & (full / 3.0 >= EDIT_FULL)
+    # two blocks running: a lone loud one in an intro is not its main part
+    starts = [i for i in range(count - 1) if main[i] and main[i + 1]]
+    if not starts:
+        return None
+    head = starts[0]
+    tail = max(i for i in range(count) if main[i]) + 1
+    if tail - head < 8:
+        return None
+    cuts = []
+    i = head
+    while i < tail:
+        if low[i] >= HIGHLIGHT_CALM:
+            i += 1
+            continue
+        j = i
+        while j < tail and low[j] < HIGHLIGHT_CALM:
+            j += 1
+        pairs = (j - EDIT_BREAK_TAIL - (i + EDIT_BREAK_HEAD)) // 2
+        if pairs >= 1:
+            cut_from = first + (i + EDIT_BREAK_HEAD) * block
+            cuts.append((cut_from, cut_from + pairs * 2 * block))
+        i = j
+    if target:
+        cuts = shorten_edit(first, block, head, tail, cuts, target,
+                            numpy.stack((level, low, full / 3.0), axis=1))
+    return (first + head * block, min(first + tail * block, duration), cuts)
+
+
+# a shortened edit keeps this many blocks (4 bars) at its start and its end whole
+EDIT_KEEP_ENDS = 2
+
+
+def shorten_edit(first, block, head, tail, cuts, target, features):
+    '''the edit's cuts with more 8 bars of its main part cut till it plays about target
+    seconds: first the 8 bars most like the 8 before them (a repeat), never its first and
+    last EDIT_KEEP_ENDS blocks; on its 8 bars' steps from its start, so its phrases go on
+    across them; cuts touching joined into one jump'''
+    def played(cuts):
+        return (tail - head) * block - sum(b - a for a, b in cuts)
+
+    def to_block(seconds):
+        return int(round((seconds - first) / block))
+
+    taken = set()
+    for a, b in cuts:
+        taken.update(range(to_block(a), to_block(b)))
+    candidates = []
+    for i in range(head + EDIT_KEEP_ENDS, tail - EDIT_KEEP_ENDS - 1, 2):
+        if {i, i + 1} & taken or i - 2 < head:
+            continue
+        distance = numpy.abs(features[i:i + 2] - features[i - 2:i]).sum()
+        candidates.append((distance, i))
+    candidates.sort()
+    cuts = list(cuts)
+    for _, i in candidates:
+        if played(cuts) <= target + block:
+            break
+        cuts.append((first + i * block, first + (i + 2) * block))
+    joined = []
+    for a, b in sorted(cuts):
+        if joined and a <= joined[-1][1] + 1e-6:
+            joined[-1] = (joined[-1][0], max(joined[-1][1], b))
+        else:
+            joined.append((a, b))
+    return joined
 
 
 def get_beat_changes(mono, fs, start, period):

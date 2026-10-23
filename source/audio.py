@@ -22,6 +22,7 @@ import sys
 
 from PIL import Image
 from copy import deepcopy
+from pybass import pybassmix
 from numpy import where
 from scipy import signal
 from utilities import makemdx  # noqa
@@ -526,10 +527,12 @@ def load_bass_fx():
     return BASS_FX_ReverseCreate
 
 
-def create_play_stream(path, flags, keylock=False):
+def create_play_stream(path, flags, keylock=False, decode=False):
     # (stream, True) playing either way, or (stream, False) a plain one when
     # bass_fx is not there. keylock: a tempo stream over the reverse one, its tempo
-    # changed without its pitch (set_tempo_percent)
+    # changed without its pitch (set_tempo_percent). decode: the last of them decoding,
+    # for a mixer (the audio graph's deck: audiograph), not played on its own
+    last = pybass.BASS_STREAM_DECODE if decode else 0
     reverse_create = load_bass_fx()
     if reverse_create:
         source = pybass.BASS_StreamCreateFile(False, path, 0, 0, flags | pybass.BASS_STREAM_DECODE)
@@ -540,7 +543,7 @@ def create_play_stream(path, flags, keylock=False):
             # bass_fx takes no reverse stream over a tempo one, only this way round
             reverse = reverse_create(source, REVERSE_BLOCK_SECONDS,
                                      BASS_FX_FREESOURCE | pybass.BASS_STREAM_DECODE)
-            hstream = tempo_create(reverse, BASS_FX_FREESOURCE) if reverse else 0
+            hstream = tempo_create(reverse, BASS_FX_FREESOURCE | last) if reverse else 0
             if hstream:
                 set_direction(hstream, BASS_FX_RVS_FORWARD)
                 pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_SRC, 2.0)
@@ -551,14 +554,14 @@ def create_play_stream(path, flags, keylock=False):
                 False, path, 0, 0, flags | pybass.BASS_STREAM_DECODE)
             if source == 0:
                 return (0, False)
-        hstream = reverse_create(source, REVERSE_BLOCK_SECONDS, BASS_FX_FREESOURCE)
+        hstream = reverse_create(source, REVERSE_BLOCK_SECONDS, BASS_FX_FREESOURCE | last)
         if hstream:
             set_direction(hstream, BASS_FX_RVS_FORWARD)
             # resampled finer (16-point sinc, not 8) for a scratch's far-off speeds
             pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_SRC, 2.0)
             return (hstream, True)
         pybass.BASS_StreamFree(source)
-    return (pybass.BASS_StreamCreateFile(False, path, 0, 0, flags), False)
+    return (pybass.BASS_StreamCreateFile(False, path, 0, 0, flags | last), False)
 
 
 # bass_fx's tempo stream: its tempo in percent, the pitch kept
@@ -640,16 +643,14 @@ def load_bass_plugins():
         pybass.BASS_PluginLoad(path.encode('mbcs'), 0)
 
 
-# LOUD: Auto Master (PyWinAudio's, built here from plugin/automaster.c) on a stream as a VST
-# DSP. its defaults, with the limiter pushed to the ceiling as the PyWinAudio rack runs it
-# (about LoudMax's sound, 0.2 to 0.7 dB RMS apart): Ceiling 0 dB, Drive +30 dB, Smooth on
+# MASTER: Auto Master (PyWinAudio's, built here from plugin/automaster.c) on a stream as a
+# VST DSP, its parameters as MASTER's panel keeps them (master.get_values)
 AUTOMASTER = 'PyMusicPlayerAutoMaster.dll'
-AUTOMASTER_PARAMS = ((13, 1.0), (14, 1.0), (15, 1.0))
 
 
-def set_automaster(hstream, on=True):
+def set_automaster(hstream, on=True, values=None):
     '''the VST handle of Auto Master put on the stream (0 when it is not there), bypassed
-    when on is False'''
+    when on is False; values: its parameters (0 to 1), else the plugin's own'''
     try:
         path = pybass.bass.load(AUTOMASTER)[0]._name
     except FileNotFoundError:
@@ -658,10 +659,15 @@ def set_automaster(hstream, on=True):
     handle = pybass.BASS_VST_ChannelSetDSP(hstream, path, flags, 0)
     if not handle:
         return 0
-    for index, value in AUTOMASTER_PARAMS:
+    for index, value in enumerate(values or ()):
         pybass.BASS_VST_SetParam(handle, index, value)
     pybass.BASS_VST_SetBypass(handle, on is False)
     return handle
+
+
+def is_stream_path(path):
+    # a playlist row's path that is an internet radio's stream, not a file
+    return isinstance(path, str) and path.lower().startswith(('http://', 'https://'))
 
 
 def init_bass_play():
@@ -774,14 +780,50 @@ def fbackward(hstream, skip_second):
         set_position(hstream, new_second)
 
 
+# a stream in a mixer (the audio graph's deck: audiograph) decodes ahead of what is
+# heard: its position, a seek, its data and level asked of bassmix, which knows what
+# of it is being heard (a playing stream's own asked of it, as before)
+
+
+def is_mixed(hstream):
+    return bool(hstream) and pybassmix.BASS_Mixer_ChannelGetMixer(hstream) != 0
+
+
 def get_position(hstream):
-    byte_position = pybass.BASS_ChannelGetPosition(hstream, False)
+    if is_mixed(hstream):
+        byte_position = pybassmix.BASS_Mixer_ChannelGetPosition(hstream, pybass.BASS_POS_BYTE)
+    else:
+        byte_position = pybass.BASS_ChannelGetPosition(hstream, False)
     return pybass.BASS_ChannelBytes2Seconds(hstream, byte_position)
 
 
 def set_position(hstream, second):
     byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, second)
-    pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+    if is_mixed(hstream):
+        # (the mixer's buffered data of it dropped: heard at once)
+        pybassmix.BASS_Mixer_ChannelSetPosition(hstream, byte_position, pybass.BASS_POS_BYTE)
+    else:
+        pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
+
+
+def get_channel_data(hstream, pointer, length):
+    # what is being heard of it (a mixer's source: what the mixer kept of it)
+    if is_mixed(hstream):
+        return pybassmix.BASS_Mixer_ChannelGetData(hstream, pointer, length)
+    return pybass.BASS_ChannelGetData(hstream, pointer, length)
+
+
+def get_channel_level(hstream):
+    if is_mixed(hstream):
+        return pybassmix.BASS_Mixer_ChannelGetLevel(hstream)
+    return pybass.BASS_ChannelGetLevel(hstream)
+
+
+def play(hstream):
+    # a mixer's source plays as its mixer does (nothing to start)
+    if is_mixed(hstream):
+        return True
+    return pybass.BASS_ChannelPlay(hstream, False)
 
 
 def set_volume(hstream, volume):
@@ -793,7 +835,7 @@ def get_stream_level(hstream):
         return 0
     frame_length = 44100 / 30  # 1024*16
     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
-    pybass.BASS_ChannelGetData(hstream, frame_raw.ctypes.
+    get_channel_data(hstream, frame_raw.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length * 2)
     frame_raw = numpy.int32(frame_raw)
     level = numpy.mean(numpy.power(frame_raw, 2))
@@ -807,7 +849,7 @@ def get_stream_vectorscope(hstream, size):
         return None
     frame_length = int(44100 / 10)
     data = numpy.arange(frame_length, dtype=ctypes.c_short)
-    pybass.BASS_ChannelGetData(hstream, data.ctypes.
+    get_channel_data(hstream, data.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length * 2)
     if max(data) == 0:
         return
@@ -833,7 +875,7 @@ def get_stream_spectrum_vectorscope_repl(hstream, vs_size=90, channel=2, autogai
     frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel)))
     fftpnt = int(round(freqmax * fftrex * 0.1))
     data = numpy.arange(frame_length, dtype=ctypes.c_short)
-    pybass.BASS_ChannelGetData(hstream, data.ctypes.
+    get_channel_data(hstream, data.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length)
     if channel == 1:
         dataL, dataR = (data, data)
@@ -933,7 +975,7 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     # silence where it is not filled: the length below is in bytes, so half of it
     # is read, and the rest was arange's ramp, drawn as bars of its own
     data = numpy.zeros(frame_length, dtype=ctypes.c_short)
-    pybass.BASS_ChannelGetData(hstream, data.ctypes.
+    get_channel_data(hstream, data.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length)
     if channel == 1:
         dataL, dataR = (data, data)
@@ -970,7 +1012,12 @@ def get_id3(filename, field_keys):
     for field_key in field_keys:
         # field_key = field_key.encode(sys.getfilesystemencoding())
         try:
-            value = mutagen_id3.get(field_key)
+            if field_key == u'COMM':
+                # a comment's frames are keyed by their language and description (COMM::eng)
+                frames = mutagen_id3.getall(u'COMM')
+                value = frames[0] if frames else None
+            else:
+                value = mutagen_id3.get(field_key)
         except Exception:
             value = None
         if value is None or len(value.text) == 0:

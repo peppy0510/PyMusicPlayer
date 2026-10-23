@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import audio
+import copy
 import ctypes
 import hashlib
 import json
@@ -22,29 +23,42 @@ import urllib.parse
 import urllib.request
 import wx
 
-from macroboxlib import Button
-from macroboxlib import ComboBox
-from macroboxlib import DialogBox
 from macroboxlib import GetPreference
+from macroboxlib import ListBoxColumn
+from macroboxlib import MakeMusicFileItem
 from macroboxlib import SetPreference
-from macroboxlib import StaticText
-from macroboxlib import TextCtrl
 from utilities import get_user_docapp_path
 
 
-# internet radio: a stream played by BASS beside the player (the player paused while it
-# plays, the radio stopped when the player plays). stations kept in the settings; the
-# directory (radio-browser.info) read when the window opens (its genres and countries, kept
-# a day) and when a genre, a country or a name is asked for
-LVM_SETEXTENDEDLISTVIEWSTYLE = 0x1036
-LVS_EX_INFOTIP = 0x400
-LVS_EX_LABELTIP = 0x4000
+# internet radio as rows of the playlists: a station's row has its stream's address for a
+# path (audio.is_stream_path), played by the player as a track is (a stream with no end: no
+# analysis, no highlight). the stations are kept in the settings (radio_stations: their
+# names and pictures by their addresses). here: the directory (radio-browser.info, read
+# when the window opens and when a genre, a country or a name is asked for), a stream
+# opened, what it plays now, its waveform as it plays and its picture
 USER_AGENT = 'PyMusicPlayer/1.1.1 +https://github.com/peppy0510/PyMusicPlayer'
 DIRECTORY = 'https://all.api.radio-browser.info/json'
 TIMEOUT = 15
 LISTS_SECONDS = 60 * 60 * 24
 STATIONS_LIMIT = 200
-# the waveform of what the radio played, for the player's waveform boxes (GetTrace)
+# the radio's two tabs (shown under Radio in the sidebar, not with the playlists): the
+# favorite stations, and the directory's stations found (Browse)
+RADIO_TITLE = 'Radio'
+BROWSE_TITLE = 'Radio Browse'
+# the stations played lately (recent_stations: their addresses, the latest first)
+RECENT_TITLE = 'Radio Recent'
+RECENT_LIMIT = 50
+# named as the library's (Favorite tracks, Recent tracks): Favorites was the only one
+# without what it holds
+RADIO_TABS = {RADIO_TITLE: 'Favorite stations', RECENT_TITLE: 'Recent stations',
+              BROWSE_TITLE: 'Browse stations'}
+# the stations found in the directory kept (their names, tags and pictures for their rows
+# after a restart), the latest this many
+SEEN_LIMIT = 3000
+# the browse tab's columns: (key, title) shown, the rest hidden
+BROWSE_COLUMNS = (('order', '#', 58), ('filename', 'station', 300), ('genre', 'tags', 220),
+                  ('album', 'country', 60), ('type', 'codec', 60), ('bitrate', 'kbps', 50))
+# the waveform of what a stream played, for the player's waveform boxes (LiveTrace)
 TRACE_SECONDS = 30
 # a station's picture no larger than this (a favicon, a logo)
 PICTURE_BYTES = 2 * 1024 * 1024
@@ -55,55 +69,111 @@ ERRORS = {2: 'the station did not answer the address', 10: 'HTTPS is not availab
           44: 'a codec BASS does not have', -1: 'an unknown error'}
 
 
-class RadioPlayer():
+def open_stream(url, decode=False):
+    '''(handle, error) of a station's stream: an address that is a playlist (.pls, .m3u)
+    followed to its stream, an https one that fails tried once more over http (many
+    stations serve both). blocks for the connection: the player's audio thread calls it'''
+    pybass.BASS_SetConfig(pybass.BASS_CONFIG_NET_PLAYLIST, 1)
+    urls = [url]
+    if url.lower().startswith('https://'):
+        urls.append('http://' + url[len('https://'):])
+    # no download callback: a null one of pybass' type (None was refused by ctypes, an
+    # ArgumentError on the thread, and no station ever opened)
+    handle, error = 0, None
+    # through bass_fx's tempo stream when it is there: its key moved as it plays (the
+    # tempo not: at another speed a station's buffer ran dry or piled up)
+    tempo_create = audio.load_bass_fx_tempo()[0]
+    for address in urls:
+        try:
+            handle = pybass.BASS_StreamCreateURL(
+                address.encode('utf-8'), 0, pybass.BASS_STREAM_DECODE if tempo_create else 0,
+                pybass.DOWNLOADPROC(), None)
+        except Exception as e:
+            handle, error = 0, -1
+            log_failure(url, address, '%s %s' % (type(e).__name__, e))
+            continue
+        if handle and tempo_create:
+            # (decode: for a mixer, the audio graph's deck)
+            tempo = tempo_create(handle, audio.BASS_FX_FREESOURCE
+                                 | (pybass.BASS_STREAM_DECODE if decode else 0))
+            if tempo:
+                return tempo, None
+            pybass.BASS_StreamFree(handle)
+            tempo_create = None
+            handle = pybass.BASS_StreamCreateURL(
+                address.encode('utf-8'), 0, pybass.BASS_STREAM_DECODE if decode else 0,
+                pybass.DOWNLOADPROC(), None)
+        if handle:
+            return handle, None
+        error = pybass.BASS_ErrorGetCode()
+        log_failure(url, address, error)
+    return 0, error
+
+
+def get_stream_title(handle):
+    # the song a station is playing now, from its stream's metadata ('' without)
+    if not handle:
+        return ''
+    # the station's own stream's (under the tempo stream: open_stream)
+    handle = audio.get_tempo_source(handle) or handle
+    pointer = pybass.BASS_ChannelGetTags(handle, pybass.BASS_TAG_META)
+    if not pointer:
+        return ''
+    text = ctypes.string_at(pointer)
+    for encoding in ('utf-8', 'cp1252'):
+        try:
+            text = text.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        return ''
+    found = re.search(r"StreamTitle='(.*?)';", text)
+    return found.group(1) if found else ''
+
+
+class LiveTrace():
+
+    '''the last TRACE_SECONDS of what a stream played, as waveform columns (mfeats'), the
+    newest last: the columns since the last call read from it (what the sound card plays
+    now), as many as the time gone by'''
 
     def __init__(self):
-        self.handle = 0
-        self.station = None
-        self.job = 0
-        self.volume = 1.0
-        # LOUD (Auto Master) as the player has it, set by the player (SetLoud)
-        self.loud = True
-        self.vst = 0
-        # the station's picture (its favicon's bytes) for the player's cover, or None
-        self.picture = None
-        self.ResetTrace()
+        self.Reset()
 
-    def SetLoud(self, on):
-        self.loud = on
-        if self.vst:
-            pybass.BASS_VST_SetBypass(self.vst, on is False)
-
-    def ResetTrace(self):
+    def Reset(self, handle=0):
+        self.handle = handle
         self.trace = numpy.zeros((0, 5), dtype=numpy.uint8)
-        self.trace_lap = None
-        self.trace_due = 0.0
+        self.lap = None
+        self.due = 0.0
 
-    def GetTrace(self):
-        '''the last TRACE_SECONDS of what is heard, as waveform columns (mfeats'), the newest
-        last; the columns since the last call read from the stream (what the sound card
-        plays now), as many as the time gone by'''
-        if self.IsPlaying() is False:
+    def Get(self, handle, playing):
+        if not handle:
             return None
+        if handle != self.handle:
+            self.Reset(handle)
+        if playing is False:
+            self.lap = None
+            return self.trace
         now = time.time()
-        elapsed = 0.05 if self.trace_lap is None else now - self.trace_lap
-        self.trace_lap = now
+        elapsed = 0.05 if self.lap is None else now - self.lap
+        self.lap = now
         # after a stall, no more than the stream keeps
-        self.trace_due += min(max(elapsed, 0.0), 0.25)
+        self.due += min(max(elapsed, 0.0), 0.25)
         step = mfeats.WAVEFORM_COLUMN_SECONDS
-        count = int(self.trace_due / step)
+        count = int(self.due / step)
         if count == 0:
             return self.trace
-        self.trace_due -= count * step
+        self.due -= count * step
         info = pybass.BASS_CHANNELINFO()
-        pybass.BASS_ChannelGetInfo(self.handle, ctypes.byref(info))
+        pybass.BASS_ChannelGetInfo(handle, ctypes.byref(info))
         fs, chans = info.freq, max(info.chans, 1)
         if fs <= 0:
             return self.trace
         frames = count * max(int(fs * step), 1)
         data = numpy.zeros(frames * chans, dtype=numpy.float32)
-        got = pybass.BASS_ChannelGetData(
-            self.handle, data.ctypes.data_as(ctypes.c_void_p),
+        got = audio.get_channel_data(
+            handle, data.ctypes.data_as(ctypes.c_void_p),
             (frames * chans * 4) | pybass.BASS_DATA_FLOAT)
         if got in (-1, 0xFFFFFFFF) or got <= 0:
             return self.trace
@@ -113,105 +183,60 @@ class RadioPlayer():
         self.trace = numpy.vstack([self.trace, columns])[-most:]
         return self.trace
 
-    def Play(self, station, done):
-        # opened on a thread (the connection takes seconds); done(error or None) on the
-        # GUI thread. a later Play or Stop drops what an earlier one opens
-        self.Stop()
-        self.job += 1
-        job = self.job
-        self.station = station
-        self.picture = None
-        self.ResetTrace()
 
-        def work():
-            # an address that is a playlist (.pls, .m3u) followed to its stream; an https one
-            # that fails tried once more over http (many stations serve both)
-            pybass.BASS_SetConfig(pybass.BASS_CONFIG_NET_PLAYLIST, 1)
-            urls = [station['url']]
-            if station['url'].lower().startswith('https://'):
-                urls.append('http://' + station['url'][len('https://'):])
-            # no download callback: a null one of pybass' type (None was refused by ctypes,
-            # an ArgumentError on the thread, and no station ever opened)
-            handle, error = 0, None
-            for url in urls:
-                try:
-                    handle = pybass.BASS_StreamCreateURL(url.encode('utf-8'), 0, 0,
-                                                         pybass.DOWNLOADPROC(), None)
-                except Exception as e:
-                    handle, error = 0, -1
-                    log_failure(station, url, '%s %s' % (type(e).__name__, e))
-                    continue
-                if handle:
-                    break
-                error = pybass.BASS_ErrorGetCode()
-                log_failure(station, url, error)
-            wx.CallAfter(opened, handle, None if handle else error)
-            favicon = station.get('favicon')
-            if favicon is None:
-                # kept before stations had their picture: looked up once by its address
-                favicon = find_favicon(station['url'])
-                wx.CallAfter(keep_favicon, station, favicon)
-            picture = read_picture(favicon)
-            if picture is not None:
-                wx.CallAfter(pictured, picture)
-
-        def pictured(picture):
-            if job == self.job:
-                self.picture = picture
-
-        def opened(handle, error):
-            if job != self.job:
-                if handle:
-                    pybass.BASS_StreamFree(handle)
-                return
-            if handle:
-                self.handle = handle
-                # through Auto Master as the player's tracks are
-                self.vst = audio.set_automaster(handle, self.loud)
-                self.SetVolume(self.volume)
-                pybass.BASS_ChannelPlay(handle, False)
-            done(error)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def Stop(self):
-        self.job += 1
-        if self.handle:
-            pybass.BASS_StreamFree(self.handle)
-        self.handle = 0
-        self.vst = 0
-        self.station = None
-
-    def IsPlaying(self):
-        return bool(self.handle) and \
-            pybass.BASS_ChannelIsActive(self.handle) != pybass.BASS_ACTIVE_STOPPED
-
-    def SetVolume(self, volume):
-        self.volume = volume
-        if self.handle:
-            pybass.BASS_ChannelSetAttribute(self.handle, pybass.BASS_ATTRIB_VOL, volume)
-
-    def GetTitle(self):
-        # the song the station is playing now, from its stream's metadata
-        if not self.handle:
-            return ''
-        pointer = pybass.BASS_ChannelGetTags(self.handle, pybass.BASS_TAG_META)
-        if not pointer:
-            return ''
-        text = ctypes.string_at(pointer)
-        for encoding in ('utf-8', 'cp1252'):
-            try:
-                text = text.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            return ''
-        found = re.search(r"StreamTitle='(.*?)';", text)
-        return found.group(1) if found else ''
+def get_saved_stations():
+    return GetPreference('radio_stations') or []
 
 
-PLAYER = RadioPlayer()
+# the stations by their addresses, read from the settings once (the title asks every event)
+# and again after they are saved here
+STATIONS = None
+
+
+def get_station(url):
+    # a saved station, else one found in the directory
+    global STATIONS
+    if STATIONS is None:
+        STATIONS = dict(GetPreference('radio_seen') or {})
+        STATIONS.update((v.get('url'), v) for v in get_saved_stations())
+    return STATIONS.get(url)
+
+
+def forget_stations():
+    global STATIONS
+    STATIONS = None
+
+
+def remember_stations(stations):
+    # the directory's stations found, kept by their addresses (the latest SEEN_LIMIT)
+    seen = GetPreference('radio_seen') or {}
+    for station in stations:
+        seen.pop(station['url'], None)
+        seen[station['url']] = dict(station)
+    while len(seen) > SEEN_LIMIT:
+        seen.pop(next(iter(seen)))
+    SetPreference('radio_seen', seen)
+    forget_stations()
+
+
+def keep_station(station):
+    # a station played is kept (its name and picture for its rows), once
+    stations = get_saved_stations()
+    if any(v.get('url') == station['url'] for v in stations):
+        return
+    stations.append(dict(station))
+    SetPreference('radio_stations', stations)
+    forget_stations()
+
+
+def keep_favicon(url, favicon):
+    # the saved stations with that address keep their picture's address (looked up once)
+    stations = get_saved_stations()
+    for v in stations:
+        if v.get('url') == url:
+            v['favicon'] = favicon
+    SetPreference('radio_stations', stations)
+    forget_stations()
 
 
 def find_favicon(url):
@@ -223,20 +248,35 @@ def find_favicon(url):
     return next((v.get('favicon') for v in found if v.get('favicon')), '')
 
 
-def keep_favicon(station, favicon):
-    # the station (in an open window's list too) and the saved ones with its address keep
-    # it (looked up once)
-    station['favicon'] = favicon
-    stations = GetPreference('radio_stations') or []
-    for v in stations:
-        if v.get('url') == station['url']:
-            v['favicon'] = favicon
-    SetPreference('radio_stations', stations)
+def fetch_picture(url):
+    '''the bytes of a station's picture (its favicon), None without one; its favicon looked
+    up in the directory once when the station was kept before it had one. blocks: called
+    on threads'''
+    station = get_station(url) or {}
+    favicon = station.get('favicon')
+    if favicon is None:
+        favicon = find_favicon(url)
+        wx.CallAfter(keep_favicon, url, favicon)
+    return read_picture(favicon)
+
+
+PICTURES = {}
+
+
+def get_picture(url):
+    # the station's picture for the player's cover: read once on a thread, None till then
+    if url not in PICTURES:
+        PICTURES[url] = None
+
+        def work():
+            PICTURES[url] = fetch_picture(url)
+        threading.Thread(target=work, daemon=True).start()
+    return PICTURES[url]
 
 
 def read_picture(url):
-    '''the bytes of a station's picture (its favicon), kept in the covers folder; None when
-    it has none or it cannot be read'''
+    '''the bytes of a picture by its address, kept in the covers folder; None when there is
+    none or it cannot be read'''
     if not url or not url.lower().startswith(('http://', 'https://')):
         return None
     folder = os.path.join(get_user_docapp_path(), 'covers', 'radio')
@@ -261,21 +301,236 @@ def read_picture(url):
     return data
 
 
-def log_failure(station, url, error):
+def log_failure(url, address, error):
     # what did not play, for a look later (radio.log in the user's folder)
+    station = get_station(url) or {}
     try:
         with open(os.path.join(get_user_docapp_path(), 'radio.log'), 'a',
                   encoding='utf-8') as file:
             file.write('%s error %s codec %s | %s | %s\n' % (
                 time.strftime('%Y-%m-%d %H:%M:%S'), error, station.get('codec', ''),
-                station.get('name', ''), url))
+                station.get('name', ''), address))
     except OSError:
         pass
 
 
-def stop():
-    # from the player when it plays
-    PLAYER.Stop()
+def open_tab(listbox, title):
+    # the tab's index, made when it is not there; a station's columns (ensure_station_columns)
+    index = [i for i, v in enumerate(listbox.innerList) if v.title == title]
+    if not index:
+        selected = listbox.selectedList
+        listbox.AddInnerList(title)
+        listbox.SetSelectedList(selected)
+        index = [len(listbox.innerList) - 1]
+    ensure_station_columns(listbox)
+    return index[0]
+
+
+def ensure_station_columns(listbox, rebuild=False):
+    '''the radio's tabs (Favorites, Browse) with a station's columns alone (BROWSE_COLUMNS:
+    no length, tempo, key or waveform, nothing of a file): a tab made with a playlist's has
+    its rows made again from their addresses, in the new columns' order'''
+    wanted = [key for key, _, _ in BROWSE_COLUMNS]
+    for inner in listbox.innerList:
+        if inner.title not in RADIO_TABS:
+            continue
+        if [v.key for v in inner.columns if v.show] != wanted:
+            set_browse_columns(inner)
+        elif rebuild is False:
+            continue
+        # its rows made again from their addresses (each row's one http value: rows left in
+        # another order than their columns, by the shared columns sorted, are read too)
+        paths = [next((v for v in item if isinstance(v, str)
+                       and v.startswith(('http://', 'https://'))), None) for item in inner.items]
+        inner.items = [tuple(MakeMusicFileItem(path, order, inner.columns))
+                       for order, path in enumerate([v for v in paths if v], 1)]
+        inner.filterCache = None
+    listbox.reInitBuffer = True
+
+
+def get_favorite_urls(listbox):
+    # the addresses in the Favorites tab
+    for inner in listbox.innerList:
+        if inner.title == RADIO_TITLE:
+            pathIdx = [v.key for v in inner.columns].index('path')
+            return set(item[pathIdx] for item in inner.items)
+    return set()
+
+
+def get_station_rows(inner, stations):
+    # the stations' rows for a tab, as its columns are
+    return [tuple(MakeMusicFileItem(v['url'], order, inner.columns))
+            for order, v in enumerate(stations, 1)]
+
+
+def set_browse_columns(inner):
+    # the station, its tags, country, codec and bitrate in that order, nothing of a file
+    # (before the rows are made: a row's values are in its columns' order)
+    # (copies, in a list of its own: a tab's columns can be the same objects as the other
+    # tabs', and sorting them in place put every playlist's columns out of its rows' order)
+    shown = dict((key, (title, width)) for key, title, width in BROWSE_COLUMNS)
+    order = [key for key, _, _ in BROWSE_COLUMNS]
+    columns = [copy.deepcopy(v) for v in sorted(
+        inner.columns, key=lambda v: order.index(v.key) if v.key in shown else len(order))]
+    for column in columns:
+        column.show = column.key in shown
+        if column.key in shown:
+            column.title, column.width = shown[column.key]
+    inner.columns = columns
+
+
+def repair_playlist_columns(listbox):
+    '''a playlist whose columns were sorted as a station's (set_browse_columns before it
+    copied them): its columns back in the order of its rows' values (the default
+    definition's, from which it was made) and as that definition shows them'''
+    station = [key for key, _, _ in BROWSE_COLUMNS]
+    default = GetPreference('columns') or ListBoxColumn()
+    by_key = dict((v.key, v) for v in default)
+    for inner in listbox.innerList:
+        if inner.title in RADIO_TABS:
+            continue
+        keys = [v.key for v in inner.columns]
+        if keys[:len(station)] != station or set(keys) != set(by_key):
+            continue
+        inner.columns = [copy.deepcopy(by_key[v.key]) for v in default]
+        inner.filterCache = None
+    listbox.reInitBuffer = True
+
+
+def show_found(mainpanel, stations, label):
+    '''the directory's stations in the Browse tab, selected (kept by their addresses for
+    their rows' names after a restart)'''
+    remember_stations(stations)
+    listbox = mainpanel.ListBox
+    index = open_tab(listbox, BROWSE_TITLE)
+    inner = listbox.innerList[index]
+    set_browse_columns(inner)
+    inner.items = get_station_rows(inner, stations)
+    inner.filterCache = None
+    inner.filterQuery = None
+    inner.selectedItems = []
+    listbox.SetSelectedList(index)
+    listbox.reInitBuffer = True
+    mainpanel.ListTab.TabList.reInitBuffer = True
+    tell(mainpanel, '%s: %d stations' % (label, len(stations)))
+
+
+def browse(mainpanel, label, work):
+    # the directory asked on a thread, its stations shown in the Browse tab
+    tell(mainpanel, 'Reading %s ...' % (label))
+
+    def run():
+        try:
+            stations, error = work(), None
+        except Exception as e:
+            stations, error = None, str(e)
+        if error is not None:
+            wx.CallAfter(tell, mainpanel, 'The directory did not answer: %s' % (error), True)
+        else:
+            wx.CallAfter(show_found, mainpanel, stations, label)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def tell(mainpanel, text, warn=False):
+    # in the status line
+    status = getattr(mainpanel, 'StatusBox', None)
+    if status:
+        status.alarm = text
+        status.alarm_color = 'red' if warn else 'blue'
+
+
+def add_favorites(mainpanel, stations):
+    # the stations kept and put in the Favorites tab (once a row a station)
+    listbox = mainpanel.ListBox
+    index = open_tab(listbox, RADIO_TITLE)
+    inner = listbox.innerList[index]
+    pathIdx = [v.key for v in inner.columns].index('path')
+    there = set(item[pathIdx] for item in inner.items)
+    added = [v for v in stations if v['url'] not in there]
+    for station in added:
+        keep_station(station)
+    rows = [tuple(MakeMusicFileItem(v['url'], len(inner.items) + order, inner.columns))
+            for order, v in enumerate(added, 1)]
+    inner.items = list(inner.items) + rows
+    inner.filterCache = None
+    listbox.reInitBuffer = True
+    mainpanel.ListTab.TabList.reInitBuffer = True
+    tell(mainpanel, '%d added to %s' % (len(added), RADIO_TABS[RADIO_TITLE]))
+
+
+def remove_favorites(mainpanel, urls):
+    # the stations' rows taken out of the Favorites tab, the rest numbered again
+    listbox = mainpanel.ListBox
+    index = [i for i, v in enumerate(listbox.innerList) if v.title == RADIO_TITLE]
+    if not index:
+        return
+    inner = listbox.innerList[index[0]]
+    keys = [v.key for v in inner.columns]
+    pathIdx, orderIdx = keys.index('path'), keys.index('order') if 'order' in keys else None
+    kept = [item for item in inner.items if item[pathIdx] not in set(urls)]
+    removed = len(inner.items) - len(kept)
+    if orderIdx is not None:
+        kept = [item[:orderIdx] + (order,) + item[orderIdx + 1:]
+                for order, item in enumerate(kept, 1)]
+    inner.items = kept
+    inner.filterCache = None
+    inner.selectedItems = []
+    listbox.reInitBuffer = True
+    mainpanel.ListTab.TabList.reInitBuffer = True
+    tell(mainpanel, '%d removed from %s' % (removed, RADIO_TABS[RADIO_TITLE]))
+
+
+def note_recent(url):
+    # a station that came on: first in the recent ones (once), the latest RECENT_LIMIT
+    urls = [v for v in (GetPreference('recent_stations') or []) if v != url]
+    SetPreference('recent_stations', [url] + urls[:RECENT_LIMIT - 1])
+
+
+def show_recent(mainpanel):
+    '''the stations played lately in their tab, the latest first (made again at each
+    showing), selected'''
+    listbox = mainpanel.ListBox
+    index = open_tab(listbox, RECENT_TITLE)
+    inner = listbox.innerList[index]
+    stations = [get_station(v) or dict(url=v, name=v)
+                for v in (GetPreference('recent_stations') or [])]
+    inner.items = get_station_rows(inner, stations)
+    inner.filterCache = None
+    inner.selectedItems = []
+    listbox.SetSelectedList(index)
+    listbox.reInitBuffer = True
+
+
+def toggle_favorite(mainpanel, url):
+    # a Browse row's star clicked: the station into the Favorites, or out of them
+    if url in get_favorite_urls(mainpanel.ListBox):
+        remove_favorites(mainpanel, [url])
+    else:
+        add_favorites(mainpanel, [get_station(url) or dict(url=url, name=url)])
+
+
+def add_url(mainpanel):
+    # a station by its stream's address, to the favorites
+    url = wx.GetTextFromUser('Stream URL (http or https)', 'Add Station', '', mainpanel)
+    url = url.strip()
+    if not url.lower().startswith(('http://', 'https://')):
+        return
+    name = wx.GetTextFromUser('Name', 'Add Station', '', mainpanel).strip()
+    add_favorites(mainpanel, [dict(name=name or url, url=url, tags='', bitrate=0)])
+
+
+def get_browse_choices():
+    '''[(label, query)] to browse by: the most voted, then genres and countries by how many
+    stations they have (the directory's lists, kept a day)'''
+    genres, countries = get_lists()
+    choices = [('Top voted', dict())]
+    choices += [('Genre: %s' % (name), dict(tag=name, tagExact='true'))
+                for name, _ in genres[:100]]
+    choices += [('Country: %s' % (name),
+                 dict(countrycode=code) if code else dict(country=name, countryExact='true'))
+                for name, _, code in countries[:100]]
+    return choices
 
 
 def read_directory(path, query=None):
@@ -321,262 +576,3 @@ def get_stations(**query):
                  country=v.get('countrycode', ''), favicon=v.get('favicon', '') or '',
                  codec=('HLS' if v.get('hls') else v.get('codec', '')))
             for v in body if v.get('url_resolved') or v.get('url')]
-
-
-class RadioBox(DialogBox):
-
-    def __init__(self, parent, mainpanel):
-        DialogBox.__init__(self, parent, size=(620, 620))
-        self.mainpanel = mainpanel
-        self.SetTitle('Internet Radio')
-        self.stations = GetPreference('radio_stations') or []
-        self.found = []
-        self.status = ''
-        self.hovered = (None, -1)
-        self.genres = []
-        self.countries = []
-        width, height = self.GetClientSize()
-        StaticText(self, label='My stations', pos=(10, 8), size=(200, -1))
-        self.Stations = self.MakeList((10, 26, width - 20, 130))
-        self.Stations.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnPlayStation)
-        y = 162
-        buttons = (('Play', self.OnPlayStation), ('Stop', self.OnStop),
-                   ('Remove', self.OnRemove), ('Add URL...', self.OnAddURL))
-        for i, (label, handler) in enumerate(buttons):
-            button = Button(self, label=label)
-            button.SetRect((10 + i * 90, y, 84, 26))
-            button.Bind(wx.EVT_BUTTON, handler)
-        y += 42
-        StaticText(self, label='Browse the directory', pos=(10, y), size=(200, -1))
-        y += 20
-        StaticText(self, label='Genre', pos=(10, y + 3), size=(50, -1))
-        self.Genre = ComboBox(self, choices=[], style=wx.CB_READONLY)
-        self.Genre.SetRect((60, y, 200, 24))
-        self.Genre.Bind(wx.EVT_COMBOBOX, self.OnGenre)
-        StaticText(self, label='Country', pos=(276, y + 3), size=(55, -1))
-        self.Country = ComboBox(self, choices=[], style=wx.CB_READONLY)
-        self.Country.SetRect((332, y, 180, 24))
-        self.Country.Bind(wx.EVT_COMBOBOX, self.OnCountry)
-        button = Button(self, label='Top voted')
-        button.SetRect((width - 100, y - 1, 90, 26))
-        button.Bind(wx.EVT_BUTTON, self.OnTop)
-        y += 32
-        StaticText(self, label='Name', pos=(10, y + 3), size=(50, -1))
-        self.Query = TextCtrl(self, pos=(60, y), size=(260, 22), style=wx.TE_PROCESS_ENTER)
-        self.Query.Bind(wx.EVT_TEXT_ENTER, self.OnSearch)
-        button = Button(self, label='Search')
-        button.SetRect((328, y - 2, 84, 26))
-        button.Bind(wx.EVT_BUTTON, self.OnSearch)
-        button = Button(self, label='Keep')
-        button.SetRect((width - 100, y - 2, 90, 26))
-        button.Bind(wx.EVT_BUTTON, self.OnKeep)
-        self.Found = self.MakeList((10, y + 30, width - 20, height - y - 30 - 64))
-        self.Found.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnPlayFound)
-        self.Status = StaticText(self, label='', pos=(10, height - 52), size=(width - 140, 18))
-        StaticText(self, label='Volume', pos=(width - 230, height - 30), size=(50, -1))
-        self.Volume = wx.Slider(self, value=int(PLAYER.volume * 100), minValue=0,
-                                maxValue=100, pos=(width - 175, height - 34), size=(160, 24))
-        self.Volume.Bind(wx.EVT_SLIDER, self.OnVolume)
-        self.NowPlaying = StaticText(self, label='', pos=(10, height - 30),
-                                     size=(width - 250, 18))
-        self.FillList(self.Stations, self.stations)
-        self.timer = wx.Timer(self)
-        self.Bind(wx.EVT_TIMER, self.OnTimer, self.timer)
-        self.timer.Start(2000)
-        self.ShowPlaying()
-        self.LoadLists()
-
-    def MakeList(self, rect):
-        control = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        control.SetRect(rect)
-        for i, (title, width) in enumerate((('Name', 240), ('Tags', 190), ('Country', 55),
-                                            ('Codec', 55), ('kbps', 45))):
-            control.InsertColumn(i, title, width=width)
-        # no pop-up of a cut cell's whole text (it was cut off by the windows beside the
-        # dialog): the station under the pointer is told in the status line instead
-        ctypes.windll.user32.SendMessageW(control.GetHandle(), LVM_SETEXTENDEDLISTVIEWSTYLE,
-                                          LVS_EX_LABELTIP | LVS_EX_INFOTIP, 0)
-        control.Bind(wx.EVT_MOTION, self.OnListMotion)
-        control.Bind(wx.EVT_LEAVE_WINDOW, self.OnListLeave)
-        return control
-
-    def OnListMotion(self, event):
-        event.Skip()
-        control = event.GetEventObject()
-        index, _ = control.HitTest(event.GetPosition())
-        stations = self.stations if control is self.Stations else self.found
-        if index == self.hovered[1] and control is self.hovered[0]:
-            return
-        self.hovered = (control, index)
-        if 0 <= index < len(stations):
-            v = stations[index]
-            self.Status.SetLabel('%s | %s' % (v['name'] or v['url'], v.get('tags', '') or ''))
-        else:
-            self.Status.SetLabel(self.status)
-
-    def OnListLeave(self, event):
-        event.Skip()
-        self.hovered = (None, -1)
-        self.Status.SetLabel(self.status)
-
-    def SetStatus(self, label):
-        # the status line's own message, shown again when the pointer leaves a list
-        self.status = label
-        if self.hovered[1] < 0:
-            self.Status.SetLabel(label)
-
-    def FillList(self, control, stations):
-        control.DeleteAllItems()
-        for i, v in enumerate(stations):
-            control.InsertItem(i, v['name'] or v['url'])
-            control.SetItem(i, 1, v.get('tags', '') or '')
-            control.SetItem(i, 2, v.get('country', '') or '')
-            control.SetItem(i, 3, v.get('codec', '') or '')
-            control.SetItem(i, 4, str(v.get('bitrate', '') or ''))
-
-    def Ask(self, label, work, done):
-        # the directory on a thread, its answer (or error) back on the GUI thread
-        self.SetStatus(label)
-
-        def run():
-            try:
-                answer, error = work(), None
-            except Exception as e:
-                answer, error = None, str(e)
-            wx.CallAfter(finish, answer, error)
-
-        def finish(answer, error):
-            if not self:
-                return
-            if error is not None:
-                self.SetStatus('The directory did not answer: %s' % (error))
-                return
-            done(answer)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def LoadLists(self):
-        def done(answer):
-            self.genres, self.countries = answer
-            self.Genre.Set(['%s (%d)' % (name, count) for name, count in self.genres])
-            self.Country.Set(['%s (%d)' % (name, count) for name, count, _ in self.countries])
-            self.SetStatus('%d genres, %d countries' % (len(self.genres),
-                                                              len(self.countries)))
-        self.Ask('Reading the directory ...', get_lists, done)
-
-    def ShowFound(self, label):
-        def done(found):
-            self.found = found
-            self.FillList(self.Found, found)
-            self.SetStatus('%s: %d stations' % (label, len(found)))
-        return done
-
-    def OnGenre(self, event):
-        index = self.Genre.GetSelection()
-        if index < 0 or index >= len(self.genres):
-            return
-        name = self.genres[index][0]
-        self.Ask('Reading %s ...' % (name), lambda: get_stations(tag=name, tagExact='true'),
-                 self.ShowFound(name))
-
-    def OnCountry(self, event):
-        index = self.Country.GetSelection()
-        if index < 0 or index >= len(self.countries):
-            return
-        name, _, code = self.countries[index]
-        if code:
-            query = dict(countrycode=code)
-        else:
-            query = dict(country=name, countryExact='true')
-        self.Ask('Reading %s ...' % (name), lambda: get_stations(**query),
-                 self.ShowFound(name))
-
-    def OnTop(self, event):
-        self.Ask('Reading the most voted ...', lambda: get_stations(),
-                 self.ShowFound('Top voted'))
-
-    def OnSearch(self, event):
-        name = self.Query.GetValue().strip()
-        if not name:
-            return
-        self.Ask('Searching ...', lambda: get_stations(name=name), self.ShowFound(name))
-
-    def Play(self, station):
-        # the player paused only when it plays: paused again, its place went to the track's
-        # end and the playlist's next track began
-        if self.mainpanel.PlayBox.IsPlaying():
-            self.mainpanel.PlayBox.OnPause()
-        PLAYER.SetLoud(self.mainpanel.PlayBox.IsLoudOn())
-        PLAYER.SetVolume(self.Volume.GetValue() / 100.0)
-        self.SetStatus('Connecting to %s ...' % (station['name'] or station['url']))
-        PLAYER.Play(station, self.OnOpened)
-
-    def OnOpened(self, error):
-        if not self:
-            return
-        if error is not None:
-            self.SetStatus('Not played: %s (BASS error %d)' % (ERRORS.get(error, 'error'),
-                                                               error))
-            return
-        self.ShowPlaying()
-
-    def ShowPlaying(self):
-        if PLAYER.station is not None and PLAYER.IsPlaying():
-            self.SetStatus('Playing %s' % (PLAYER.station['name'] or PLAYER.station['url']))
-        self.NowPlaying.SetLabel(PLAYER.GetTitle())
-
-    def OnTimer(self, event):
-        if not self:
-            return
-        self.ShowPlaying()
-
-    def OnPlayStation(self, event):
-        index = self.Stations.GetFirstSelected()
-        if index >= 0:
-            self.Play(self.stations[index])
-
-    def OnPlayFound(self, event):
-        index = self.Found.GetFirstSelected()
-        if index >= 0:
-            self.Play(self.found[index])
-
-    def OnStop(self, event):
-        PLAYER.Stop()
-        self.SetStatus('Stopped')
-        self.NowPlaying.SetLabel('')
-
-    def OnRemove(self, event):
-        index = self.Stations.GetFirstSelected()
-        if index < 0:
-            return
-        self.stations.pop(index)
-        self.SaveStations()
-
-    def OnAddURL(self, event):
-        url = wx.GetTextFromUser('Stream URL (http or https)', 'Add Station', '', self)
-        if not url.strip().lower().startswith(('http://', 'https://')):
-            return
-        name = wx.GetTextFromUser('Name', 'Add Station', '', self)
-        self.stations.append(dict(name=name.strip(), url=url.strip(), tags='', bitrate=0))
-        self.SaveStations()
-
-    def OnKeep(self, event):
-        index = self.Found.GetFirstSelected()
-        if index < 0:
-            return
-        station = self.found[index]
-        if station['url'] not in [v['url'] for v in self.stations]:
-            self.stations.append(station)
-            self.SaveStations()
-
-    def SaveStations(self):
-        SetPreference('radio_stations', self.stations)
-        self.FillList(self.Stations, self.stations)
-
-    def OnVolume(self, event):
-        PLAYER.SetVolume(self.Volume.GetValue() / 100.0)
-
-    def OnClose(self, event):
-        # the radio plays on with its window closed (Stop, or the player, ends it)
-        self.timer.Stop()
-        self.Destroy()
