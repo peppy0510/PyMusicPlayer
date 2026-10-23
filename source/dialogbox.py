@@ -9,6 +9,7 @@ email: peppy0510@hotmail.com
 
 import images
 import json
+import macroboxstyle
 import socket
 import threading
 import urllib
@@ -16,6 +17,7 @@ import webbrowser
 import wx
 
 from macroboxlib import Button
+from macroboxlib import ProgressBar
 from macroboxlib import CheckBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
@@ -134,12 +136,12 @@ class AboutBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
         self.SetClientSize((420, 185))
         self.parent = parent
         self.SetTitle('About')
-        self.SetTransparent(220)
-        self.SetBackgroundColour((0, 0, 0))
+        # opaque on the dialogs' ground, its button as theirs (a see-through black before)
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.AboutPanel = AboutPanel(self)
         # self.VisitButton = FancyButton(self, label='MUTEKLAB')
         # self.VisitButton.Bind(wx.EVT_BUTTON, self.OnVisit)
-        self.CloseButton = FancyButton(self, label='Close')
+        self.CloseButton = Button(self, label='Close', primary=True)
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
         self.OnSize(None)
         # self.OnSize(None)
@@ -194,11 +196,10 @@ class CheckFilesConsistencyPanel(DialogPanel):
         self.SetRect((0, 0, width, 100))
         width, height = self.GetSize()
         self.text_messages = list()
-        label = 'This task will check broken links '
-        label += 'between your music files\nand MFEATS database. '
-        label += 'Totoal %d tracks are in the playlist. '
-        label += 'May take some time to check all files consistency.'
-        label += '\nWould you proceed this task?'
+        # (worded again: a typo, and one long sentence)
+        label = 'Checks the playlist\'s %d tracks for broken links:\n'
+        label += 'files that were moved or deleted.\n'
+        label += 'It may take a while. Start now?'
         label = label % (self.parent.items_number)
         width, height = self.GetClientSize()
         text = StaticText(self, label=label, style=wx.ALIGN_CENTER)
@@ -222,7 +223,7 @@ class CheckFilesConsistencyProgressPanel(DialogPanel):
         self.SetRect((0, 0, width, 65))
         width, height = self.GetClientSize()
         self.TextMessage = StaticText(self, id=-1, label='', pos=(20, 20))
-        self.ProgressBar = wx.Gauge(self, range=self.parent.items_number)
+        self.ProgressBar = ProgressBar(self, range=self.parent.items_number)
         self.ProgressBar.SetRect((20, 50, width - 40, 10))
 
     def OnClose(self, event):
@@ -255,7 +256,7 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
         self.ConfirmPanel = CheckFilesConsistencyPanel(self)
 
         width, height = self.GetClientSize()
-        self.ApplyButton = Button(self, label='Start')
+        self.ApplyButton = Button(self, label='Start', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CloseButton = Button(self, label='Close')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
@@ -410,7 +411,7 @@ class UpdateBoxCommon(DialogBox):
         self.parent = parent
         self.CloseButton = Button(self, label='Close')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        self.DownloadButton = Button(self, label='Download')
+        self.DownloadButton = Button(self, label='Download', primary=True)
         self.DownloadButton.Bind(wx.EVT_BUTTON, self.OnDownload)
         self.DownloadButton.Disable()
 
@@ -439,7 +440,7 @@ class UpdatePanel(wx.Panel):
                           style=wx.CLIP_CHILDREN | wx.FRAME_SHAPED |
                           wx.NO_FULL_REPAINT_ON_RESIZE | wx.TAB_TRAVERSAL)
         self.parent = parent
-        self.SetBackgroundColour((230, 230, 230))
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         width, height = self.parent.GetSize()
         self.SetRect((0, 0, width, 58))
         self.TextMessage = StaticText(self, label='', pos=(18, 20))
@@ -484,7 +485,7 @@ class UpdateCheckProgressPanel(DialogPanel):
         label = u'Check avaliable update.'
         self.TextMessage = StaticText(self, label=label)
         self.TextMessage.SetPosition((20, 20))
-        self.ProgressBar = wx.Gauge(self, range=self.parent.Thread.max_step)
+        self.ProgressBar = ProgressBar(self, range=self.parent.Thread.max_step)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
 

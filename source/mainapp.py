@@ -17,6 +17,7 @@ __doc__ = '''
 
 
 import json
+import macroboxstyle
 import math
 import mfeats
 import multiprocessing
@@ -25,6 +26,7 @@ import socketserver
 import sys
 import threading
 import time
+import radio
 import wx
 
 from dialogbox import AutoCheckUpdate
@@ -36,6 +38,7 @@ from listbox import StatusBox
 from macroboxlib import BorderBoxH
 from macroboxlib import EVENT_Scheduler
 from macroboxlib import EventDistributor
+from macroboxlib import GetPreference
 from macroboxlib import MFEATS_Network_Scheduler
 from macroboxlib import MFEATS_Scheduler
 from macroboxlib import PopupMenuEventCatcher
@@ -52,6 +55,9 @@ from utilities import kill_self_process
 from utilities import set_master_path
 from utilities import set_process_priority
 from wininstance import clear_instance_port
+from wininstance import get_launch_desktop
+from wininstance import is_test_launch
+from wininstance import move_to_virtual_desktop
 from wininstance import write_instance_port
 # import setproctitle
 # from packages import pybass
@@ -69,6 +75,8 @@ MULTIPROCESSING_FORK = '--multiprocessing-fork'
 
 # MAIN_SOCKET_PORT = 55557
 MAIN_SOCKET_PORT = 55755
+# a test's launch placed this long after it shows (wininstance.is_test_launch)
+TEST_PLACE_MS = 600
 
 # GRAB over 2 eats the tab scrollbar
 LIST_SASH_WIDTH = 8
@@ -80,6 +88,10 @@ LIST_BOX_WIDTH_MIN = 240
 LIST_TAB_ANIMATION_INTERVAL = 10
 # wx.Timer will not notify finer than about 15ms
 LIST_TAB_ANIMATION_DURATION = 80
+
+
+# the search row's height over the list (ListBoxSearch)
+SEARCH_ROW_HEIGHT = 32
 
 
 class ListTabAnimationTimer(wx.Timer):
@@ -129,7 +141,10 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT = BorderBoxH(self)
         # bgcolor = parent.st.PLAYBOX.PLAY_BG_COLOR
         # self.BorderBoxHT.SetBackgroundColour(bgcolor)
-        self.BorderBoxHB = BorderBoxH(self, grad=True)
+        # (the window's bottom 5 px a bevel's gradient to a light grey before, the old
+        # look's: none now, the status line at the bottom)
+        self.BorderBoxHB = BorderBoxH(self)
+        self.BorderBoxHB.SetBackgroundColour(self.StatusBox.GetBackgroundColour())
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_IDLE, self.OnIdle)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
@@ -163,16 +178,27 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.Apic.CatchEvent(event)
         self.PlayBox.VolumeSlider.CatchEvent(event)
         self.PlayBox.TempoButton.CatchEvent(event)
+        self.PlayBox.KeyButton.CatchEvent(event)
+        self.PlayBox.TempoStrip.CatchEvent(event)
+        self.PlayBox.SnapButton.CatchEvent(event)
+        self.PlayBox.RackBar.CatchEvent(event)
+        # (the arrow keys walking an instrument's presets: not the list's too)
+        taken = self.PlayBox.Instruments.TakesKey(event) or self.PlayBox.PianoRoll.TakesKey(event)
+        self.PlayBox.Rack.CatchEvent(event)
         self.ListSash.CatchEvent(event)
-        if self.ListBox.IsAnyListLocked() is False and self.ListSash.IsOnSize() is False:
+        if taken is False and self.ListBox.IsAnyListLocked() is False\
+                and self.ListSash.IsOnSize() is False:
             self.ListTab.TabList.CatchEvent(event)
             self.ListTab.SliderV.CatchEvent(event)
             self.ListTab.TabHeader.CatchEvent(event)
-            # self.ListSearch.CatchEvent(event)
+            # the search row over the list (it had no row: off while it was hidden)
+            self.ListSearch.CatchEvent(event)
             # self.ListBox.CatchEvent(event) #####
-            # self.ListBox.Header.CatchEvent(event)
+            # the list's header: sorting, and the columns' widths dragged at their edges
+            self.ListBox.Header.CatchEvent(event)
             self.ListBox.List.CatchEvent(event)
-            # self.ListBox.SliderH.CatchEvent(event)
+            # shown when the columns are wider than the list (the radio's Browse tab)
+            self.ListBox.SliderH.CatchEvent(event)
             self.ListBox.SliderV.CatchEvent(event)
         self.StatusBox.CatchEvent(event)
 
@@ -183,9 +209,16 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         return wx.Panel.SetCursor(self, cursor)
 
     def GetPlayBoxHeight(self):
+        # the rack adds its height (over the header)
+        master = self.PlayBox.GetRackHeight() + self.PlayBox.GetHeaderExtra()\
+            + self.PlayBox.GetControlExtra()\
+            if hasattr(self, 'PlayBox') else 0
+        # (the waveforms' frame 8 px from the header over it and from the control row under
+        # it: 4 px less than before, 12 over and 8 under)
         if self.parent.IsPlayerTopShowOn():
-            return 193 + self.parent.GetWaveformDetailHeight()
-        return 133 + self.parent.GetWaveformDetailHeight()
+            # (the header 13 px lower than it was: PlayBox.HEADER_HEIGHT)
+            return 154 + self.parent.GetWaveformDetailHeight() + master
+        return 130 + self.parent.GetWaveformDetailHeight() + master
 
     def SetListRects(self):
         w, h = self.GetSize()
@@ -216,12 +249,20 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             sash_width = 0
 
         list_top = pbh + sph
-        list_height = h - pbh + sph - (26 + 35 + 5) + 26
-        list_box = (left_panel_width, list_top,
-                    w - (left_panel_width + right_panel_width), list_height)
-        list_tab = (left_panel_width - list_tab_width, list_top, list_tab_width, list_height)
-        list_sash = (left_panel_width - LIST_SASH_GRAB, list_top, sash_width, list_height)
+        # down to the status line (its 27 rows at the window's bottom; the 5 under it gone)
+        list_height = h - pbh + sph - (26 + 35) + 26
+        # the search row across the window (its sidebar key at the left, over the sidebar;
+        # a field of its own width whether the sidebar is open or not), the sidebar and the
+        # list under it
+        search = (0, list_top, w - right_panel_width, SEARCH_ROW_HEIGHT)
+        below = list_top + SEARCH_ROW_HEIGHT
+        height = list_height - SEARCH_ROW_HEIGHT
+        list_box = (left_panel_width, below,
+                    w - (left_panel_width + right_panel_width), height)
+        list_tab = (left_panel_width - list_tab_width, below, list_tab_width, height)
+        list_sash = (left_panel_width - LIST_SASH_GRAB, below, sash_width, height)
 
+        self.ListSearch.SetRect(search)
         self.ListBox.SetRect(list_box)
         self.ListTab.SetRect(list_tab)
         self.ListSash.SetRect(list_sash)
@@ -237,8 +278,8 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
         self.SetListRects()
-        self.ListSearch.SetRect((0, h - 27 - 5 - 26, w, 0))
-        self.StatusBox.SetRect((0, h - 27 - 5, w, 27))
+        # at the window's bottom (5 px over a bevel strip before, BorderBoxHB, now none)
+        self.StatusBox.SetRect((0, h - 27, w, 27))
 
         # self.ListBox.SetRect((0, pbh + sph, w, h - pbh + sph - (24 + 26 + 35 + 5) + 26))
         # self.ListSearch.SetRect((0, h-24-27-5-26, w, 26))
@@ -246,13 +287,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.StatusBox.SetRect((0, h - 24 - 27 - 5, w, 27))
         # self.ListTab.SetRect((0, h - 24 - 5, w, 24))
 
-        self.BorderBoxHB.SetRect((0, h - 5, w, 5))
+        self.BorderBoxHB.SetRect((0, h, w, 0))
         # a new size has laid the play box out already (its EVT_SIZE, in SetRect):
         # laid out again here it was done twice a step
         if self.PlayBox.GetSize() == size:
             self.PlayBox.OnSize()
         self.ListTab.OnSize()
-        # self.ListSearch.OnSize()
+        self.ListSearch.OnSize()
         self.ListBox.OnSize()
         self.StatusBox.OnSize()
         # self.BorderBoxHT.OnSize()
@@ -422,6 +463,12 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.LoadPreferences()
         self.SetMainFrameIcon()
         self.RestoreMainFrameRect()
+        # the radio's tabs as a station's (made before with a playlist's columns; once the
+        # lists are read, LoadPreferences)
+        radio.repair_playlist_columns(self.MainPanel.ListBox)
+        radio.ensure_station_columns(self.MainPanel.ListBox, rebuild=True)
+        # the rack's modules shown when it closed: room for them with the list
+        wx.CallAfter(self.FitRackRoom)
         fgsizer = wx.FlexGridSizer(1, 0, 0, 0)
         fgsizer.AddGrowableCol(0)
         fgsizer.AddGrowableRow(0)
@@ -434,6 +481,12 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.SetSizer(fgsizer)
         # self.LicenseCheckTimer = LicenseCheckTimer(self)
         self.Show()
+        if is_test_launch():
+            # (after the rack's room is made: its height set)
+            wx.CallLater(TEST_PLACE_MS, self.PlaceForTest)
+        elif get_launch_desktop():
+            wx.CallLater(TEST_PLACE_MS, lambda: move_to_virtual_desktop(
+                self.GetHandle(), get_launch_desktop()))
         self.LoadInitFile()
         self.GauranteeAlwaysOnTop()
         self.InitMainSocket()
@@ -518,7 +571,63 @@ class MacroBoxApp(wx.App):
         return -1
 
     def OnPreInit(self):
+        # a dark style: Windows' dark mode for the title bar, the menus and the standard
+        # controls (wx 3.3), set before any window; a style chosen later takes it at the next
+        # start. wx.App's own first: it makes the stock pens and brushes (without it
+        # wx.TRANSPARENT_PEN and _BRUSH stayed invalid, drawn as a black pen and a white fill)
+        wx.App.OnPreInit(self)
+        if macroboxstyle.load(GetPreference('color_scheme')).UI.DARK:
+            self.MSWEnableDarkMode(wx.App.DarkMode_Always)
         self.MainFrame = MainFrame(initfile=self.initfile)
+        # DEBUG(hang): every thread's stack written when the GUI stops for 3 s; removed
+        # once found
+        import faulthandler
+        beat = [time.time()]
+        self.hang_timer = wx.Timer()
+        self.hang_timer.Bind(wx.EVT_TIMER, lambda event: beat.__setitem__(0, time.time()))
+        self.hang_timer.Start(250)
+        import ctypes
+        from instruments import COUNTS
+
+        def memory():
+            class Counters(ctypes.Structure):
+                _fields_ = [('cb', ctypes.c_ulong), ('faults', ctypes.c_ulong)] + [
+                    (name, ctypes.c_size_t) for name in (
+                        'peak', 'ws', 'qpp', 'qp', 'qnpp', 'qnp', 'page', 'ppage')]
+            counters = Counters()
+            counters.cb = ctypes.sizeof(counters)
+            ctypes.windll.psapi.GetProcessMemoryInfo(
+                ctypes.c_void_p(-1), ctypes.byref(counters), counters.cb)
+            return counters.ws // (1 << 20)
+
+        def note(file):
+            # (the boxes' drawing: ms a second since the last note)
+            try:
+                counts = dict(list(COUNTS.items()))
+                file.write('memory %d MB, counts %s\n' % (memory(), counts))
+                for key in [k for k in counts if k.startswith('ms ')]:
+                    COUNTS.pop(key, None)
+            except Exception as error:
+                file.write('note failed: %r\n' % error)
+
+        def watch():
+            path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'hang.log')
+            lap = time.time()
+            while True:
+                time.sleep(1.0)
+                if time.time() - lap > 15.0:
+                    lap = time.time()
+                    with open(path, 'a', encoding='utf-8') as file:
+                        file.write('=== %s\n' % time.strftime('%H:%M:%S'))
+                        note(file)
+                if time.time() - beat[0] > 3.0:
+                    with open(path, 'a', encoding='utf-8') as file:
+                        file.write('--- %s\n' % time.strftime('%H:%M:%S'))
+                        note(file)
+                        file.flush()
+                        faulthandler.dump_traceback(file=file, all_threads=True)
+                    time.sleep(5.0)
+        threading.Thread(target=watch, daemon=True).start()
 
     def __del__(self):
         pybass.BASS_Free()

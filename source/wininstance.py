@@ -130,3 +130,69 @@ def clear_instance_port():
         os.remove(get_instance_file_path())
     except Exception:
         pass
+
+
+# a test's launch (TEST_PLACE set in its environment: the agent's restarts): its window on
+# the second virtual desktop, in the leftmost monitor's lower half, out of the user's way
+
+TEST_PLACE = 'PYMP_TEST_PLACE'
+TEST_DESKTOP = 2
+VIRTUAL_DESKTOPS = r'Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops'
+# IVirtualDesktopManager (shobjidl): a window of its own process moved to a desktop
+DESKTOP_MANAGER = '{aa509086-5ca9-4c25-8f95-589d3c07b48a}'
+DESKTOP_MANAGER_IID = '{a5cd92ff-29be-454c-8d04-d82879fb3f1b}'
+
+
+# a launch put on a virtual desktop (its number) where it would be anyway (the user's
+# place): the agent's last restart, its tests done, back on the user's desktop
+HOME_DESKTOP = 'PYMP_DESKTOP'
+
+
+def is_test_launch():
+    return bool(os.environ.get(TEST_PLACE))
+
+
+def get_launch_desktop():
+    try:
+        return int(os.environ.get(HOME_DESKTOP, '0')) or None
+    except ValueError:
+        return None
+
+
+def move_to_virtual_desktop(hwnd, number):
+    '''a window of this process onto a virtual desktop (1 the first, as the task view
+    numbers them); False when there is no such desktop or it could not'''
+    import ctypes
+    import winreg
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [('Data1', wintypes.DWORD), ('Data2', wintypes.WORD),
+                    ('Data3', wintypes.WORD), ('Data4', ctypes.c_ubyte * 8)]
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, VIRTUAL_DESKTOPS) as key:
+            ids = winreg.QueryValueEx(key, 'VirtualDesktopIDs')[0]
+    except OSError:
+        return False
+    if len(ids) < number * 16:
+        return False
+    desktop = GUID.from_buffer_copy(ids[(number - 1) * 16:number * 16])
+    ole32 = ctypes.OleDLL('ole32')
+    clsid, iid = GUID(), GUID()
+    ole32.CLSIDFromString(DESKTOP_MANAGER, ctypes.byref(clsid))
+    ole32.CLSIDFromString(DESKTOP_MANAGER_IID, ctypes.byref(iid))
+    manager = ctypes.c_void_p()
+    try:
+        ole32.CoCreateInstance(ctypes.byref(clsid), None, 0x17, ctypes.byref(iid),
+                               ctypes.byref(manager))
+    except OSError:
+        return False
+    table = ctypes.cast(manager, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    # (IUnknown's three, IsWindowOnCurrentVirtualDesktop, GetWindowDesktopId, then it)
+    move = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.HWND,
+                              ctypes.POINTER(GUID))(table[5])
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(table[2])
+    result = move(manager, hwnd, ctypes.byref(desktop))
+    release(manager)
+    return result == 0

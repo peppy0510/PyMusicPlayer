@@ -10,7 +10,6 @@ import images
 import io
 import macroboxstyle
 import os
-import radio
 import threading
 import time
 import webbrowser
@@ -28,6 +27,7 @@ from listbox import FileSaveDialog
 from listbox import LibrarySearchBox
 from macroboxlib import AddMissingColumns
 from macroboxlib import Button
+from macroboxlib import SegmentBar
 from macroboxlib import CheckBox
 from macroboxlib import ComboBox
 from macroboxlib import FONT_ITEM
@@ -41,7 +41,9 @@ from macroboxlib import StaticText
 from macroboxlib import TextCtrl
 from operator import itemgetter
 from utilities import Struct
+from wininstance import TEST_DESKTOP
 from wininstance import get_current_real_cwd
+from wininstance import move_to_virtual_desktop
 
 
 ROW_HEIGHTS = (22, 26, 32, 40, 48)
@@ -100,7 +102,7 @@ class WebLinkEditorPanel(DialogPanel):
         DialogPanel.__init__(self, parent)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
         self.preset = self.parent.parent.parent.WebLinkPreset.preset
         self.field_choices = self.parent.parent.parent.WebLinkPreset.field_choices
         self.default_preset = self.parent.parent.parent.WebLinkPreset.default_preset
@@ -265,12 +267,13 @@ class KeymapPreset():
             'Fast forward',
             'Fast backward',
             'Loop toggle',
-            'Loud toggle',
+            # (as the player names them now: LOUD is MASTER, the ID3 editor the tag editor)
+            'Master toggle',
             'Highlight toggle',
             'Highlight duration -',
             'Highlight duration +',
             'Playlist toggle',
-            'Open ID3Tag Editor'
+            'Open tag editor'
         )
         return keymap_labels
 
@@ -374,7 +377,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         KeymapPreset.__init__(self)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
 
         labels = self.GetKeymapLabels()
         self.Labels = list()
@@ -585,8 +588,42 @@ class MacroBoxPreference():
         self.beatgrid_show = show
         SetPreference('beatgrid_show', show)
         self.MenuBar.itemBeatGridShow.Check(show)
+        # the whole song's waveform painted again: its grid's lanes come and go
+        self.MainPanel.PlayBox.reInitWave = True
         self.MainPanel.PlayBox.Wave.reInitBuffer = True
         self.MainPanel.PlayBox.WaveDetail.reInitBuffer = True
+
+    def IsAnalyzerShowOn(self):
+        playbox = getattr(getattr(self, 'MainPanel', None), 'PlayBox', None)
+        return playbox is not None and playbox.Analyzer.shown
+
+    def SetAnalyzerShow(self, show):
+        # ANALYZER's module in the rack, from the View menu or the header's spectrum
+        if show != self.IsAnalyzerShowOn():
+            self.MainPanel.PlayBox.Analyzer.Toggle()
+        self.MenuBar.itemAnalyzerShow.Check(self.IsAnalyzerShowOn())
+
+    # the list's least height under the player: its search row and a few of its rows
+    LIST_LEAST = 150
+
+    def FitRackRoom(self):
+        # a rack module shown: the window grown for it (the list kept LIST_LEAST tall), as
+        # far as its screen's work area lets it, and moved up when it would run off it
+        if self.IsPlayerOnlyModeOn() or self.IsMaximized() or self.IsIconized()\
+                or self.MainPanel.PlayBox.Rack.GetHeight() == 0:
+            return
+        # MainPanel.SetListRects: the list's column is its height (the frame's client: the
+        # panel's own is not laid out yet at the start) less the player's and 36
+        short = self.MainPanel.GetPlayBoxHeight() + 36 + self.LIST_LEAST\
+            - self.GetClientSize().height
+        if short <= 0:
+            return
+        x, y, w, h = self.GetRect()
+        index = wx.Display.GetFromWindow(self)
+        area = wx.Display(index if index != wx.NOT_FOUND else 0).GetClientArea()
+        h = min(h + short, area.height)
+        y = max(min(y, area.y + area.height - h), area.y)
+        self.SetRect((x, y, w, h))
 
     def SetPlayerOnlyHeight(self):
         # the least let go of first, so the least is never over the most while
@@ -604,9 +641,13 @@ class MacroBoxPreference():
         return 0
 
     def GetPlayerOnlyHeight(self):
+        master = self.MainPanel.PlayBox.GetRackHeight() + self.MainPanel.PlayBox.GetHeaderExtra()\
+            + self.MainPanel.PlayBox.GetControlExtra()\
+            if hasattr(self, 'MainPanel') else 0
+        # (as MainPanel.GetPlayBoxHeight's)
         if self.IsPlayerTopShowOn():
-            return 242 + self.GetWaveformDetailHeight()
-        return 186 + self.GetWaveformDetailHeight()
+            return 203 + self.GetWaveformDetailHeight() + master
+        return 183 + self.GetWaveformDetailHeight() + master
 
     def SetPlayerOnlyModeOn(self):
         self.playbox_only = True
@@ -687,7 +728,23 @@ class MacroBoxPreference():
         self.CentreOnPrimary()
         self.stored_rect = wx.Rect(self.GetRect())
 
+    def PlaceForTest(self):
+        '''a test's launch (wininstance.is_test_launch): in the leftmost monitor's lower half
+        on the second virtual desktop, out of the user's way; this place not kept (the
+        user's next start where they left it)'''
+        self.test_placed = True
+        areas = [wx.Display(k).GetClientArea() for k in range(wx.Display.GetCount())]
+        area = min(areas, key=lambda rect: rect.x)
+        if self.IsMaximized():
+            self.Maximize(False)
+        half = area.height // 2
+        self.SetRect(wx.Rect(area.x, area.y + half, area.width, area.height - half))
+        move_to_virtual_desktop(self.GetHandle(), TEST_DESKTOP)
+
     def GetStorableRect(self):
+        if getattr(self, 'test_placed', False):
+            # (a test's place: the user's kept as it was)
+            return self.stored_rect or wx.Rect(DEFAULT_RECT)
         if self.IsIconized() is False and self.IsMaximized() is False:
             self.stored_rect = wx.Rect(self.GetRect())
         if self.stored_rect is None:
@@ -871,7 +928,7 @@ class AppearancePanel(wx.Panel):
                           style=wx.CLIP_CHILDREN | wx.NO_FULL_REPAINT_ON_RESIZE | wx.TAB_TRAVERSAL)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
         # st = self.parent.parent.parent.MainPanel.ListBox.st
 
         font = wx.Font(0, wx.MODERN, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
@@ -1184,7 +1241,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         DialogPanel.__init__(self, parent)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
 
         offset = 20
         label = u'Concurrent processing analyzers'
@@ -1530,7 +1587,7 @@ class PreferenceWebInfoPanel(DialogPanel):
         DialogPanel.__init__(self, parent)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
         labels = ('Discogs Personal Access Token', 'or Discogs Consumer Key',
                   'and Discogs Consumer Secret', 'Last.fm API Key', 'AcoustID Client Key')
         values = GetPreferences(webinfo.PREFERENCE_KEYS)
@@ -1565,11 +1622,13 @@ class PreferenceWebInfoPanel(DialogPanel):
         self.Destroy()
 
 
-class PreferenceNotebook(wx.Notebook):
+class PreferenceNotebook(wx.Simplebook):
 
+    # the pages without a notebook's tabs (the dialog's SegmentBar chooses them)
     def __init__(self, parent):
-        wx.Notebook.__init__(self, parent, size=(600, 500), style=wx.BK_DEFAULT)
+        wx.Simplebook.__init__(self, parent, size=(600, 500))
         self.parent = parent
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
 
         self.MFEATSPanel = PreferenceMFEATSPanel(self)
         self.AddPage(self.MFEATSPanel, 'General')
@@ -1631,11 +1690,24 @@ class PreferenceBox(DialogBox):
         self.parent = parent
         self.SetTitle('Preference')
         # self.SetBackgroundColour((240, 240, 240))
-        self.SetBackgroundColour((240, 240, 240))
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.Notebook = PreferenceNotebook(self)
+        # its pages chosen as the player's keys are (a notebook's tabs before)
+        self.Pages = SegmentBar(self, [self.Notebook.GetPageText(k) for k in
+                                       range(self.Notebook.GetPageCount())],
+                                self.Notebook.SetSelection)
+
+        # the settings' names dimmed, their values (the fields) brighter
+        dim = macroboxstyle.current().UI.BAR_TEXT_DIM
+        stack = list(self.Notebook.GetChildren())
+        while stack:
+            child = stack.pop()
+            if isinstance(child, wx.StaticText):
+                child.SetForegroundColour(dim)
+            stack.extend(child.GetChildren())
 
         width, height = self.GetClientSize()
-        self.CloseButton = Button(self, label='Close')
+        self.CloseButton = Button(self, label='Close', primary=True)
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
@@ -1647,12 +1719,13 @@ class PreferenceBox(DialogBox):
         # self.SetClientSize((width, 340))
         # the height is set here, whatever the dialog was made with: taller for
         # the general panel's last rows (the waveform's)
-        self.SetClientSize((width, 390))
+        self.SetClientSize((width, 412))
         width, height = self.GetClientSize()
-        self.Notebook.SetRect((5, 5, width - 8, height - 51))
+        self.Pages.SetRect((16, 14, self.Pages.GetBestWidth(), 24))
+        self.Notebook.SetRect((5, 48, width - 8, height - 48 - 56))
         self.Notebook.OnSize(None)
         w, h = self.CloseButton.GetSize()
-        self.CloseButton.SetPosition((width - 85, height - h - 10))
+        self.CloseButton.SetPosition((width - w - 16, height - h - 14))
         # self.Notebook.SetRect((5, 5, width - 8, 360))
         # print(width, height, self.Notebook.GetClientSize())
 
@@ -1671,8 +1744,10 @@ class TutorialPanel(DialogPanel):
         self.parent = parent
         width, height = self.parent.GetSize()
         self.SetRect((0, 0, width, 297))
-        self.tutorials = [filename for filename in os.listdir(packages)
-                          if filename.startswith("tutorial") and filename.endswith("png")]
+        # its pages beside the source (packages was never defined: it did not open)
+        self.packages = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'packages')
+        self.tutorials = sorted(filename for filename in os.listdir(self.packages)
+                                if filename.startswith("tutorial") and filename.endswith("png"))
         self.maxpage = len(self.tutorials)
         self.current_page = 0
         self.image = None
@@ -1681,11 +1756,8 @@ class TutorialPanel(DialogPanel):
     def DiaplayImage(self, page):
         if self.image is not None:
             self.image.Destroy()
-        path = os.path.join(packages, self.tutorials[page])
-        data = open(path, "rb").read()
-        # stream = StringIO.StringIO(data)
-        stream = io.BytesIO(data)
-        bmp = wx.BitmapFromImage(wx.ImageFromStream(stream))
+        path = os.path.join(self.packages, self.tutorials[page])
+        bmp = wx.Bitmap(wx.Image(path))
         width, height = self.GetSize()
         self.image = wx.StaticBitmap(self, -1, bmp, pos=(-3, -3), size=(width, height))
         label = '%d / %s' % (self.current_page + 1, self.maxpage)
@@ -1762,16 +1834,20 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnExportTracklist, self.MenuBar.itemExportTracklist)
         self.Bind(wx.EVT_MENU, self.OnImportTracks, self.MenuBar.itemImportTracks)
         self.Bind(wx.EVT_MENU, self.OnFindInLibrary, self.MenuBar.itemFindInLibrary)
-        self.Bind(wx.EVT_MENU, self.OnInternetRadio, self.MenuBar.itemInternetRadio)
         self.Bind(wx.EVT_MENU, self.OnExit, self.MenuBar.itemExit)
         self.Bind(wx.EVT_MENU, self.OnAlwaysOnTop, self.MenuBar.itemAlwaysOnTop)
         self.Bind(wx.EVT_MENU, self.OnAutoAnalyze, self.MenuBar.itemAutoAnalyze)
         self.Bind(wx.EVT_MENU, self.OnSkipSilence, self.MenuBar.itemSkipSilence)
+        self.Bind(wx.EVT_MENU, self.OnAudioMixer, self.MenuBar.itemAudioMixer)
+        for kind, item in self.MenuBar.itemInstruments.items():
+            self.Bind(wx.EVT_MENU, lambda event, kind=kind: self.OnAddDevice(kind), item)
+        self.Bind(wx.EVT_MENU, self.OnGrabBar, self.MenuBar.itemGrabBar)
         self.Bind(wx.EVT_MENU, self.OnCheckItemsConsistency, self.MenuBar.itemCheckItemsConsistency)
         self.Bind(wx.EVT_MENU, self.OnPlayerTopShow, self.MenuBar.itemPlayerTopShow)
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
         self.Bind(wx.EVT_MENU, self.OnWaveformDetailShow, self.MenuBar.itemWaveformDetailShow)
         self.Bind(wx.EVT_MENU, self.OnBeatGridShow, self.MenuBar.itemBeatGridShow)
+        self.Bind(wx.EVT_MENU, self.OnAnalyzerShow, self.MenuBar.itemAnalyzerShow)
         for itemId in self.MenuBar.rowHeightItems:
             self.Bind(wx.EVT_MENU, self.OnRowHeight, id=itemId)
         self.CheckRowHeightItem()
@@ -1804,14 +1880,6 @@ class MacroBoxMenuBar():
         # if self.MainPanel.ListTab.TextEdit is not None:
         #     self.MainPanel.ListTab.TextEdit.destroy = True
         event.Skip()
-
-    def OnInternetRadio(self, event):
-        box = getattr(self, 'RadioBox', None)
-        if box:
-            box.Raise()
-            return
-        self.RadioBox = radio.RadioBox(self, self.MainPanel)
-        self.RadioBox.Show()
 
     def OnFindInLibrary(self, event):
         # left open to search again; one at a time
@@ -1866,6 +1934,9 @@ class MacroBoxMenuBar():
 
     def OnBeatGridShow(self, event):
         self.SetBeatGridShow(event.IsChecked())
+
+    def OnAnalyzerShow(self, event):
+        self.SetAnalyzerShow(event.IsChecked())
 
     def OnRowHeight(self, event):
         height = self.MenuBar.rowHeightItems[event.GetId()]
@@ -2017,6 +2088,25 @@ class MacroBoxMenuBar():
         else:
             self.MainPanel.PlayBox.SetSkipSilenceOff()
 
+    def OnAudioMixer(self, event):
+        self.MainPanel.PlayBox.AudioControl.SetMixed(event.IsChecked())
+
+    def OnAddDevice(self, kind):
+        self.MainPanel.PlayBox.Instruments.AddDevice(kind)
+
+    def OnGrabBar(self, event):
+        # into the rack's first PS-1200 (one added when there is none)
+        control = self.MainPanel.PlayBox.AudioControl
+        sampler = next((dev for dev in control.GetDevices()
+                        if control.GetDeviceKind(dev) == 'ps1200'), None)
+        if sampler is None:
+            sampler = control.AddDevice('ps1200')
+            self.MainPanel.PlayBox.Instruments.Relayout()
+        if sampler is not None:
+            control.GrabBar(sampler)
+            # (its slices and steps drawn at once)
+            self.MainPanel.PlayBox.Instruments.Repaint()
+
     def OnAutoAnalyze(self, event):
         if event.IsChecked():
             self.MainPanel.MFEATS.SetAutoAnalyzerOn()
@@ -2086,10 +2176,6 @@ class MenuBar(wx.MenuBar):
             self.menuFile, wx.ID_ANY, u'Find in Library...', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuFile.Append(self.itemFindInLibrary)
 
-        self.itemInternetRadio = wx.MenuItem(
-            self.menuFile, wx.ID_ANY, u'Internet Radio...', wx.EmptyString, wx.ITEM_NORMAL)
-        self.menuFile.Append(self.itemInternetRadio)
-
         self.menuFile.AppendSeparator()
 
         self.itemExit = wx.MenuItem(self.menuFile, wx.ID_ANY, u'Quit',
@@ -2133,6 +2219,12 @@ class MenuBar(wx.MenuBar):
         if self.parent.IsBeatGridShowOn():
             self.itemBeatGridShow.Check()
 
+        self.itemAnalyzerShow = wx.MenuItem(
+            self.menuView, wx.ID_ANY, 'Analyzer', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuView.Append(self.itemAnalyzerShow)
+        if self.parent.IsAnalyzerShowOn():
+            self.itemAnalyzerShow.Check()
+
         # taller rows for the list's cover and waveform columns
         self.menuRowHeight = wx.Menu()
         self.rowHeightItems = dict()
@@ -2175,6 +2267,26 @@ class MenuBar(wx.MenuBar):
         self.menuOption.Append(self.itemSkipSilence)
         if self.parent.MainPanel.PlayBox.IsSkipSilenceOn():
             self.itemSkipSilence.Check()
+        # played through the audio graph's mixer (its decks, effects and buses), or on its
+        # own as before (off: the way back)
+        self.itemAudioMixer = wx.MenuItem(
+            self.menuOption, wx.ID_ANY, u'Audio Mixer', wx.EmptyString, wx.ITEM_CHECK)
+        self.menuOption.Append(self.itemAudioMixer)
+        if self.parent.MainPanel.PlayBox.AudioControl.mixed:
+            self.itemAudioMixer.Check()
+        # the machines to play along (in time with the song, from its next sixteenth), as
+        # on INSTRUMENTS: RT909 (drums), PS1200 (a bar of the song sliced), BT303 (bass)
+        self.menuInstruments = wx.Menu()
+        self.itemInstruments = {}
+        for kind, label in (('rt909', u'Add RT-909 Rhythm Tracker'),
+                            ('ps1200', u'Add PS-1200 Sampling Slicer'),
+                            ('bt303', u'Add BT-303 Bass Translator'),
+                            ('sy4', u'Add SY-4 Poly Synth'),
+                            ('vr1', u'Add VR-1 Virtual Analog'),
+                            ('mp60', u'Add MP-60 Pad Sampler')):
+            self.itemInstruments[kind] = self.menuInstruments.Append(wx.ID_ANY, label)
+        self.itemGrabBar = self.menuInstruments.Append(wx.ID_ANY, u'Grab This Bar to PS-1200')
+        self.menuOption.AppendSubMenu(self.menuInstruments, u'Instruments')
         self.menuOption.AppendSeparator()
 
         # self.itemMaximizeLoudness = wx.MenuItem(
