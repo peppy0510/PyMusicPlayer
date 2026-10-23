@@ -11,6 +11,9 @@ import audio
 import bisect
 import ctypes
 import ctypes.wintypes
+import hashlib
+import macroboxstyle
+import uikit
 import mfeats
 import multiprocessing
 import mutagen
@@ -140,15 +143,21 @@ class ListBoxColumn(ColumnDefinition):
                        id3=u'TBPM', width=55, max_width=55)
         self.AddColumn(key='key', title='key', id3=u'TKEY', width=55, max_width=55)
         self.AddColumn(key='type', title='type', show=False, private=True)
-        self.AddColumn(key='size', title='size', show=False, private=True)
-        self.AddColumn(key='artist', title='artist', id3=u'TPE1', show=False, private=True)
-        self.AddColumn(key='title', title='title', id3=u'TIT2', show=False, private=True)
-        self.AddColumn(key='album', title='album', id3=u'TALB', show=False, private=True)
-        self.AddColumn(key='genre', title='genre', id3=u'TCON', show=False, private=True)
+        # the file's size (MB), shown from the header's menu (private, never shown, before)
+        self.AddColumn(key='size', title='size', right_align=True, width=80, max_width=90,
+                       show=False)
+        # the tags, shown from the header's menu (private, never shown, before); the comment
+        # read from its frame (COMM, audio.get_id3)
+        self.AddColumn(key='artist', title='artist', id3=u'TPE1', width=160, show=False)
+        self.AddColumn(key='title', title='title', id3=u'TIT2', width=200, show=False)
+        self.AddColumn(key='album', title='album', id3=u'TALB', width=160, show=False)
+        self.AddColumn(key='genre', title='genre', id3=u'TCON', width=100, show=False)
+        self.AddColumn(key='comment', title='comment', id3=u'COMM', width=200, show=False)
         self.AddColumn(key='bitrate', title='bitrate', show=False, private=True)
         self.AddColumn(key='samplerate', title='samplerate', show=False, private=True)
         self.AddColumn(key='channel', title='channel', show=False, private=True)
-        self.AddColumn(key='path', title='path', show=False, private=True)
+        # the file's path (a station's address), shown from the header's menu (private before)
+        self.AddColumn(key='path', title='path', width=300, show=False)
         self.AddColumn(key='mdx', title='mdx', show=False, private=True)
         # pictures, not text (listimages): shown from the header's menu
         self.AddColumn(key='cover', title='cover', width=24, min_width=24, max_width=200,
@@ -157,9 +166,19 @@ class ListBoxColumn(ColumnDefinition):
                        sortable=False)
 
 
+# columns made public since a list was saved private: their definition's look taken
+RENEWED_COLUMNS = ('size', 'path', 'artist', 'title', 'album', 'genre')
+
+
 def AddMissingColumns(innerList):
     # columns added since the list was saved: put at its end, an empty value in each row
     keys = [v.key for v in innerList.columns]
+    defaults = dict((v.key, v) for v in ListBoxColumn())
+    for column in innerList.columns:
+        if column.key in RENEWED_COLUMNS and getattr(column, 'private', False):
+            new = defaults[column.key]
+            for name in ('private', 'right_align', 'width', 'max_width', 'min_width'):
+                setattr(column, name, getattr(new, name))
     for column in ListBoxColumn():
         if column.key in keys:
             continue
@@ -253,7 +272,25 @@ def pass_to_another_instance(initfile):
     win32file.WriteFile(p, data)
 
 
+def MakeStreamItem(path, order, columns):
+    # an internet radio station's row: its name, tags, country, codec and bitrate as kept
+    # (radio_stations, else radio_seen: found in the directory), no length, no analysis
+    # (status 'stream', never queued)
+    # (radio.get_station: both read once and kept; read here a row at a time, a radio tab
+    # made at the start read them 400 times, 2 s)
+    import radio
+    station = radio.get_station(path) or {}
+    values = dict(status='stream', order=order, filename=station.get('name') or path,
+                  duration='LIVE', type=station.get('codec') or 'radio', path=path,
+                  genre=station.get('tags', ''), album=station.get('country', ''),
+                  bitrate=str(station.get('bitrate') or ''),
+                  mdx='stream-' + hashlib.sha1(path.encode('utf-8')).hexdigest()[:16])
+    return [values.get(v.key, '') for v in columns]
+
+
 def MakeMusicFileItem(path, order, columns):
+    if audio.is_stream_path(path):
+        return MakeStreamItem(path, order, columns)
     ext = os.path.splitext(path)[1][1:].lower()
     if ext not in SUPPORTED_AUDIO_TYPE:
         return None
@@ -391,6 +428,11 @@ class CursorEventCatcher():
         return False
 
     def SetCursorARROW(self):
+        # once, as the others: set at every event (25 ms) it was put on the screen at once
+        # under the mouse, and a child's own (the header's resize cursor over a column's
+        # edge) came back after it, the two flickering
+        if self.cursor_status == 'ARROW':
+            return
         self.parent.SetCursor(self.cursor_stock.ARROW)
         self.SetCursorStatus('ARROW')
 
@@ -521,10 +563,15 @@ class PopupMenuEventCatcher():
         self.pending_item_drag = None
         self.Timer = PopupMenuEventCatcherTimer(self)
 
-    def SetPopupMenu(self, obj, xy):
+    def SetPopupMenu(self, obj, xy, closed=None):
+        # closed: called when the menu is gone (its opener's arrow turned back)
         if self.pending_popup_event is not None:
             self.pending_popup_event.object.Destroy()
-        self.pending_popup_event = Struct(object=obj, x=xy[0], y=xy[1], pending=False)
+            # (one not shown yet, put aside: its opener told too)
+            if getattr(self.pending_popup_event, 'closed', None) is not None:
+                self.pending_popup_event.closed()
+        self.pending_popup_event = Struct(object=obj, x=xy[0], y=xy[1], pending=False,
+                                          closed=closed)
 
     def CatchPopupMenuEvent(self):
         if self.pending_popup_event is None:
@@ -538,7 +585,10 @@ class PopupMenuEventCatcher():
         y = self.pending_popup_event.y - y
         self.PopupMenu(self.pending_popup_event.object, (x, y))
         self.pending_popup_event.object.Destroy()
+        closed = getattr(self.pending_popup_event, 'closed', None)
         self.pending_popup_event = None
+        if closed is not None:
+            closed()
 
     def SetItemDrag(self, paths, del_source=False):
         if self.pending_item_drag is not None:
@@ -734,6 +784,9 @@ class MFEATS_Scheduler(ThreadTimer):
         self.parent.ListBox.List.DirectDraw()
 
     def AddMFEATSTask(self, path, urgent=False, forced=False, redraw=True):
+        # a station's stream has nothing to analyze
+        if audio.is_stream_path(path):
+            return
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
@@ -1082,6 +1135,8 @@ class MFEATS_Network_Scheduler(wx.Timer):
         self.procs_limit = int(value)
 
     def AddMFEATSTask(self, path, urgent=False, forced=False):
+        if audio.is_stream_path(path):
+            return
         resp = mfeats.getby_key_value('path', path, waveform=False)
         if resp is not None and forced is False:
             return
@@ -1276,7 +1331,32 @@ def is_pointer_covered(x, y, window):
     return bool(root) and root != main
 
 
+class PressFilter(wx.EventFilter):
+
+    '''the player's own presses (wx's events, any window of it): told to the mouse's poll
+    (EVENT_Scheduler), which reads the button's state only every interval. its timer comes
+    last (a timer's message waits for every other): with the player busy drawing, a click
+    let go before the next read was never seen, a button not pressed at the first click'''
+
+    TYPES = {wx.wxEVT_LEFT_DOWN: 'left', wx.wxEVT_LEFT_DCLICK: 'left',
+             wx.wxEVT_RIGHT_DOWN: 'right', wx.wxEVT_RIGHT_DCLICK: 'right'}
+
+    def __init__(self, scheduler):
+        wx.EventFilter.__init__(self)
+        self.scheduler = scheduler
+
+    def FilterEvent(self, event):
+        button = self.TYPES.get(event.GetEventType())
+        if button is not None:
+            self.scheduler.NotePress(button)
+        return self.Event_Skip
+
+
 class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
+
+    # a press told by PressFilter: taken as down at the next read when the read finds it
+    # let go already, if it is this new (seconds; older: the read saw it itself)
+    PRESS_FRESH = 0.4
 
     def __init__(self, parent):
         wx.Timer.__init__(self)
@@ -1285,6 +1365,10 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
         self.interval = 25
         self.cache = self.InitEvent()
         self.last_screen_rect = None
+        # presses wx told of, not yet read: {button: when}
+        self.presses = {}
+        self.press_filter = PressFilter(self)
+        wx.EvtHandler.AddFilter(self.press_filter)
         self.Start(self.interval)
         self.onsize = False
         # self.path = None
@@ -1293,6 +1377,16 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
 
     def StopNotify(self):
         self.stop = True
+        # (off wx before the app goes: a filter left in its list crashed it at the end)
+        if self.press_filter is not None:
+            wx.EvtHandler.RemoveFilter(self.press_filter)
+            self.press_filter = None
+
+    def NotePress(self, button):
+        # (read at once after wx's press is handled: not at the timer's turn)
+        if not self.presses:
+            wx.CallAfter(self.Notify)
+        self.presses[button] = time.time()
 
     def StartNotify(self):
         self.stop = False
@@ -1335,6 +1429,16 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
         event.RightIsDown = state.RightIsDown()
         event.MiddleIsDown = state.MiddleIsDown()
         event.x, event.y = (state.x, state.y)
+        # a press wx told of, let go before this read: down for this read (up at the next)
+        presses, self.presses = self.presses, {}
+        now = time.time()
+        for button, when in presses.items():
+            if now - when > self.PRESS_FRESH:
+                continue
+            if button == 'left' and not self.cache.LeftIsDown:
+                event.LeftIsDown = True
+            elif button == 'right' and not self.cache.RightIsDown:
+                event.RightIsDown = True
 
         if self.cache.LeftIsDown is False and event.LeftIsDown:
             event.LeftDown = True
@@ -1768,7 +1872,10 @@ class RectRect():
             dc.SetBackgroundMode(wx.TRANSPARENT)
             dc.Clear()
             self.SetRectDraw(dc)
-        self.reInitBuffer = False
+        # drawn again at the next frame when the drawing asked it (redraw_next: a fading
+        # mark), else not till something changes
+        self.reInitBuffer = getattr(self, 'redraw_next', False)
+        self.redraw_next = False
 
     def OnSize(self, event):
         self.DirectDraw()
@@ -1915,7 +2022,8 @@ class ItemTextEdit(wx.TextCtrl):
         self.itemIdx = None
         self.columnIdx = None
         self.restore_value = None
-        self.SetBackgroundColour(wx.Colour(255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.EDIT_BG)
+        self.SetForegroundColour(macroboxstyle.current().UI.EDIT_FG)
         self.SetFont(wx.Font(
             9, wx.MODERN, wx.NORMAL, wx.NORMAL, False, FONT_ITEM))
         self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
@@ -2027,7 +2135,8 @@ class TabTextEdit(wx.TextCtrl):
         wx.TextCtrl.__init__(self, parent, pos=(0, 0), size=(0, 0),
                              style=wx.BORDER_NONE | wx.TE_NOHIDESEL | wx.TE_RICH)
         self.parent = parent
-        self.SetBackgroundColour(wx.Colour(255, 255, 255))
+        self.SetBackgroundColour(macroboxstyle.current().UI.EDIT_BG)
+        self.SetForegroundColour(macroboxstyle.current().UI.EDIT_FG)
         self.Bind(wx.EVT_CHAR_HOOK, self.OnKeyDown)
         self.Bind(wx.EVT_SET_FOCUS, self.OnFocus)
         self.Bind(wx.EVT_KILL_FOCUS, self.OnKillFocus)
@@ -2080,12 +2189,36 @@ class DialogBox(wx.Dialog):
         wx.Dialog.__init__(self, parent, id=id, size=size, pos=pos, style=style)
         self.parent = parent
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((230, 230, 230))
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.Bind(wx.EVT_PAINT, self.OnDialogPaint)
 
     def OnSize(self, event):
         pass
+
+    def OnDialogPaint(self, event):
+        # the footer: a line over the buttons along the dialog's bottom (its actions
+        # apart from what they act on); a window of its own, over the panels (a line
+        # painted on the dialog was under them)
+        wx.PaintDC(self)
+        w, h = self.GetClientSize()
+        tops = [child.GetRect().y for child in self.GetChildren()
+                if isinstance(child, Button) and child.IsShown()
+                and child.GetRect().GetBottom() > h - 60]
+        line = getattr(self, 'footer_line', None)
+        if not tops:
+            if line is not None:
+                line.Hide()
+            return
+        if line is None:
+            line = self.footer_line = wx.Window(self, style=wx.BORDER_NONE)
+            line.SetBackgroundColour(macroboxstyle.current().UI.BAR_LINE)
+        rect = wx.Rect(0, min(tops) - 11, w, 1)
+        if line.GetRect() != rect:
+            line.SetRect(rect)
+        line.Show()
+        line.Raise()
 
     def OnClose(self, event):
         self.Destroy()
@@ -2173,7 +2306,7 @@ class FancyDialogBox(wx.Dialog):
             wx.NO_FULL_REPAINT_ON_RESIZE | wx.STAY_ON_TOP | wx.NO_BORDER
         wx.Dialog.__init__(self, parent, id=id, size=size, pos=pos, style=style)
         self.SetDoubleBuffered(True)
-        self.SetBackgroundColour((230, 230, 230))
+        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
@@ -2215,7 +2348,7 @@ class UserInputDialogBox(DialogBox):
         DialogBox.__init__(self, parent, size=(190, 115))
         self.parent = parent
         self.UserInput = UserInputDialogPanel(self)
-        self.ApplyButton = Button(self, label='')
+        self.ApplyButton = Button(self, label='', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CloseButton = Button(self, label='Cancel')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
@@ -2269,7 +2402,7 @@ class ConfirmDialogBox(DialogBox):
         DialogBox.__init__(self, parent, size=(180, 105))
         self.parent = parent
         self.Message = ConfirmDialogPanel(self)
-        self.ApplyButton = Button(self, label='')
+        self.ApplyButton = Button(self, label='', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CloseButton = Button(self, label='Cancel')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
@@ -2294,22 +2427,284 @@ class ConfirmDialogBox(DialogBox):
         self.Destroy()
 
 
-class SpinCtrl(wx.SpinCtrl):
+def draw_field(gc, w, h, focused):
+    # a field's ground (as FieldFrame's): rounded, its edge in the accent with the focus
+    ui = macroboxstyle.current().UI
+    edge = ui.FIELD_FOCUS if focused else ui.FIELD_EDGE
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+    gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
+    gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
+
+
+class SpinCtrl(wx.Control):
+
+    '''a number in a field with its steps at the right (up and down), as the dialogs'
+    fields: typed, or stepped by them, the arrow keys or the wheel; wx.EVT_SPINCTRL when it
+    changes (GetInt, as a wx.SpinCtrl's)'''
+
+    STEP = 16
 
     def __init__(self, parent, id=-1, value='', pos=(-1, -1), size=(60, 24), style=0):
-        wx.SpinCtrl.__init__(self, parent, id=id, value=value,
-                             pos=pos, size=size, style=style | wx.ALIGN_RIGHT)
-        self.value = value
+        wx.Control.__init__(self, parent, id=id, pos=pos, size=size, style=wx.BORDER_NONE)
         self.parent = parent
-        self.SetDoubleBuffered(True)
-        font = wx.Font(8, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
-        font.SetFaceName('Consolas')
-        font.SetPixelSize((7, 14))
-        self.SetFont(font)
+        self.low, self.high = 0, 100
+        self.value = int(value) if str(value).lstrip('-').isdigit() else 0
+        self.pressed = None
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.text = wx.TextCtrl(self, value=str(self.value),
+                                style=wx.BORDER_NONE | wx.TE_RIGHT | wx.TE_PROCESS_ENTER)
+        font = wx.Font(wx.Size(0, 13), wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL,
+                       wx.FONTWEIGHT_NORMAL, faceName='Consolas')
+        self.text.SetFont(font)
+        ui = macroboxstyle.current().UI
+        self.text.SetBackgroundColour(ui.FIELD_BG)
+        self.text.SetForegroundColour(ui.EDIT_FG)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_SIZE, lambda e: self.Layout())
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
+        self.Bind(wx.EVT_LEFT_UP, lambda e: self.SetPressed(None))
+        self.Bind(wx.EVT_MOUSEWHEEL, self.OnWheel)
+        self.text.Bind(wx.EVT_MOUSEWHEEL, self.OnWheel)
+        self.text.Bind(wx.EVT_KEY_DOWN, self.OnKey)
+        self.text.Bind(wx.EVT_KILL_FOCUS, self.OnCommit)
+        self.text.Bind(wx.EVT_TEXT_ENTER, self.OnCommit)
+        self.text.Bind(wx.EVT_SET_FOCUS, lambda e: (self.Refresh(), e.Skip()))
+        self.Layout()
+
+    def Layout(self):
+        w, h = self.GetClientSize()
+        th = min(self.text.GetCharHeight() + 2, h)
+        self.text.SetSize(4, min((h - th) // 2 + 1, h - th), max(w - self.STEP - 8, 1), th)
+        self.Refresh()
+
+    def SetRange(self, low, high):
+        self.low, self.high = int(low), int(high)
+        self.SetValue(self.value)
+
+    def GetValue(self):
+        return self.value
+
+    def SetValue(self, value):
+        self.value = min(max(int(value), self.low), self.high)
+        self.text.ChangeValue(str(self.value))
+
+    def SetFontPixelSize(self, size):
+        pass
+
+    def Change(self, value):
+        value = min(max(int(value), self.low), self.high)
+        if value == self.value:
+            self.text.ChangeValue(str(self.value))
+            return
+        self.SetValue(value)
+        event = wx.SpinEvent(wx.wxEVT_SPINCTRL, self.GetId())
+        event.SetEventObject(self)
+        event.SetInt(self.value)
+        event.SetPosition(self.value)
+        self.GetEventHandler().ProcessEvent(event)
+
+    def OnCommit(self, event):
+        text = self.text.GetValue().strip()
+        self.Change(int(text) if text.lstrip('-').isdigit() else self.value)
+        self.Refresh()
+        event.Skip()
+
+    def OnKey(self, event):
+        code = event.GetKeyCode()
+        if code == wx.WXK_UP:
+            self.Change(self.value + 1)
+        elif code == wx.WXK_DOWN:
+            self.Change(self.value - 1)
+        else:
+            event.Skip()
+
+    def OnWheel(self, event):
+        self.Change(self.value + (1 if event.GetWheelRotation() > 0 else -1))
+
+    def GetStepRects(self):
+        w, h = self.GetClientSize()
+        x = w - self.STEP - 1
+        return wx.Rect(x, 1, self.STEP, h // 2 - 1), wx.Rect(x, h // 2, self.STEP, h - h // 2 - 1)
+
+    def SetPressed(self, which):
+        self.pressed = which
+        self.Refresh()
+
+    def OnLeftDown(self, event):
+        up, down = self.GetStepRects()
+        if up.Contains(event.GetPosition()):
+            self.SetPressed('up')
+            self.Change(self.value + 1)
+        elif down.Contains(event.GetPosition()):
+            self.SetPressed('down')
+            self.Change(self.value - 1)
+        else:
+            self.text.SetFocus()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        gc = wx.GraphicsContext.Create(dc)
+        draw_field(gc, w, h, self.text.HasFocus())
+        ui = macroboxstyle.current().UI
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.FIELD_EDGE)).Width(1)))
+        x = w - self.STEP - 1.5
+        gc.StrokeLine(x, 3, x, h - 3)
+        for rect, icon in zip(self.GetStepRects(), ('up', 'down')):
+            ink = uikit.colour(ui.TEXT if self.pressed == icon else ui.CONTROL_FG)
+            uikit.draw_icon(gc, icon, (rect.x, rect.y, rect.width, rect.height + 2), ink)
 
 
-class ComboBox(wx.ComboBox):
+class ProgressBar(wx.Control):
 
+    '''a thin bar of what is done, in the accent on an unlit ground (the status line's,
+    a wx.Gauge's place)'''
+
+    def __init__(self, parent, range=100):
+        wx.Control.__init__(self, parent, style=wx.BORDER_NONE)
+        self.range = max(int(range), 1)
+        self.value = 0
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+
+    def SetRange(self, range):
+        self.range = max(int(range), 1)
+        self.Refresh()
+
+    def SetValue(self, value):
+        self.value = min(max(value, 0), self.range)
+        self.Refresh()
+
+    def GetValue(self):
+        return self.value
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        ui = macroboxstyle.current().UI
+        bar = 4
+        y = (h - bar) // 2
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(ui.CONTROL_BG))
+        dc.DrawRectangle(0, y, w, bar)
+        dc.SetBrush(wx.Brush(ui.ACCENT))
+        dc.DrawRectangle(0, y, int(w * self.value / float(self.range)), bar)
+
+
+class Dropdown(wx.Control):
+
+    '''a choice in a field (its arrow at the right), as the dialogs' fields: a click
+    opens its choices as a menu under it; wx.EVT_COMBOBOX when another is chosen
+    (GetString, GetSelection), as a read only wx.ComboBox'''
+
+    def __init__(self, parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24),
+                 style=0):
+        wx.Control.__init__(self, parent, id=id, pos=pos, size=size,
+                            style=wx.BORDER_NONE | wx.WANTS_CHARS)
+        self.parent = parent
+        self.choices = list(choices)
+        self.value = value
+        self.hover = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda e: self.SetHover(True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(False))
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnOpen)
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKey)
+        self.Bind(wx.EVT_SET_FOCUS, lambda e: self.Refresh())
+        self.Bind(wx.EVT_KILL_FOCUS, lambda e: self.Refresh())
+
+    def AcceptsFocus(self):
+        return True
+
+    def SetHover(self, on):
+        self.hover = on
+        self.Refresh()
+
+    def GetValue(self):
+        return self.value
+
+    def SetValue(self, value):
+        self.value = value
+        self.Refresh()
+
+    def GetStringSelection(self):
+        return self.value
+
+    def GetSelection(self):
+        return self.choices.index(self.value) if self.value in self.choices else -1
+
+    def SetSelection(self, index):
+        self.SetValue(self.choices[index])
+
+    def GetItems(self):
+        return list(self.choices)
+
+    def SetItems(self, choices):
+        self.choices = list(choices)
+        self.Refresh()
+
+    def SetFontPixelSize(self, size):
+        pass
+
+    def Choose(self, index):
+        if self.choices[index] == self.value:
+            return
+        self.SetValue(self.choices[index])
+        event = wx.CommandEvent(wx.wxEVT_COMBOBOX, self.GetId())
+        event.SetEventObject(self)
+        event.SetString(self.value)
+        event.SetInt(index)
+        self.GetEventHandler().ProcessEvent(event)
+
+    def OnOpen(self, event=None):
+        self.SetFocus()
+        menu = wx.Menu()
+        for k, choice in enumerate(self.choices):
+            item = menu.AppendCheckItem(wx.ID_ANY, choice)
+            item.Check(choice == self.value)
+            self.Bind(wx.EVT_MENU, lambda e, k=k: self.Choose(k), item)
+        self.PopupMenu(menu, (0, self.GetClientSize().height))
+        menu.Destroy()
+
+    def OnKey(self, event):
+        code = event.GetKeyCode()
+        index = self.GetSelection()
+        if code in (wx.WXK_SPACE, wx.WXK_RETURN, wx.WXK_F4):
+            self.OnOpen()
+        elif code == wx.WXK_UP and index > 0:
+            self.Choose(index - 1)
+        elif code == wx.WXK_DOWN and index < len(self.choices) - 1:
+            self.Choose(index + 1)
+        else:
+            event.Skip()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        gc = wx.GraphicsContext.Create(dc)
+        draw_field(gc, w, h, self.HasFocus())
+        ui = macroboxstyle.current().UI
+        font = wx.Font(wx.Size(0, 12), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
+                       wx.FONTWEIGHT_NORMAL, faceName=FONT_ITEM)
+        gc.SetFont(font, uikit.colour(ui.EDIT_FG))
+        tw, th = gc.GetTextExtent(self.value)[:2]
+        gc.Clip(1, 1, w - 22, h - 2)
+        gc.DrawText(self.value, 8, (h - th) / 2.0)
+        gc.ResetClip()
+        ink = uikit.colour(ui.TEXT if self.hover else ui.CONTROL_FG)
+        uikit.draw_icon(gc, 'down', (w - 20, 0, 16, h), ink)
+
+
+class NativeComboBox(wx.ComboBox):
+
+    # an editable one (its text typed): the native control
     def __init__(self, parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24), style=0):
         wx.ComboBox.__init__(self, parent, id=id, value=value,
                              choices=choices, pos=pos, size=size, style=style)
@@ -2325,21 +2720,130 @@ class ComboBox(wx.ComboBox):
         font = self.GetFont()
         font.SetPixelSize(size)
         self.SetFont(font)
-        # self.fontpixelsize = size
+
+
+def ComboBox(parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24), style=0):
+    # a read only one as the dialogs' field (Dropdown), an editable one native
+    kind = Dropdown if style & wx.CB_READONLY else NativeComboBox
+    return kind(parent, id=id, value=value, choices=choices, pos=pos, size=size, style=style)
+
+
+class FieldFrame(wx.Window):
+
+    '''a TextCtrl's frame (the field the dialog places): a rounded ground of its own,
+    the edge in the accent while it is typed in, the text control borderless inside it with
+    its text on the field's middle (a borderless control alone kept its text at the top);
+    read only, no ground: the value as text on the dialog's'''
+
+    # the text control at PAD in from the field's edge: its own margin (4 px) adds to it, the
+    # text's ink 8 px in (it was 11 at 7); one row under the middle, so the capitals sit on
+    # the field's middle and Hangul's taller glyphs too (measured: Latin 6 to 14 of 22,
+    # Hangul 5 to 17)
+    PAD = 4
+
+    def __init__(self, parent, pos, size):
+        wx.Window.__init__(self, parent, pos=pos, size=size, style=wx.BORDER_NONE)
+        self.text = None
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_SIZE, lambda e: self.Layout())
+        self.Bind(wx.EVT_LEFT_DOWN, lambda e: self.text and self.text.SetFocus())
+
+    def Layout(self):
+        if self.text is None:
+            return
+        w, h = self.GetClientSize()
+        th = min(self.text.GetCharHeight() + 2, h)
+        pad = 0 if self.text.read_only else self.PAD
+        y = min((h - th) // 2 + 1, h - th)
+        wx.TextCtrl.SetSize(self.text, pad, y, max(w - pad * 2, 1), th)
+        self.Refresh()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        ui = macroboxstyle.current().UI
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        if self.text is None or self.text.read_only:
+            return
+        w, h = self.GetClientSize()
+        gc = wx.GraphicsContext.Create(dc)
+        edge = ui.FIELD_FOCUS if self.text.HasFocus() else ui.FIELD_EDGE
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
+        # (from (0, 0), w - 1: the renderer puts the edge on the outer rows, uikit.draw_face)
+        gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
 
 
 class TextCtrl(wx.TextCtrl):
 
+    '''a dialog's text field: a borderless text control in a FieldFrame (placed, sized,
+    shown and destroyed with it); SetReadOnly: a value shown, not a field'''
+
     def __init__(self, parent, id=-1, value='',
                  pos=(-1, -1), size=(75, 24), style=0):
-        wx.TextCtrl.__init__(self, parent, id=id,
-                             value=value, pos=pos, size=size, style=style)
+        self.frame = FieldFrame(parent, pos, size)
+        wx.TextCtrl.__init__(self, self.frame, id=id,
+                             value=value, style=style | wx.BORDER_NONE)
         self.parent = parent
+        self.read_only = False
         self.SetDoubleBuffered(True)
         font = wx.Font(8, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
         font.SetFaceName(FONT_ITEM)
         font.SetPixelSize((6, 12))
         self.SetFont(font)
+        self.frame.text = self
+        self.ApplyLook()
+        self.Bind(wx.EVT_SET_FOCUS, self.OnFocus)
+        self.Bind(wx.EVT_KILL_FOCUS, self.OnFocus)
+
+    def OnFocus(self, event):
+        self.frame.Refresh()
+        event.Skip()
+
+    def ApplyLook(self):
+        ui = macroboxstyle.current().UI
+        if self.read_only:
+            # brighter than the names beside it (those dimmed)
+            self.SetBackgroundColour(self.frame.GetParent().GetBackgroundColour())
+            self.SetForegroundColour(ui.BAR_TEXT)
+        else:
+            self.SetBackgroundColour(ui.FIELD_BG)
+            self.SetForegroundColour(ui.EDIT_FG)
+        self.frame.Layout()
+
+    def SetReadOnly(self, read_only=True):
+        self.SetEditable(not read_only)
+        self.read_only = read_only
+        self.ApplyLook()
+
+    # placed as its frame
+    def SetRect(self, rect):
+        self.frame.SetRect(rect)
+
+    def SetPosition(self, pos):
+        self.frame.SetPosition(pos)
+
+    def SetSize(self, *args):
+        self.frame.SetSize(*args)
+
+    def GetRect(self):
+        return self.frame.GetRect()
+
+    def GetPosition(self):
+        return self.frame.GetPosition()
+
+    def GetSize(self):
+        return self.frame.GetSize()
+
+    def Show(self, show=True):
+        return self.frame.Show(show)
+
+    def Hide(self):
+        return self.frame.Hide()
+
+    def Destroy(self):
+        return self.frame.Destroy()
 
 
 class CheckBox(wx.CheckBox):
@@ -2349,7 +2853,7 @@ class CheckBox(wx.CheckBox):
                              label=label, pos=pos, size=size, style=style)
         self.label = label
         self.SetDoubleBuffered(True)
-        self.SetForegroundColour((30, 30, 30))
+        self.SetForegroundColour(macroboxstyle.current().UI.TEXT)
         font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
         font.SetPixelSize((6, 12))
         font.SetFaceName(FONT_ITEM)
@@ -2363,7 +2867,7 @@ class RadioButton(wx.RadioButton):
                                 label=label, pos=pos, size=size, style=style)
         self.label = label
         self.SetDoubleBuffered(True)
-        self.SetForegroundColour((30, 30, 30))
+        self.SetForegroundColour(macroboxstyle.current().UI.TEXT)
         font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
         font.SetPixelSize((6, 12))
         font.SetFaceName(FONT_ITEM)
@@ -2380,7 +2884,7 @@ class StaticText(wx.StaticText):
         self.onClient = False
         self.SetDoubleBuffered(True)
         self.bgcolor = (40, 40, 40)
-        self.fgcolor = (0, 0, 0)
+        self.fgcolor = macroboxstyle.current().UI.TEXT
         self.SetForegroundColour(self.fgcolor)
         font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
         font.SetPixelSize((6, 12))
@@ -2393,32 +2897,183 @@ class StaticText(wx.StaticText):
         # self.SetWindowStyleFlag()
 
 
-class Button(wx.Button):
+class Button(wx.Control):
 
-    def __init__(self, parent, id=-1, label='', pos=(-1, -1), size=(75, 26), style=0):
-        wx.Button.__init__(self, parent, id=id,
-                           label=label, pos=pos, size=size, style=style)
+    '''a dialog's button drawn as the player's keys (uikit.draw_button: matte, a darker
+    edge); primary, the dialog's own action in the accent. clicked by the mouse, or by the
+    space or enter key while it has the focus (its edge in the accent): wx.EVT_BUTTON, as a
+    wx.Button's'''
+
+    def __init__(self, parent, id=-1, label='', pos=(-1, -1), size=(75, 26), style=0,
+                 primary=False):
+        wx.Control.__init__(self, parent, id=id, pos=pos, size=size,
+                            style=style | wx.BORDER_NONE | wx.WANTS_CHARS)
         self.label = label
         self.parent = parent
-        self.SetDoubleBuffered(True)
-        self.bgcolor = (40, 40, 40)
-        self.fgcolor = (0, 0, 0)
-        self.SetForegroundColour(self.fgcolor)
-        font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
-        font.SetPixelSize((6, 12))
-        font.SetFaceName(FONT_ITEM)
-        self.SetFont(font)
+        self.primary = primary
+        self.hover = False
+        self.down = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda e: self.SetHover(True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(False))
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
+        self.Bind(wx.EVT_LEFT_DCLICK, self.OnLeftDown)
+        self.Bind(wx.EVT_LEFT_UP, self.OnLeftUp)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: self.SetDown(False))
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
+        self.Bind(wx.EVT_SET_FOCUS, lambda e: self.Refresh())
+        self.Bind(wx.EVT_KILL_FOCUS, lambda e: self.Refresh())
 
-    def SetFontPixelSize(self, size):
-        font = self.GetFont()
-        font.SetPixelSize(size)
-        self.SetFont(font)
+    def AcceptsFocus(self):
+        return self.IsEnabled()
+
+    def DoGetBestSize(self):
+        return wx.Size(75, 26)
+
+    def SetLabel(self, label):
+        self.label = label
+        self.Refresh()
+
+    def GetLabel(self):
+        return self.label
+
+    def SetLabelText(self, label):
+        self.SetLabel(label)
+
+    def GetLabelText(self):
+        return self.label
+
+    def SetHover(self, on):
+        self.hover = on
+        self.Refresh()
+
+    def SetDown(self, on):
+        self.down = on
+        self.Refresh()
+
+    def Enable(self, enable=True):
+        result = wx.Control.Enable(self, enable)
+        self.Refresh()
+        return result
+
+    def Disable(self):
+        return self.Enable(False)
 
     def SetDisable(self):
         self.Disable()
 
     def SetEnable(self):
         self.Enable()
+
+    def SetFontPixelSize(self, size):
+        pass
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        enabled = self.IsEnabled()
+        uikit.draw_button(dc, (0, 0, w, h), label=self.label, on=self.primary and enabled,
+                          down=self.down and self.hover, hover=self.hover and enabled,
+                          disabled=not enabled, font=uikit.get_font(12))
+        if self.HasFocus() and enabled:
+            gc = wx.GraphicsContext.Create(dc)
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(
+                uikit.colour(uikit.ui().ACCENT_FG if self.primary else uikit.ui().ACCENT))
+                .Width(1)))
+            gc.SetBrush(wx.NullGraphicsBrush)
+            gc.DrawRoundedRectangle(1, 1, w - 3, h - 3, uikit.RADIUS - 1)
+
+    def OnLeftDown(self, event):
+        if self.IsEnabled() is False:
+            return
+        self.SetFocus()
+        self.CaptureMouse()
+        self.SetDown(True)
+
+    def OnLeftUp(self, event):
+        if self.HasCapture():
+            self.ReleaseMouse()
+        clicked = self.down and self.GetClientRect().Contains(event.GetPosition())
+        self.SetDown(False)
+        if clicked:
+            self.Click()
+
+    def OnKeyDown(self, event):
+        if event.GetKeyCode() in (wx.WXK_SPACE, wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+            self.Click()
+            return
+        event.Skip()
+
+    def Click(self):
+        if self.IsEnabled() is False:
+            return
+        event = wx.CommandEvent(wx.wxEVT_BUTTON, self.GetId())
+        event.SetEventObject(self)
+        self.GetEventHandler().ProcessEvent(event)
+
+
+class SegmentBar(wx.Control):
+
+    '''keys side by side, one of them chosen (a dialog's pages, in a notebook's tabs'
+    place): on_change(index) when another is chosen'''
+
+    GAP = 2
+
+    def __init__(self, parent, labels, on_change, selection=0):
+        wx.Control.__init__(self, parent, style=wx.BORDER_NONE)
+        self.labels = list(labels)
+        self.on_change = on_change
+        self.selection = selection
+        self.hovered = None
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_MOTION, self.OnMotion)
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHovered(None))
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
+
+    def GetKeyWidths(self):
+        dc = wx.ClientDC(self)
+        dc.SetFont(uikit.get_font(12))
+        return [dc.GetTextExtent(label)[0] + 28 for label in self.labels]
+
+    def GetBestWidth(self):
+        widths = self.GetKeyWidths()
+        return sum(widths) + self.GAP * (len(widths) - 1)
+
+    def GetRects(self):
+        h = self.GetClientSize().height
+        x, rects = 0, []
+        for width in self.GetKeyWidths():
+            rects.append(wx.Rect(x, 0, width, h))
+            x += width + self.GAP
+        return rects
+
+    def SetHovered(self, index):
+        if index != self.hovered:
+            self.hovered = index
+            self.Refresh()
+
+    def OnMotion(self, event):
+        hit = [k for k, rect in enumerate(self.GetRects()) if rect.Contains(event.GetPosition())]
+        self.SetHovered(hit[0] if hit else None)
+
+    def OnLeftDown(self, event):
+        hit = [k for k, rect in enumerate(self.GetRects()) if rect.Contains(event.GetPosition())]
+        if hit and hit[0] != self.selection:
+            self.selection = hit[0]
+            self.Refresh()
+            self.on_change(self.selection)
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        for k, rect in enumerate(self.GetRects()):
+            uikit.draw_button(dc, tuple(rect), label=self.labels[k], on=k == self.selection,
+                              hover=k == self.hovered, font=uikit.get_font(12))
 
 
 class FancyButton(wx.Button):

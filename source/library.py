@@ -22,6 +22,12 @@ from utilities import Struct
 # own (SEARCH_TITLE, SIMILAR_TITLE), their rows copied from the playlists they came from
 SEARCH_TITLE = 'Search'
 SIMILAR_TITLE = 'Similar'
+# the songs starred (favorite_tracks: their paths, in the order starred), shown in a tab of
+# their own as the found ones are
+FAVORITES_TITLE = 'Favorite tracks'
+# the songs played lately (recent_tracks: their paths, the latest first), as the starred
+RECENT_TITLE = 'Recent tracks'
+RECENT_LIMIT = 200
 TEXT_KEYS = ('filename', 'artist', 'title', 'album', 'genre')
 FEATURES = dict()
 FEATURES_LOCK = threading.Lock()
@@ -66,7 +72,8 @@ def get_grid_tempi():
     return dict(rows)
 
 
-def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE)):
+def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE,
+                                  RECENT_TITLE)):
     '''[Struct] of the library's songs, the first row of each file'''
     tempi = get_grid_tempi()
     songs = list()
@@ -78,7 +85,8 @@ def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE)):
         for item in inner.items:
             values = dict(zip(keys, item))
             path = values.get('path')
-            if not path or path in seen:
+            # a station's stream is no song of the library
+            if not path or path in seen or audio.is_stream_path(path):
                 continue
             seen.add(path)
             tempo = tempi.get(values.get('mdx'), to_float(values.get('tempo')))
@@ -178,6 +186,77 @@ def similar(songs, target, count=100):
         scored.append((0.4 * tempo + 0.25 * key + 0.35 * sound, song))
     scored.sort(key=lambda v: v[0])
     return [song for _, song in scored[:count]]
+
+
+# (read once and kept: the list asks at every drawing, the settings' file opened each time)
+FAVORITES = None
+
+
+def get_favorite_tracks():
+    global FAVORITES
+    if FAVORITES is None:
+        from macroboxlib import GetPreference
+        FAVORITES = list(GetPreference('favorite_tracks') or [])
+    return list(FAVORITES)
+
+
+def toggle_favorite_tracks(paths):
+    '''the paths starred (none of them was) or let go (one was, or all): True when
+    starred'''
+    from macroboxlib import SetPreference
+    kept = get_favorite_tracks()
+    paths = [v for v in paths if v and not audio.is_stream_path(v)]
+    if not paths:
+        return False
+    starring = any(v not in kept for v in paths)
+    if starring:
+        kept += [v for v in paths if v not in kept]
+    else:
+        kept = [v for v in kept if v not in paths]
+    global FAVORITES
+    FAVORITES = list(kept)
+    SetPreference('favorite_tracks', kept)
+    return starring
+
+
+def note_recent(path):
+    # a song that started playing: first in the recent ones (once), the latest RECENT_LIMIT
+    from macroboxlib import GetPreference
+    from macroboxlib import SetPreference
+    if not path or audio.is_stream_path(path):
+        return
+    paths = [v for v in (GetPreference('recent_tracks') or []) if v != path]
+    SetPreference('recent_tracks', [path] + paths[:RECENT_LIMIT - 1])
+
+
+def show_recent(listbox):
+    # the songs played lately in their tab, the latest first (show_favorites)
+    from macroboxlib import GetPreference
+    return show_paths(listbox, RECENT_TITLE, GetPreference('recent_tracks') or [])
+
+
+def show_favorites(listbox):
+    '''the starred songs in their tab, in the order starred: their rows as in the playlists
+    they are in (a song in none read from its file)'''
+    return show_paths(listbox, FAVORITES_TITLE, get_favorite_tracks())
+
+
+def show_paths(listbox, title, paths):
+    # the songs at paths in the tab named title, in that order (show_favorites)
+    from macroboxlib import ListBoxColumn
+    from macroboxlib import MakeMusicFileItem
+    songs = dict((v.path, v) for v in collect(listbox))
+    keys = [v.key for v in ListBoxColumn()]
+    found = []
+    for path in paths:
+        song = songs.get(path)
+        if song is None:
+            item = MakeMusicFileItem(path, 0, ListBoxColumn())
+            if item is None:
+                continue
+            song = Struct(path=path, values=dict(zip(keys, item)))
+        found.append(song)
+    return show_results(listbox, title, found)
 
 
 def show_results(listbox, title, songs):

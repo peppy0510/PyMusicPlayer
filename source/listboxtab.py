@@ -8,6 +8,8 @@
 import audio
 import glob
 import images
+import library
+import macroboxstyle
 import math
 import os
 import stat
@@ -15,7 +17,9 @@ import subprocess
 import sys
 import threading
 import time
+import radio
 import webbrowser
+import uikit
 import wx
 
 from listboxlib import FileOpenDialog
@@ -25,9 +29,9 @@ from listboxlib import ListControl
 from macroboxlib import Button
 from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
+from macroboxlib import ConfirmDialogBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
-from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_ITEM_SIZE
 from macroboxlib import GetPreference
 from macroboxlib import ItemTextEdit
@@ -69,6 +73,7 @@ class ListBoxTabDnD(wx.FileDropTarget):
         self.onClient = False
         self.parent.onClient = False
         self.SetDropInsertIdx(None)
+        self.SetDropFavorites(False)
         self.dropEdgeLap = None
 
     def OnDragOver(self, x, y, d):
@@ -76,12 +81,38 @@ class ListBoxTabDnD(wx.FileDropTarget):
         self.parent.onClient = True
         place = None if self.tabDrag else self.GetDropPlace(x, y)
         self.SetDropInsertIdx(place[1] if place and place[0] == 'insert' else None)
+        self.SetDropFavorites(bool(place) and place[0] == 'favorites')
         self.ScrollAtEdge(y)
         return d
 
+    def GetDraggedKind(self):
+        # what the list drags ('stations' or 'songs'), None from outside (files)
+        mainpanel = self.parent.parent.parent
+        drag = getattr(mainpanel, 'pending_item_drag', None)
+        paths = list(drag.paths) if drag is not None else []
+        if not paths:
+            return None
+        return 'stations' if all(audio.is_stream_path(v) for v in paths) else 'songs'
+
     def GetDropPlace(self, x, y):
+        # ('favorites', None) over the radio's Favorites (its tab, or its row before it is
+        # made); into a tab, or between the playlists. Stations only to the Favorites, songs
+        # and files only to the playlists' section (the insert line was drawn among the
+        # radio's rows, and between the playlists for a station)
+        kind = self.GetDraggedKind()
+        if self.parent.IsOverFavorites(y):
+            return ('favorites', None) if kind != 'songs' else None
+        if kind == 'stations':
+            return None
         rects = self.parent.rects if isinstance(self.parent.rects, list) else []
+        titles = self.parent.GetTabsTitles()
         for i, rect in enumerate(rects):
+            if rect.height <= 0:
+                continue
+            if i not in self.parent.normal_tabs and rect.y <= y <= rect.y + rect.height:
+                if titles[i] in radio.RADIO_TABS:
+                    return None
+                return ('into', i)
             if rect.y <= y <= rect.y + rect.height:
                 edge = rect.height * self.dropEdge
                 if y < rect.y + edge:
@@ -89,9 +120,20 @@ class ListBoxTabDnD(wx.FileDropTarget):
                 if y > rect.y + rect.height - edge:
                     return ('insert', i + 1)
                 return ('into', i)
-        if rects and y > rects[-1].y + rects[-1].height:
-            return ('insert', len(rects))
+        normal = self.parent.normal_tabs
+        if normal:
+            # under the last playlist, up to half a row (not on into the sections after it)
+            bottom = rects[normal[-1]].y + rects[normal[-1]].height
+            if bottom < y <= bottom + rects[normal[-1]].height * 0.5:
+                return ('insert', normal[-1] + 1)
         return None
+
+    def SetDropFavorites(self, on):
+        # the Favorites row outlined while stations are dragged over it
+        if on == self.parent.drop_favorites:
+            return
+        self.parent.drop_favorites = on
+        self.parent.DirectDraw()
 
     def SetDropInsertIdx(self, idx):
         if idx == self.dropInsertIdx:
@@ -117,7 +159,14 @@ class ListBoxTabDnD(wx.FileDropTarget):
 
     def OnDropFiles(self, x, y, inpaths):
         place = self.GetDropPlace(x, y)
+        if place is None and self.GetDraggedKind() is not None:
+            # the list's rows dropped where they do not go (stations off the Favorites,
+            # songs on the radio's rows): nothing made (a new playlist was)
+            self.SetDropInsertIdx(None)
+            self.SetDropFavorites(False)
+            return 0
         self.SetDropInsertIdx(None)
+        self.SetDropFavorites(False)
         self.dropEdgeLap = None
         if self.tabDrag:
             return 0
@@ -128,6 +177,14 @@ class ListBoxTabDnD(wx.FileDropTarget):
         # else: filtered = False
         if self.downTabIdx is not None:
             return
+        if place and place[0] == 'favorites':
+            # stations kept in the favorites (a file is no station: left out)
+            mainpanel = self.parent.parent.parent
+            urls = [v for v in inpaths if audio.is_stream_path(v)]
+            stations = [radio.get_station(v) or dict(url=v, name=v) for v in urls]
+            if stations:
+                radio.add_favorites(mainpanel, stations)
+            return 0
         if place and place[0] == 'into':
             self.DropToExistingTab(inpaths, place[1])
         elif self.parent.IsTabCreationLimited():
@@ -223,6 +280,14 @@ class XXX():
     def GetItemsLength(self):
         # print(len(self.parent.ListBox.innerList))
         return len(self.parent.ListBox.innerList)
+
+    def GetContentHeight(self):
+        # the sidebar's rows with its headers and stations (TabList.DrawTabRect), else the
+        # tabs alone
+        tablist = getattr(self, 'TabList', None)
+        if tablist is not None and tablist.content_height:
+            return tablist.content_height
+        return self.GetItemsLength() * self.GetRowsHeight()
 
     def GetNearestItem(self, focus, selectedList=None):
         if selectedList is None:
@@ -366,17 +431,14 @@ class XXX():
         # return -length+self.rectList.w
 
     def GetVirtualPositionYLimit(self):
-        row_size = self.GetRowsHeight()
         if hasattr(self, 'TabList'):
             height = self.TabList.GetSize().height
         else:
             height = 0
-        length = self.GetItemsLength()
-        # print(length)
-        # print self.rects.list.height
-        if length * row_size < height:
+        length = self.GetContentHeight()
+        if length < height:
             return 0
-        return -length * row_size + height
+        return -length + height
 
     # UI Action Control
 
@@ -593,6 +655,41 @@ class ListBoxTab(RectBox, XXX):
         self.Thaw()
 
 
+# the sidebar's sections folded (sidebar_folded: 'playlists', 'library', 'radio'), each
+# by a click on its name: many playlists pushed the library and the radio out of sight
+# (read once and kept: asked at every drawing of the sidebar)
+FOLDED = None
+
+
+def is_section_folded(section):
+    global FOLDED
+    if FOLDED is None:
+        FOLDED = list(GetPreference('sidebar_folded') or [])
+    return section in FOLDED
+
+
+def toggle_section(section):
+    global FOLDED
+    folded = [v for v in (FOLDED if FOLDED is not None else
+                          GetPreference('sidebar_folded') or []) if v != section]
+    if not is_section_folded(section):
+        folded.append(section)
+    FOLDED = folded
+    SetPreference('sidebar_folded', folded)
+
+
+def draw_fold_mark(dc, x, cy, folded, colour):
+    # after a section's name: pointing down open, right folded (5 px)
+    gc = wx.GraphicsContext.Create(dc)
+    if gc is None:
+        return
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour).Width(1.3)))
+    if folded:
+        gc.StrokeLines([(x + 1, cy - 3.5), (x + 4, cy - 0.5), (x + 1, cy + 2.5)])
+    else:
+        gc.StrokeLines([(x - 0.5, cy - 2), (x + 2.5, cy + 1), (x + 5.5, cy - 2)])
+
+
 class ListBoxTabHeader(RectBox):
 
     def __init__(self, parent):
@@ -608,7 +705,21 @@ class ListBoxTabHeader(RectBox):
         # print(event)
         if self.parent.parent.HasToSkipEvent():
             return
+        # the + under the mouse, and held down on it (as the rows' close mark)
+        button = getattr(self, 'add_button', None)
+        hovered = bool(button) and self.onClient and self.IsInRect(button, (event.X, event.Y))
+        downed = hovered and event.LeftIsDown and event.down.X is not None\
+            and self.IsInRect(button, (event.down.X, event.down.Y))
+        if (hovered, downed) != getattr(self, 'add_state', (False, False)):
+            self.add_state = (hovered, downed)
+            self.reInitBuffer = True
         self.HandleEventTabAddDown(event)
+        # the name (anywhere off the +): the playlists folded or opened
+        if self.onClient and event.LeftDown and button and hovered is False:
+            toggle_section('playlists')
+            self.reInitBuffer = True
+            self.parent.TabList.reInitBuffer = True
+            self.parent.SliderV.reInitBuffer = True
 
     # def ExtendGlobalEvent(self, event):
     #     return event
@@ -646,9 +757,36 @@ class ListBoxTabHeader(RectBox):
         color = self.parent.st.HEADER_PN_COLOR
         dc.DrawLineList(lines, pens=wx.Pen(color, 1))
         size = self.bmp.add.GetWidth()
-        offset_x = width - (size + self.parent.scrollbar_size + 12)
+        # over the rows' close mark (2 px right with it, ListBoxTabList.DrawTabPolygon)
+        offset_x = width - (size + self.parent.scrollbar_size + 10)
         offset_y = (height - size) / 2 + 1
-        dc.DrawBitmap(self.bmp.add, round(offset_x), round(offset_y), useMask=True)
+        # under the mouse a key's face behind it, pressed the pressed face and the mark a
+        # pixel down (the rows' close mark's: ListBoxTabList.DrawTabPolygon)
+        hovered, downed = getattr(self, 'add_state', (False, False))
+        if hovered:
+            tokens = macroboxstyle.current().UI
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetBrush(wx.Brush(wx.Colour(tokens.CONTROL_DOWN if downed
+                                           else tokens.CONTROL_HOVER)))
+            # even as the mark (8 px) is, 4 px round it every way (15 sat it half a pixel off)
+            face = size + 8
+            dc.DrawRoundedRectangle(int(offset_x) - 4, int(offset_y) - 4, face, face,
+                                    uikit.RADIUS)
+        offset_y += 1 if downed else 0
+        dc.DrawBitmap(self.bmp.add, int(offset_x), int(offset_y), useMask=True)
+        # the sidebar's first section named in its header (the + adds a playlist), in
+        # capitals as the list's header names its columns
+        font = uikit.get_font(10)
+        dc.SetFont(font)
+        dc.SetTextForeground(self.parent.TabList.GetColours()[1])
+        # a pixel lower than the middle by its caps (it sat a pixel over the list's header
+        # names beside it, measured)
+        top = int(round(uikit.get_caps_top(font, 2, height - 2))) + 1
+        dc.DrawText('PLAYLISTS', ListBoxTabList.HEADER_X, top)
+        caps = uikit.get_caps_ink(font)
+        draw_fold_mark(dc, ListBoxTabList.HEADER_X + dc.GetTextExtent('PLAYLISTS')[0] + 6,
+                       top + caps[0] + caps[1] / 2.0, is_section_folded('playlists'),
+                       self.parent.TabList.GetColours()[1])
         # pad = 2
         # self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
         # the header's height, up to the line before the scrollbar (the 8px mark was 12px to hit)
@@ -689,6 +827,14 @@ class ListBoxTabList(RectBox):
         self.bmp = Struct()
         # self.bmp.add = images.listbox_tab_add.GetBitmap()
         self.bmp.close = images.listbox_tab_close.GetBitmap()
+        # the sidebar's sections: the playlists (the header box above has their +), the
+        # library's tabs (Search, Similar), the radio's (Favorites, Browse stations: a row
+        # before its tab is made, made when clicked)
+        self.headers = []
+        self.normal_tabs = []
+        self.virtual_entries = {}
+        self.drop_favorites = False
+        self.content_height = 0
         color = self.parent.st.BG_COLOR
         self.SetBackgroundColour(color)
         self.InitBuffer()
@@ -701,58 +847,111 @@ class ListBoxTabList(RectBox):
 
     # Draw ListBoxTab
 
+    HEADER_HEIGHT = 24
+    ROW_HEIGHT = 26
+
     def SetRectDraw(self, dc):
         self.DrawTabRect(dc)
         self.DrawTabRectSelected(dc)
-        self.DrawTabLine(dc)
         self.DrawTabInsertLine(dc)
         self.DrawTabPolygon(dc)
         self.DrawTabText(dc)
-        # self.DrawTabLineV(dc)
-        # self.DrawTabTextEdit(dc)
-
-    # def DrawTabTextEdit(self, dc):
-    #     if self.TextEdit is None:
-    #         return
-    #     x, y, w, h = self.TextEdit.GetRect()
-    #     rect = (x - 4, y - 2, w + 8, h + 3)
-    #     dc.DrawRectangleList((rect,),
-    #                          pens=wx.Pen((255, 255, 255), 0), brushes=wx.Brush((255, 255, 255)))
-
-    def DrawTabRectSelected(self, dc):
-        x, y, w, h = self.rects[self.parent.parent.ListBox.selectedList]
-        color = (200, 200, 200)
-        rect = (x - 1, y, w + 2, h + 1)
-        dc.DrawRectangleList((rect,), pens=wx.Pen((0, 0, 0), 1), brushes=wx.Brush(color))
+        self.DrawHeaders(dc)
 
     def DrawTabRect(self, dc):
+        # the rows laid out by section, each tab by its title: the playlists in their order,
+        # then Library's and Radio's tabs under their headers (the headers are gaps no tab
+        # is hit in; a radio tab not made yet is a row of its own, virtual_entries)
         vpy = self.parent.GetVirtualPositionY()
         self.parent.SetVirtualPositionY(vpy)
         width, height = self.GetClientSize()
-
-        rects = []
         vpy = self.parent.GetVirtualPositionY()
-        for i in range(len(self.parent.parent.ListBox.innerList)):
-            rects += [wx.Rect(1, round(self.tab_height * i + vpy),
-                              round(width - 1), round(self.tab_height - 1))]
-        self.rects = rects
+        titles = self.GetTabsTitles()
+        library_titles = (library.FAVORITES_TITLE, library.RECENT_TITLE, library.SEARCH_TITLE,
+                          library.SIMILAR_TITLE)
+        rects = [None] * len(titles)
+        headers, normal = [], []
+        y = vpy + 2
 
-        def limitcolor(v):
-            if v > 255:
-                return 255
-            if v < 0:
-                return 0
-            return v
+        def row():
+            return wx.Rect(1, round(y), round(width - 1), self.ROW_HEIGHT - 1)
 
-        ct = self.parent.parent.ListBox.st.LIST_BG_CONTRAST
-        r, g, b = self.parent.st.LIST_BG_COLOR
-        bgcolor_odd = [limitcolor(v) for v in (r - ct, g - ct, b - ct)]
-        bgcolor_even = [limitcolor(v) for v in (r + ct, g + ct, b + ct)]
-        for i, rect in enumerate(rects):
-            if i % 2 == 1:
-                dc.GradientFillLinear(rect, bgcolor_even, bgcolor_even, nDirection=wx.SOUTH)
+        for i, title in enumerate(titles):
+            if title in library_titles or title in radio.RADIO_TABS\
+                    or is_section_folded('playlists'):
+                continue
+            rects[i] = row()
+            normal.append(i)
+            y += self.ROW_HEIGHT
+        # the library: its favorite and recent tracks always (a row before their tab is
+        # made), the found ones when there are
+        virtual = {}
+        y += 6
+        headers.append((y, 'Library', 'library'))
+        y += self.HEADER_HEIGHT
+        for title in library_titles:
+            if is_section_folded('library'):
+                break
+            if title in titles:
+                rects[titles.index(title)] = row()
+            elif title in (library.FAVORITES_TITLE, library.RECENT_TITLE):
+                virtual[title] = row()
             else:
-                dc.GradientFillLinear(rect, bgcolor_odd, bgcolor_odd, nDirection=wx.SOUTH)
+                continue
+            y += self.ROW_HEIGHT
+        y += 6
+        headers.append((y, 'Radio', 'radio'))
+        y += self.HEADER_HEIGHT
+        for title in radio.RADIO_TABS:
+            if is_section_folded('radio'):
+                break
+            if title in titles:
+                rects[titles.index(title)] = row()
+            else:
+                virtual[title] = row()
+            y += self.ROW_HEIGHT
+        self.rects = [v if v is not None else wx.Rect(0, 0, 0, 0) for v in rects]
+        self.normal_tabs = normal
+        self.headers = headers
+        self.virtual_entries = virtual
+        self.content_height = y - vpy + 4
+
+    def GetColours(self):
+        # (text, dimmed text, hover ground, selected ground, accent) for the sidebar
+        st = self.parent.st
+        tokens = macroboxstyle.current().UI
+        fg = wx.Colour(st.LIST_FG_COLOR)
+        bg = wx.Colour(st.BG_COLOR)
+        accent = wx.Colour(tokens.ACCENT)
+
+        def mix(a, b, share):
+            return wx.Colour(*[int(x + (y - x) * share) for x, y in
+                               zip(a.Get()[:3], b.Get()[:3])])
+        return fg, mix(bg, fg, 0.5), mix(bg, fg, 0.08), mix(bg, accent, 0.32), accent
+
+    def DrawTabRectSelected(self, dc):
+        # the hovered row lighter, the selected one in the accent's tint with its bar
+        fg, dim, hover, selected, accent = self.GetColours()
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        hovered = self.cache.tabIdx
+        if hovered is not None and 0 <= hovered < len(self.rects):
+            dc.SetBrush(wx.Brush(hover))
+            dc.DrawRectangle(self.rects[hovered])
+        index = self.parent.parent.ListBox.selectedList
+        if 0 <= index < len(self.rects):
+            x, y, w, h = self.rects[index]
+            dc.SetBrush(wx.Brush(selected))
+            dc.DrawRectangle(x, y, w, h)
+            dc.SetBrush(wx.Brush(accent))
+            dc.DrawRectangle(0, y, 3, h)
+        if self.drop_favorites:
+            titles = self.GetTabsTitles()
+            rect = self.rects[titles.index(radio.RADIO_TITLE)] if radio.RADIO_TITLE in titles\
+                else self.virtual_entries.get(radio.RADIO_TITLE)
+            if rect is not None:
+                dc.SetPen(wx.Pen(accent, 2))
+                dc.SetBrush(wx.TRANSPARENT_BRUSH)
+                dc.DrawRectangle(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 1)
 
     def DrawTabInsertLine(self, dc):
         idx = self.FileDrop.insertTabIdx
@@ -760,70 +959,221 @@ class ListBoxTabList(RectBox):
             idx = self.FileDrop.dropInsertIdx
         if idx is None or not self.rects:
             return
-        if idx < len(self.rects):
+        if idx < len(self.rects) and (idx in self.normal_tabs or idx == 0):
             rect = self.rects[idx]
             y = rect.y - 1
+        elif idx > 0 and idx - 1 < len(self.rects):
+            # after the last playlist: under it (the row at idx is another section's)
+            rect = self.rects[idx - 1]
+            y = rect.y + rect.height - 1
         else:
             rect = self.rects[-1]
             y = rect.y + rect.height - 1
         length = self.parent.GetItemsLength()
         y = y - 1 if length == idx else y
-        color = self.parent.parent.ListBox.st.SELECTED_BG_COLOR
+        color = self.parent.parent.ListBox.st.INSERTITEM_CURSOR_COLOR
         dc.DrawRectangleList(((0, y, self.GetSize().width + 1, 3),),
                              pens=wx.Pen((20, 20, 20)), brushes=wx.Brush((*color, 255)))
 
-    def DrawTabLine(self, dc):
-        color = self.parent.parent.ListBox.st.LIST_PN_COLOR
-        lines = [(r.x, r.y + r.height, r.width, r.y + r.height) for r in self.rects]
-        dc.DrawLineList(lines, pens=wx.Pen(color, 1))
-
-    # def DrawTabLineV(self, dc):
-    #     return
-    #     r_pad = 1
-    #     color = (30, 30, 30)
-    #     width, _ = self.GetSize()
-    #     right_x = width - r_pad - self.scrollbar_size - 2
-    #     lines = [(0, 1, 0, self.rects[0].height + 1), (0, 1, width, 1),
-    #              (right_x, 1, right_x, self.rects[0].height + 1)]
-    #     dc.DrawLineList(lines, pens=wx.Pen(color, 1))
+    def GetFont(self, pixels=12, bold=False):
+        font = wx.Font(wx.Size(0, pixels), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
+                       wx.FONTWEIGHT_BOLD if bold else wx.FONTWEIGHT_NORMAL, faceName='Segoe UI')
+        return font
 
     def DrawTabText(self, dc):
         if self.tab_rel_width < 30:
             return
-        xys = list()
-        texts = list()
-        selected_xys = list()
-        selected_texts = list()
-        font = wx.Font(0, wx.MODERN, wx.NORMAL, wx.NORMAL)
-        font.SetPixelSize((6, 11))
-        font.SetFaceName(FONT_ITEM)
-        dc.SetFont(font)
-        for i, v in enumerate(zip(self.rects, self.GetTabsTitles())):
-            rect, title = v
-            margin = self.close_rects[i].width + 15 + self.scrollbar_size
-            if rect.width - margin < 12:
+        fg, dim = self.GetColours()[:2]
+        rows = list(zip(self.rects, self.GetTabsTitles(), range(len(self.rects))))
+        rows += [(rect, title, None) for title, rect in self.virtual_entries.items()]
+        for rect, title, i in rows:
+            margin = 15 + self.scrollbar_size
+            if i is not None:
+                margin += self.close_rects[i].width
+            if rect.height <= 0 or rect.width - margin < 12:
                 continue
-            if i == self.parent.parent.ListBox.selectedList:
-                selected_texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                selected_xys.append((rect.x + 11, rect.y + 5 + 1))
-            else:
-                texts.append(self.LimitTextLength(dc, title, rect.width - margin))
-                xys.append((rect.x + 11, rect.y + 5 + 1))
-        dc.DrawTextList(texts, xys, foregrounds=wx.Colour(210, 210, 210), backgrounds=None)
-        dc.DrawTextList(selected_texts, selected_xys,
-                        foregrounds=wx.Colour(30, 30, 30), backgrounds=None)
+            # one weight selected or not (the bar and the tint say it; bold moved the cut)
+            dc.SetFont(self.GetFont(12))
+            dc.SetTextForeground(fg)
+            # its kind's icon before it (a playlist, a search, the favorites, the stations)
+            self.DrawRowIcon(dc, self.GetRowIcon(title), rect.x + self.ICON_X,
+                             rect.y + rect.height / 2.0, dim)
+            # the radio's tabs by what they are (Favorites, Browse stations)
+            text = self.LimitTextLength(dc, radio.RADIO_TABS.get(title, title),
+                                        rect.width - margin - self.ICON_ROOM)
+            th = dc.GetTextExtent(text)[1]
+            dc.DrawText(text, rect.x + self.ICON_X + self.ICON_ROOM, rect.y + (rect.height - th) // 2)
+
+    # the icon's left (12, then 10; now 6 px after the selection bar, the section's name,
+    # PLAYLISTS, moved with it: HEADER_X) and its room before a row's name (12 px and its gap)
+    ICON_X = 7
+    HEADER_X = 9
+    ICON_ROOM = 20
+
+    def GetRowIcon(self, title):
+        if title in (radio.RADIO_TITLE, library.FAVORITES_TITLE):
+            return 'star'
+        if title == radio.BROWSE_TITLE:
+            return 'radio'
+        if title in (library.SEARCH_TITLE, library.SIMILAR_TITLE):
+            return 'search'
+        if title in (library.RECENT_TITLE, radio.RECENT_TITLE):
+            return 'recent'
+        return 'list'
+
+    def DrawRowIcon(self, dc, icon, x, cy, colour):
+        # 12 px line drawings in the dimmed text's colour
+        gc = wx.GraphicsContext.Create(dc)
+        if gc is None:
+            return
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour).Width(1.3)))
+        gc.SetBrush(wx.NullGraphicsBrush)
+        if icon == 'list':
+            for k in (-3.5, 0, 3.5):
+                gc.StrokeLine(x + 1, cy + k, x + 11, cy + k)
+        elif icon == 'recent':
+            # a clock: its face and hands at ten past
+            gc.DrawEllipse(x + 0.5, cy - 5.5, 11, 11)
+            gc.StrokeLine(x + 6, cy, x + 6, cy - 3.5)
+            gc.StrokeLine(x + 6, cy, x + 8.5, cy + 1.5)
+        elif icon == 'search':
+            gc.DrawEllipse(x + 0.5, cy - 5.5, 8, 8)
+            gc.StrokeLine(x + 7.5, cy + 1.5, x + 11.5, cy + 5.5)
+        elif icon == 'star':
+            path = gc.CreatePath()
+            for k in range(10):
+                radius = 6.0 if k % 2 == 0 else 2.6
+                angle = math.pi * (k / 5.0 - 0.5)
+                px, py = x + 6 + radius * math.cos(angle), cy + 0.5 + radius * math.sin(angle)
+                if k == 0:
+                    path.MoveToPoint(px, py)
+                else:
+                    path.AddLineToPoint(px, py)
+            path.CloseSubpath()
+            gc.StrokePath(path)
+        elif icon == 'radio':
+            # a mast and its waves (the outer 7.5 round: wider than the other icons)
+            gc.StrokeLine(x + 6, cy - 1, x + 6, cy + 5.5)
+            gc.DrawEllipse(x + 4.5, cy - 3.5, 3, 3)
+            for r in (4.0, 6.5):
+                for side in (-1, 1):
+                    path = gc.CreatePath()
+                    start = math.radians(-40 if side > 0 else 140)
+                    path.AddArc(x + 6, cy - 2, r, start, start + math.radians(80), True)
+                    gc.StrokePath(path)
 
     def DrawTabPolygon(self, dc):
+        # the close mark on the hovered tab only (it stood on the selected one too), drawn
+        # (the bitmap was dark, for the light block the selected tab was): dimmed; under the
+        # mouse, full on a key's face; pressed, on the pressed face; its room kept on every
+        # row (DrawTabText: the title not cut again as it comes and goes)
         size = 6
-        right_align = 10
+        # 9 px from the row's right end, as the icon from its left (11 before: asked
+        # closer), under the header's + (moved with it); its hover face 4 px round it
+        right_align = 4 + self.scrollbar_size
         close_rects = []
+        fg, dim = self.GetColours()[:2]
+        tokens = macroboxstyle.current().UI
+        hovered, downed = getattr(self, 'close_state', (None, None))
+        titles = self.GetTabsTitles()
         for i, rect in enumerate(self.rects):
+            if rect.height <= 0 or titles[i] in radio.RADIO_TABS:
+                # the radio's tabs are not closed (the favorites would go with it)
+                close_rects.append(wx.Rect(0, 0, 0, 0))
+                continue
             offset_x = rect.x + rect.width - size - right_align
-            offset_y = rect.y + 8 + 1
+            offset_y = rect.y + (rect.height - size) // 2
             close_rects.append(wx.Rect(offset_x - 3, offset_y - 3, size + 6, size + 6))
-            if i == self.parent.parent.ListBox.selectedList:
-                dc.DrawBitmap(self.bmp.close, offset_x, offset_y, useMask=True)
+            if i == self.cache.tabIdx:
+                face = tokens.CONTROL_DOWN if downed == i else tokens.CONTROL_HOVER\
+                    if hovered == i else None
+                if face is not None:
+                    dc.SetPen(wx.TRANSPARENT_PEN)
+                    dc.SetBrush(wx.Brush(wx.Colour(face)))
+                    dc.DrawRoundedRectangle(offset_x - 4, offset_y - 4, size + 9,
+                                            size + 9, uikit.RADIUS)
+                sink = 1 if downed == i else 0
+                offset_y += sink
+                dc.SetPen(wx.Pen(fg if face is not None else dim, 1))
+                dc.DrawLine(offset_x, offset_y, offset_x + size + 1, offset_y + size + 1)
+                dc.DrawLine(offset_x, offset_y + size, offset_x + size + 1, offset_y - 1)
         self.close_rects = close_rects
+
+    def DrawHeaders(self, dc):
+        # the section names dimmed, in capitals (as the list's header), each on a band as
+        # PLAYLISTS' header is (its ground, the line over it, its name placed as there):
+        # on the rows' ground they looked another kind of thing
+        dim = self.GetColours()[1]
+        font = uikit.get_font(10)
+        caps = uikit.get_caps_ink(font)
+        width = self.GetClientSize().width
+        for y, label, kind in self.headers:
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetBrush(wx.Brush(self.parent.st.HEADER_BG_COLOR))
+            dc.DrawRectangle(0, int(y), width, self.HEADER_HEIGHT)
+            dc.SetPen(wx.Pen(self.parent.st.HEADER_PN_COLOR, 1))
+            dc.DrawLine(0, int(y), width, int(y))
+            dc.SetFont(font)
+            dc.SetTextForeground(dim)
+            top = int(round(uikit.get_caps_top(font, y + 2, self.HEADER_HEIGHT - 2))) + 1
+            dc.DrawText(label.upper(), self.HEADER_X, top)
+            draw_fold_mark(dc, self.HEADER_X + dc.GetTextExtent(label.upper())[0] + 6,
+                           top + caps[0] + caps[1] / 2.0, is_section_folded(kind), dim)
+
+    def HandleEventSectionFold(self, event):
+        # a section's name clicked: its rows folded or opened (toggle_section)
+        if event.LeftDown is False or self.onClient is False:
+            return False
+        for y, label, kind in self.headers:
+            if kind is not None and y <= event.Y < y + self.HEADER_HEIGHT:
+                toggle_section(kind)
+                self.reInitBuffer = True
+                self.parent.SliderV.reInitBuffer = True
+                return True
+        return False
+
+    def IsOverFavorites(self, y):
+        # y on the Favorites row (its tab, or its row before the tab is made)
+        titles = self.GetTabsTitles()
+        if radio.RADIO_TITLE in titles:
+            rect = self.rects[titles.index(radio.RADIO_TITLE)]
+        else:
+            rect = self.virtual_entries.get(radio.RADIO_TITLE)
+        return rect is not None and rect.height > 0 and rect.y <= y <= rect.y + rect.height
+
+    def HandleEventRadioEntries(self, event):
+        # a radio row clicked: its tab made when it is not there, selected; Browse with
+        # nothing in it reads the most voted
+        if event.LeftDown is False or self.onClient is False:
+            return
+        titles = self.GetTabsTitles()
+        clicked = [title for title, rect in self.virtual_entries.items()
+                   if self.IsInRect(rect, (event.X, event.Y))]
+        clicked += [titles[i] for i, rect in enumerate(self.rects)
+                    if (titles[i] in radio.RADIO_TABS
+                        or titles[i] in (library.FAVORITES_TITLE, library.RECENT_TITLE))
+                    and self.IsInRect(rect, (event.X, event.Y))]
+        if not clicked:
+            return
+        mainpanel = self.parent.parent
+        if clicked[0] == library.FAVORITES_TITLE:
+            # the starred songs as they are now, their tab selected
+            library.show_favorites(mainpanel.ListBox)
+            self.reInitBuffer = True
+            return
+        if clicked[0] == library.RECENT_TITLE:
+            library.show_recent(mainpanel.ListBox)
+            self.reInitBuffer = True
+            return
+        if clicked[0] == radio.RECENT_TITLE:
+            radio.show_recent(mainpanel)
+            self.reInitBuffer = True
+            return
+        index = radio.open_tab(mainpanel.ListBox, clicked[0])
+        mainpanel.ListBox.SetSelectedList(index)
+        if clicked[0] == radio.BROWSE_TITLE and not mainpanel.ListBox.innerList[index].items:
+            radio.browse(mainpanel, 'Top voted', lambda: radio.get_stations())
+        self.reInitBuffer = True
 
     def GetRectIdx(self, xy):
         if self.onClient is False:
@@ -871,6 +1221,9 @@ class ListBoxTabList(RectBox):
         if self.parent.parent.HasToSkipEvent():
             return
         # self.HandleEventTabAddDown(event)
+        if self.HandleEventSectionFold(event):
+            return
+        self.HandleEventRadioEntries(event)
         self.HandleEventTabCloseDown(event)
         self.HandleEventTabSelectDown(event)
         self.HandleEventTabShuffleDragPending(event)
@@ -1037,11 +1390,21 @@ class ListBoxTabList(RectBox):
         if self.cache.tabIdx != event.tabIdx:
             self.cache.tabIdx = event.tabIdx
             self.reInitBuffer = True
+        # the x under the mouse, and held down on it (DrawTabPolygon)
+        downed = event.down.closeIdx if event.LeftIsDown\
+            and event.down.closeIdx == event.closeIdx else None
+        state = (event.closeIdx, downed)
+        if state != getattr(self, 'close_state', (None, None)):
+            self.close_state = state
+            self.reInitBuffer = True
         if event.LeftUp is False:
             return
         if event.closeIdx is None:
             return
         if event.down.closeIdx is None:
+            return
+        # asked first (a click on the x deleted the playlist at once)
+        if confirm_delete_tab(self, event.down.closeIdx) is False:
             return
         self.parent.parent.ListBox.DeleteInnerList(event.down.closeIdx)
         self.reInitBuffer = True
@@ -1102,18 +1465,23 @@ class ListBoxTabList(RectBox):
         return None
 
     def GetInsertTabRectIdx(self, xy):
-        if self.onClient is False:
+        # between the playlists only (the library's and the radio's tabs are in their own
+        # sections, whatever their place in the tabs)
+        if self.onClient is False or not self.normal_tabs:
             return None
         xy = wx.Point(*xy)
-        for i, r in enumerate(self.rects):
-            offsetY = 0 if i == 0 else self.rects[i - 1].y + self.rects[i - 1].height * 0.5
+        rects = [(i, self.rects[i]) for i in self.normal_tabs]
+        last = None
+        for k, (i, r) in enumerate(rects):
+            offsetY = 0 if k == 0 else rects[k - 1][1].y + rects[k - 1][1].height * 0.5
             finishY = r.y + r.height * 0.5
             rect = wx.Rect(round(r.x), round(offsetY), round(r.width), round(finishY - offsetY))
             if self.IsInRect(rect, xy):
                 return i
-        offsetY = self.rects[- 1].y + self.rects[- 1].height * 0.5
-        finishY = self.GetSize().height
-        rect = wx.Rect(round(r.x), round(offsetY), round(r.width), round(finishY - offsetY))
+            last = (i, r)
+        i, r = last
+        offsetY = r.y + r.height * 0.5
+        rect = wx.Rect(round(r.x), round(offsetY), round(r.width), round(r.height))
         if self.IsInRect(rect, xy):
             return i + 1
 
@@ -1154,7 +1522,7 @@ class ListBoxTabSliderV(RectBox):
         # print(slidable)
         # _, y, _, h = self.parent.TabList.rects[-1]
         # length = y + h
-        length = self.parent.GetItemsLength() * self.parent.GetRowsHeight()
+        length = self.parent.GetContentHeight()
         # list_height = self.parent.TabList.GetSize().height
         if length <= 0 or height <= 0:
             return
@@ -1240,7 +1608,7 @@ class ListBoxTabSliderV(RectBox):
         initPosY = event.drag.Y - rect.slidable.y
         if event.drag.rectIdx == 3 and self.pending.drag_vpy is None:
             self.pending.drag_vpy = self.parent.GetVirtualPositionY()
-        length = self.parent.GetItemsLength() * self.parent.GetRowsHeight()
+        length = self.parent.GetContentHeight()
         list_height = self.parent.TabList.GetSize().height
         if length != 0:
             shownRatio = 1.0 * list_height / length
@@ -1308,9 +1676,9 @@ class ListBoxPopupTab(wx.Menu):
         wx.Menu.__init__(self)
         self.parent = parent
         if self.parent.parent.parent.ListBox.IsFilteredAll():
-            self.items = ['Rename', '', 'Close Playlist']
+            self.items = ['Rename', '', 'Delete Playlist']
         else:
-            self.items = ['Rename', '', 'Close Playlist', 'Import Tracks', 'Export Playlist']
+            self.items = ['Rename', '', 'Delete Playlist', 'Import Tracks', 'Export Playlist']
         for i, item in enumerate(self.items):
             if item == '':
                 self.AppendSeparator()
@@ -1338,7 +1706,8 @@ class ListBoxPopupTab(wx.Menu):
             self.parent.DirectDraw()
         if event.GetId() == 3:
             selectedList = self.parent.parent.parent.ListBox.selectedList
-            self.parent.parent.parent.ListBox.DeleteInnerList(selectedList)
+            if confirm_delete_tab(self.parent, selectedList):
+                self.parent.parent.parent.ListBox.DeleteInnerList(selectedList)
             # self.parent.parent.ListTab.SetTabTextEditOn()
         if event.GetId() == 4:
             cwd = os.getcwd()
@@ -1370,6 +1739,50 @@ class ListBoxPopupTab(wx.Menu):
                 audio.generate_m3u(savepath, paths)
             except Exception:
                 pass
+
+
+class TabDeleteBox(ConfirmDialogBox):
+
+    # a playlist's deleting asked: Delete (the accent) or Cancel; confirmed when Delete
+    def __init__(self, parent, title, count, answer):
+        ConfirmDialogBox.__init__(self, parent)
+        self.answer = answer
+        self.SetTitle('Delete Playlist')
+        self.ApplyButton.SetLabelText('Delete')
+        # its message two lines tall, a text of its own (the box's sized itself to one)
+        self.Message.Hide()
+        self.Text = wx.StaticText(self, label='Delete "%s" (%d tracks)?\nThe files stay where '
+                                  'they are.' % (title, count),
+                                  style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
+        self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
+        self.Text.SetFont(uikit.get_font(uikit.BODY))
+        self.SetClientSize((340, 120))
+        self.OnSize(None)
+
+    def OnSize(self, event):
+        ConfirmDialogBox.OnSize(self, event)
+        if getattr(self, 'Text', None) is not None:
+            width, height = self.GetClientSize()
+            self.Text.SetRect((10, 16, width - 20, 40))
+
+    def OnApply(self, event):
+        # (told by a list of its caller's: the box is gone when ShowModal returns)
+        self.answer.append(True)
+        self.OnClose(event)
+
+
+def confirm_delete_tab(tablist, index):
+    # True when the playlist at index is to be deleted (asked over the player)
+    listbox = tablist.parent.parent.ListBox
+    inner = listbox.innerList[index]
+    answer = []
+    box = TabDeleteBox(tablist, inner.title, len(inner.items), answer)
+    frame = wx.GetTopLevelParent(tablist)
+    x, y, w, h = frame.GetRect()
+    bw, bh = box.GetSize()
+    box.SetPosition((x + (w - bw) // 2, y + (h - bh) // 2))
+    box.ShowModal()
+    return bool(answer)
 
 
 class TabRenameBox(UserInputDialogBox):

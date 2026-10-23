@@ -15,6 +15,7 @@ import math
 import mfeats
 import mutagen
 import os
+import radio
 import re
 import stat
 import threading
@@ -145,6 +146,10 @@ class ListBoxListDnD(wx.FileDropTarget):
         try:
             extended_paths = []
             for path in inpaths:
+                # a station's row dragged here: its address kept as it is
+                if audio.is_stream_path(path):
+                    extended_paths.append(path)
+                    continue
                 if os.path.isfile(path) is False and os.path.isdir(path) is False:
                     continue
                 stats = os.stat(path)
@@ -566,10 +571,11 @@ class ListControl():
         query = query.split(' ')
         query = [v for v in query if v != '']
         queryLength = len(query)
-        self.innerList[selectedList].items\
-            = filter(lambda v: len([x for x in query
-                                    if x in v[keyIdx].lower()]) == queryLength,
-                     self.innerList[selectedList].filterCache)
+        # a list (Python 3's filter is a one-time iterator: the rows could not be drawn
+        # from it), each value as text (the order is a number)
+        self.innerList[selectedList].items = [
+            v for v in self.innerList[selectedList].filterCache
+            if len([x for x in query if x in str(v[keyIdx]).lower()]) == queryLength]
 
     def FilterItemsExtended(self, query, ignore_case=True, selectedList=None):
         if selectedList is None:
@@ -618,6 +624,9 @@ class ListControl():
         for listIdx in range(len(self.innerList)):
             self.SetFilterOff(listIdx)
         self.parent.ListSearch.reInitBuffer = True
+        # the whole list drawn again (the search row alone was)
+        if hasattr(self, 'List'):
+            self.List.reInitBuffer = True
 
     def SetFilterOn(self, selectedList=None):
         if selectedList is None:
@@ -1023,7 +1032,8 @@ class ListControl():
         return headerIdx[0]
 
     def GetHeaderIdx(self, x):
-        self.column_splitter_size = 5
+        # a column's edge caught this far either side (5 was hard to catch)
+        self.column_splitter_size = 8
         if self.Header.onClient is False:
             return None
         width = self.GetSize().width
@@ -1069,6 +1079,9 @@ class ListControl():
         columns = copy.deepcopy(self.innerList[selectedList].columns)
         for listIdx in range(len(self.innerList)):
             if listIdx == selectedList:
+                continue
+            # the radio's tabs keep a station's columns (radio.ensure_station_columns)
+            if self.innerList[listIdx].title in radio.RADIO_TABS:
                 continue
             columnsIdx = [self.GetColumnKeyToIdx(v.key, listIdx) for v in columns]
             # need to debug columns and columnsIdx
@@ -1600,14 +1613,22 @@ class ListControl():
             direction = -lastSortedColumn[1]
         selectedItemsOrder = [self.innerList[selectedList].items[i][orderIdx]
                               for i in self.GetSelectedItems(selectedList)]
+        # the size by its number ('9.50 MB' after '10.00 MB' as text)
+        key = itemgetter(idx)
+        if self.innerList[selectedList].columns[idx].key == 'size':
+            def key(item):
+                try:
+                    return float(('%s' % item[idx]).split()[0])
+                except (ValueError, IndexError):
+                    return -1.0
         if direction == 1:
             self.SetLastSortedColumn([idx, direction], selectedList)
             self.innerList[selectedList].items\
-                = sorted(self.innerList[selectedList].items, key=itemgetter(idx))
+                = sorted(self.innerList[selectedList].items, key=key)
         elif direction == -1:
             self.SetLastSortedColumn([idx, direction], selectedList)
             self.innerList[selectedList].items\
-                = sorted(self.innerList[selectedList].items, key=itemgetter(idx), reverse=True)
+                = sorted(self.innerList[selectedList].items, key=key, reverse=True)
         self.innerList[selectedList].selectedItems\
             = [i for i in range(self.GetItemsLength(selectedList))
                if self.innerList[selectedList].items[i][orderIdx] in selectedItemsOrder]

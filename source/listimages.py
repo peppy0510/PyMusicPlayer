@@ -15,6 +15,7 @@ import mutagen
 import numpy
 import os
 import queue
+import radio
 import threading
 import wx
 
@@ -56,7 +57,11 @@ class ListImages():
             if key not in self.asked:
                 self.asked.add(key)
                 self.jobs.put((key, path))
-            return None
+            # while it is made on its new ground (a row selected, or let go), the same
+            # picture on the ground it had: none drawn in the meantime blinked at every
+            # click
+            return next((v for k, v in reversed(self.bitmaps.items()) if k[:4] == key[:4]),
+                        None)
         if image is False:
             return False
         h, w, _ = image.shape
@@ -113,7 +118,11 @@ class ListImages():
                 return False
             picture = Image.open(thumbnail).convert('RGB')
         else:
-            data = read_cover(path)
+            if audio.is_stream_path(path):
+                # a station's picture (its favicon), read on this worker
+                data = radio.fetch_picture(path)
+            else:
+                data = read_cover(path)
             if data is None:
                 open(thumbnail, 'wb').close()
                 return False
