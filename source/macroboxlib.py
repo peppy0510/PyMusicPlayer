@@ -26,6 +26,7 @@ import threading
 import time
 import win32file
 import win32pipe
+import weakref
 import wx
 import wx.lib.newevent
 
@@ -638,6 +639,8 @@ class PopupMenuEventCatcher():
 
 # a worker idle this long is told to end
 MFEATS_WORKER_IDLETIME = 10.0
+# the DeepRhythm model process's torch threads at most (StartModel)
+MODEL_THREADS_MOST = 4
 
 
 class MFEATS_Scheduler(ThreadTimer):
@@ -910,8 +913,9 @@ class MFEATS_Scheduler(ThreadTimer):
             if self.model is not None:
                 self.model.control.close()
             control, model_control = multiprocessing.Pipe()
-            # torch on the cores the workers leave (it takes them all by default)
-            threads = max(1, self.max_cores - self.procs_limit - 1)
+            # torch on the cores the workers leave (it takes them all by default), 4 at
+            # most: on 32 cores it took 30 and the whole computer to 100% at times
+            threads = max(1, min(MODEL_THREADS_MOST, self.max_cores - self.procs_limit - 1))
             proc = multiprocessing.Process(
                 target=mfeats.deeprhythm_server,
                 args=(model_control, self.model_address, threads), daemon=True)
@@ -1795,6 +1799,38 @@ TEXT_EXTENTS = {}
 # the list and the buttons waited. each painted at once instead, a sash dragged
 # painted every box at every step and hardly followed the mouse
 UNPAINTED = set()
+# every box, for DrawPending
+BOXES = weakref.WeakSet()
+
+
+# a tick's time for them at most (DrawPending), and a box drawn by them this often at most:
+# the rest at the next tick (when idle comes, OnIdle draws them at once as before)
+PENDING_BUDGET = 0.008
+PENDING_INTERVAL = 0.05
+
+
+def DrawPending():
+    '''the boxes asked to be drawn again (reInitBuffer), drawn and painted now: they were
+    drawn when idle, and idle never came while the visualizers' ticks kept the queue busy
+    (a song clicked was heard at once and shown long after, a scroll followed late). the
+    longest waiting first, PENDING_BUDGET a tick, PENDING_INTERVAL a box: a song skipped 30
+    times a second drew the whole list every tick, and the waveform fell to 8 frames a
+    second'''
+    start = time.perf_counter()
+    boxes = [box for box in list(BOXES) if box and box.reInitBuffer
+             and start - getattr(box, 'pending_lap', 0.0) >= PENDING_INTERVAL]
+    # (those the eye follows first: PENDING_FIRST, the list's rows and the song's title)
+    for box in sorted(boxes, key=lambda box: (getattr(box, 'PENDING_FIRST', False) is False,
+                                              getattr(box, 'pending_lap', 0.0))):
+        if time.perf_counter() - start > PENDING_BUDGET:
+            break
+        if box.IsShownOnScreen() is False:
+            continue
+        lap = box.buffer.lap
+        box.OnIdle(None)
+        if box.buffer.lap != lap:
+            box.Update()
+            box.pending_lap = time.perf_counter()
 
 
 def PaintUnpainted():
@@ -1813,6 +1849,7 @@ class RectRect():
     def __init__(self):
         self.reInitBuffer = False
         self.buffer = Struct(fps=120, lap=time.time(), bmp=None)
+        BOXES.add(self)
 
     def GetRectIdx(self, xy):
         # outside box

@@ -26,6 +26,7 @@ from PIL import Image
 from macroboxlib import FONT_PLAYINFO
 from macroboxlib import GetPreference
 from macroboxlib import SetPreference
+from macroboxlib import DrawPending
 from macroboxlib import PaintUnpainted
 from macroboxlib import RectBox
 from analyzerbox import AnalyzerPanel
@@ -536,16 +537,22 @@ class PlayBoxVisualClock(threading.Thread):
         self.parent = parent
         self.loop = True
         self.posted = False
+        self.done_at = 0.0
         # a wx.Timer beside the thread, always: in the loops Windows runs on its own
         # (a window moved or resized, a drag and drop) the CallAfter below waited, up
         # to 220 ms a frame measured, and a timer's WM_TIMER still comes. outside them
         # its beats are the thread's twice over, and a box draws once a frame
-        # (DirectDraw)
+        # (DirectDraw). (drawing only when the posted tick waited long: the CallAfters
+        # come late here too, the frames went to 14 a second and the waveform stepped)
         self.sizing = wx.Timer()
         self.sizing.Bind(wx.EVT_TIMER, self.OnSizing)
         # the shortest a timer goes (it comes about every 15.6 ms)
         self.sizing.Start(10)
         self.start()
+
+    # between a tick done and the next posted: the WM_TIMERs waiting dispatched (the
+    # global events' 2 to 5 ms)
+    TICK_GAP = 0.005
 
     def OnSizing(self, event):
         self.Tick()
@@ -572,16 +579,33 @@ class PlayBoxVisualClock(threading.Thread):
             else:
                 # behind (the computer was busy): from now on, no catching up
                 due = time.perf_counter()
-            if self.posted:
-                continue
+            # the next one posted after this one is done (not as it starts), a moment
+            # later (TICK_GAP): a tick longer than a frame (a busy rack) posted the next
+            # while drawing, the queue never emptied and the WM_TIMERs (the global events:
+            # the mouse, the keys) never came. (not at the next beat: the frames halved,
+            # the waveform slid in steps)
+            while self.posted and self.loop:
+                time.sleep(0.001)
+            rest = self.done_at + self.TICK_GAP - time.perf_counter()
+            if rest > 0:
+                time.sleep(rest)
+            if due < time.perf_counter() - 1.0 / self.GetFPS():
+                due = time.perf_counter()
             self.posted = True
-            wx.CallAfter(self.Tick)
+            wx.CallAfter(self.OnPosted)
+
+    def OnPosted(self):
+        try:
+            self.Tick()
+        finally:
+            self.done_at = time.perf_counter()
+            self.posted = False
 
     def Tick(self):
-        self.posted = False
         if self.loop is False or not self.parent:
             return
         PaintUnpainted()
+        DrawPending()
         if self.parent.IsVisualPlaying() is False:
             # stopped: ANALYZER's meters and the rack bar's fall to rest, then nothing is
             # drawn; INSTRUMENTS goes on while they play alone (its step lit moved only
@@ -1622,6 +1646,9 @@ class SnapButton(RectBox):
 
 class PlayBoxTitle(RectBox):
 
+    # (drawn first of the boxes waiting: macroboxlib.DrawPending, ListBoxList's)
+    PENDING_FIRST = True
+
     def __init__(self, parent):
         RectBox.__init__(self, parent)
         self.parent = parent
@@ -1740,10 +1767,12 @@ class PlayBoxTitle(RectBox):
         self.HandleTitleChange(event)
 
     def HandleTitleChange(self, event):
-        title, subtitle = self.GetTitle(), self.GetSubtitle()
-        if (title, subtitle) == (self.title, self.subtitle):
+        if (self.GetTitle(), self.GetSubtitle()) == (self.title, self.subtitle):
             return
-        self.title, self.subtitle = title, subtitle
+        # taken when drawn (SetRectDraw), asked till then: a DirectDraw too soon after the
+        # last frame does nothing, the new title was kept as if drawn and the old one stayed
+        # on screen till something else drew it (5 to 19 s measured)
+        self.reInitBuffer = True
         self.DirectDraw()
 
     def HandleItemDrag(self, event):
@@ -1829,9 +1858,12 @@ class PlayBoxInfo(RectBox):
         return [v for v in chips if v[2]]
 
     def GetFonts(self):
-        value = wx.Font(wx.Size(0, uikit.READOUT), wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL,
-                        wx.FONTWEIGHT_NORMAL, faceName=FONT_PLAYINFO)
-        return value, uikit.get_font(uikit.LABEL, bold=True)
+        # (made once: drawn 30 times a second, a cell's width asked for again and again)
+        if getattr(self, 'fonts', None) is None:
+            value = wx.Font(wx.Size(0, uikit.READOUT), wx.FONTFAMILY_MODERN,
+                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName=FONT_PLAYINFO)
+            self.fonts = (value, uikit.get_font(uikit.LABEL, bold=True))
+        return self.fonts
 
     def GetCellWidth(self, gc, chip):
         value, label = self.GetFonts()
@@ -1997,6 +2029,8 @@ class PlayBoxInfo(RectBox):
             return
         self.segments = segments
         self.information = information
+        # (asked till drawn: HandleTitleChange's)
+        self.reInitBuffer = True
         self.DirectDraw()
 
     def OnSize(self, event):

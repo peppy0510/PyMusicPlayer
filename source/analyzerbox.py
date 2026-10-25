@@ -89,9 +89,9 @@ class AnalyzerPanel(RackModule):
             self.analyzer.Reset()
             self.reInitBuffer = True
 
-    def Read(self):
+    def Read(self, whole=True):
         # once a frame while shown: the playing stream's next samples; a new song starts
-        # the readings again
+        # the readings again (whole False: its levels and loudness only, the rack bar's)
         if hasattr(self.parent, 'cue') is False:
             return
         if self.parent.cue.path != self.path:
@@ -102,7 +102,7 @@ class AnalyzerPanel(RackModule):
             hstream, channels, _ = self.parent.GetVisualStream()
             rate = audio.get_native_fs(hstream) if hstream else 0
             samples = analyzer.read_samples(hstream, channels, analyzer.FFT_SIZE)
-            self.analyzer.Update(samples, rate)
+            self.analyzer.Update(samples, rate, whole=whole)
         else:
             self.analyzer.Update(None, 0)
 

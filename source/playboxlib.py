@@ -1363,6 +1363,11 @@ class PlayBoxControl():
                 if hasattr(playcue, key) is False:
                     setattr(playcue, key, value)
             self.cue = playcue
+        # HIGHLIGHT and SHORT both on, as saved: SHORT's is kept at its toggle, the song's
+        # HIGHLIGHT only at a clean close, so SHORT turned on after it (a close missed)
+        # is the later one
+        if self.radio_edit and self.cue.highlight_on:
+            self.cue.highlight_on = False
 
     def InitControlEvent(self):
         self.reInitWave = True
@@ -2512,12 +2517,21 @@ class PlayBoxControl():
         choose = 64 * 60.0 / tempo
         # a phrase not known: any bar may start it
         step = period * 16 if self.IsGridPhraseKnown() else period * 4
-        chosen, _ = mfeats.choose_phrase_highlight(waveform, duration, grid.bpm, start, choose,
-                                                   step)
+        # (kept for the same waveform and grid: a song opened chose it up to four times, the
+        # early waveform, the analysis, the grid, each on the GUI thread)
+        key = (self.cue.mdx, duration, grid.bpm, start, choose, step)
+        cache = getattr(self, 'phrase_highlight_cache', None)
+        if cache is not None and cache[0] == key and cache[1] is waveform:
+            chosen = cache[2]
+        else:
+            chosen, _ = mfeats.choose_phrase_highlight(waveform, duration, grid.bpm, start,
+                                                       choose, step)
+            if chosen is not None:
+                # on the drop, not the drum fill a bar before it
+                chosen = mfeats.refine_highlight_start(waveform, duration, grid.bpm, chosen)
+            self.phrase_highlight_cache = (key, waveform, chosen)
         if chosen is None:
             return self.KeepHighlightStart(self.GetFittedHighlightStart(nearest), keep)
-        # on the drop, not the drum fill a bar before it
-        chosen = mfeats.refine_highlight_start(waveform, duration, grid.bpm, chosen)
         length = self.cue.highlight_variable or choose
         if length <= choose + 1e-6:
             return self.KeepHighlightStart(self.GetFittedHighlightStart(chosen), keep)

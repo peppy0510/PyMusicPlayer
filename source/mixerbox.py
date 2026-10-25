@@ -122,6 +122,9 @@ class MixerPanel(RackModule):
         # (before the module's: it draws once made)
         self.drag = None
         self.levels = {}
+        # the panel drawn with its meters unlit (SetRectDraw), where its meters are in it
+        self.still_bmp = None
+        self.meters = []
         # the insert being edited: (channel, its index in the chain)
         self.editing = None
         RackModule.__init__(self, parent)
@@ -197,9 +200,36 @@ class MixerPanel(RackModule):
         # (kept only when drawn: the base skips a frame asked too soon)
         self.frame = frame if self.buffer.lap != lap else None
 
+    def SetRectDraw(self, dc):
+        # the panel with its meters unlit kept as a picture: a frame only the meters
+        # changed (30 a second while playing) copies it and lights their segments. the
+        # whole panel drawn each frame (GDI+) took most of the GUI thread
+        control = self.GetControl()
+        size = tuple(self.GetSize())
+        still = (self.hovered, self.drag, self.editing, size, self.GetStrips(),
+                 self.GetReturns(), self.IsActive(), self.GetState(),
+                 hasattr(self.parent, 'cue') and self.parent.IsLoudOn(),
+                 self.parent.st, uikit.ui())
+        if control is not None:
+            still += (control.GetGlobalTempo(), control.IsDeckSync())
+        if still != getattr(self, 'still', None) or self.still_bmp is None\
+                or tuple(self.still_bmp.GetSize()) != size:
+            self.meters = []
+            bmp = wx.Bitmap(*size)
+            mdc = wx.MemoryDC(bmp)
+            mdc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+            mdc.SetBackgroundMode(wx.TRANSPARENT)
+            mdc.Clear()
+            RackModule.SetRectDraw(self, mdc)
+            mdc.SelectObject(wx.NullBitmap)
+            self.still, self.still_bmp = still, bmp
+        dc.DrawBitmap(self.still_bmp, 0, 0)
+        self.DrawLit(dc)
+
     def Repaint(self):
         # at once (an edit's: drawn when idle, a click felt late)
         self.frame = None
+        self.still_bmp = None
         self.reInitBuffer = False
         if self.IsShown() and self.GetSize()[0] > 0:
             self.InitBuffer()
@@ -244,7 +274,6 @@ class MixerPanel(RackModule):
 
     def DrawStrip(self, gc, control, channel_id, label, x, y):
         st = self.parent.st
-        tokens = uikit.ui()
         spec = control.GetChannel(channel_id)
         cx = x + STRIP_WIDTH / 2.0
         ground = colour(st.RACK_BG_COLOR)
@@ -367,7 +396,7 @@ class MixerPanel(RackModule):
                       tx + CAP_WIDTH / 2.0 - 4, int(capy + CAP_HEIGHT / 2.0) + 0.5)
         self.hits.append((wx.Rect(int(tx - CAP_WIDTH / 2.0 - 2), int(top - CAP_HEIGHT / 2.0),
                                   CAP_WIDTH + 4, int(FADER_HEIGHT + CAP_HEIGHT)), 'knob', hit))
-        self.DrawMeter(gc, self.levels.get(channel_id, (0.0, 0.0)), tx + 14, top, tokens)
+        self.DrawMeter(gc, channel_id, tx + 14, top)
         # its gain in dB
         gc.SetFont(get_font(uikit.MICRO, mono=True), colour(st.LCD_TEXT_COLOR))
         text = format_db(spec['gain'])
@@ -481,24 +510,36 @@ class MixerPanel(RackModule):
             self.hits.append((wx.Rect(int(cx - cell / 2.0), int(cy - EDITOR_KNOB - 8),
                                       int(cell), EDITOR_ROW - 4), 'knob', hit))
 
-    def DrawMeter(self, gc, levels, x, top, tokens):
-        # left and right, in the rack's segments (uikit.METER_*), lit from the bottom
+    def DrawMeter(self, gc, channel_id, x, top):
+        # left and right, in the rack's segments (uikit.METER_*), unlit; lit from the
+        # bottom by DrawLit
         st = self.parent.st
         unit = uikit.METER_SEGMENT + uikit.METER_GAP
         count = int(FADER_HEIGHT // unit)
-        for side, level in enumerate(levels):
-            lit = self.GetLit(level, count)
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.METER_OFF_COLOR))))
+        for side in (0, 1):
             bx = x + side * (uikit.METER_BAR + 2)
             for k in range(count):
                 sy = top + FADER_HEIGHT - (k + 1) * unit + uikit.METER_GAP
-                at = METER_LOW + (k + 0.5) / count * (METER_HIGH - METER_LOW)
-                if k < lit:
-                    fill = tokens.WARN if at > METER_WARN else tokens.ACCENT
-                else:
-                    fill = st.METER_OFF_COLOR
-                gc.SetPen(wx.NullGraphicsPen)
-                gc.SetBrush(gc.CreateBrush(wx.Brush(colour(fill))))
                 gc.DrawRectangle(bx, sy, uikit.METER_BAR, uikit.METER_SEGMENT)
+        self.meters.append((channel_id, x, top))
+
+    def DrawLit(self, dc):
+        # (on whole pixels as the unlit ones: the same pixels as GDI+ drew them)
+        tokens = uikit.ui()
+        unit = uikit.METER_SEGMENT + uikit.METER_GAP
+        count = int(FADER_HEIGHT // unit)
+        brushes = (wx.Brush(colour(tokens.ACCENT)), wx.Brush(colour(tokens.WARN)))
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        for channel_id, x, top in self.meters:
+            for side, level in enumerate(self.levels.get(channel_id, (0.0, 0.0))):
+                bx = int(x + side * (uikit.METER_BAR + 2))
+                for k in range(self.GetLit(level, count)):
+                    sy = int(top + FADER_HEIGHT - (k + 1) * unit + uikit.METER_GAP)
+                    at = METER_LOW + (k + 0.5) / count * (METER_HIGH - METER_LOW)
+                    dc.SetBrush(brushes[at > METER_WARN])
+                    dc.DrawRectangle(bx, sy, uikit.METER_BAR, uikit.METER_SEGMENT)
 
     # the insert edited
 

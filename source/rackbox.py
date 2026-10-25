@@ -503,10 +503,28 @@ class RackBar(RectBox):
         self.DirectDraw()
 
     def SetRectDraw(self, dc):
+        # its keys and its meter unlit kept as a picture: a frame (30 a second while
+        # playing) copies it and draws the loudness and the lit segments on it
+        size = tuple(self.GetSize())
+        still = (self.GetState(), self.hovered, self.downed, size, self.parent.st, uikit.ui())
+        if still != getattr(self, 'still', None) or getattr(self, 'still_bmp', None) is None:
+            bmp = wx.Bitmap(*size)
+            mdc = wx.MemoryDC(bmp)
+            mdc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+            mdc.SetBackgroundMode(wx.TRANSPARENT)
+            mdc.Clear()
+            self.DrawStill(mdc)
+            mdc.SelectObject(wx.NullBitmap)
+            self.still, self.still_bmp = still, bmp
+        dc.DrawBitmap(self.still_bmp, 0, 0)
+        self.DrawReading(dc)
+
+    def DrawStill(self, dc):
         st = self.parent.st
         tokens = uikit.ui()
         w, h = self.GetSize()
         self.hits = []
+        self.meter = None
         dc.SetPen(wx.Pen(st.RACK_EDGE_COLOR, 1))
         dc.DrawLine(0, h - 1, w, h - 1)
         gc = wx.GraphicsContext.Create(dc)
@@ -551,17 +569,10 @@ class RackBar(RectBox):
         self.DrawMeter(gc, x, w, h)
 
     def DrawMeter(self, gc, left, w, h):
-        # read here while ANALYZER is folded (its readings are the same: drawn, it reads)
-        analyzer = getattr(self.parent, 'Analyzer', None)
-        if analyzer is None:
+        # (unlit: its readings drawn by DrawReading)
+        if getattr(self.parent, 'Analyzer', None) is None:
             return
-        if analyzer.IsShown() is False:
-            analyzer.Read()
-        a = analyzer.analyzer
         st = self.parent.st
-        tokens = uikit.ui()
-        short = a.loudness[1]
-        text = '%5.1f LUFS' % short if short > -70.0 else '  --  LUFS'
         font = get_font(uikit.READOUT, mono=True)
         gc.SetFont(font, colour(st.LCD_TEXT_COLOR))
         tw, th = gc.GetTextExtent('-00.0 LUFS')[:2]
@@ -584,7 +595,6 @@ class RackBar(RectBox):
             gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
             gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.LCD_BG_COLOR))))
             gc.DrawRoundedRectangle(cx + 0.5, cy + 0.5, cw - 1, ch - 1, uikit.RADIUS)
-            gc.DrawText(text, cx + 6, cy + (ch - th) / 2.0)
         # OUT, then the channels' bars one over the other
         label = get_font(uikit.LABEL, bold=True)
         gc.SetFont(label, colour(st.RACK_LABEL_COLOR))
@@ -594,20 +604,48 @@ class RackBar(RectBox):
         count = int((width + spacing) / (segment + spacing))
         # on whole pixels (the cell's width is a text's: a segment fell between two)
         bx = int(bx)
-        warn_from = int(round((self.METER_WARN - self.METER_LOW) / -self.METER_LOW * count))
         top = cy + (ch - bar * 2 - 3) // 2
         gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.METER_OFF_COLOR))))
+        for c in (0, 1):
+            for k in range(count):
+                gc.DrawRectangle(bx + k * (segment + spacing), top + c * (bar + 3), segment,
+                                 bar)
+        self.meter = dict(lufs=lufs, text=(cx + 6, cy + (ch - th) / 2.0), bx=bx, top=top,
+                          count=count)
+
+    def DrawReading(self, dc):
+        # read here while ANALYZER is folded (its readings are the same: drawn, it reads;
+        # folded, its levels and loudness only)
+        analyzer = getattr(self.parent, 'Analyzer', None)
+        if analyzer is None:
+            return
+        if analyzer.IsShown() is False:
+            analyzer.Read(whole=False)
+        meter = getattr(self, 'meter', None)
+        if meter is None:
+            return
+        a = analyzer.analyzer
+        st = self.parent.st
+        tokens = uikit.ui()
+        if meter['lufs']:
+            short = a.loudness[1]
+            text = '%5.1f LUFS' % short if short > -70.0 else '  --  LUFS'
+            gc = wx.GraphicsContext.Create(dc)
+            if gc is not None:
+                gc.SetFont(get_font(uikit.READOUT, mono=True), colour(st.LCD_TEXT_COLOR))
+                gc.DrawText(text, *meter['text'])
+        segment, spacing, bar = uikit.METER_SEGMENT, uikit.METER_GAP, uikit.METER_BAR
+        count = meter['count']
+        warn_from = int(round((self.METER_WARN - self.METER_LOW) / -self.METER_LOW * count))
+        brushes = (wx.Brush(colour(tokens.ACCENT)), wx.Brush(colour(tokens.WARN)))
+        dc.SetPen(wx.TRANSPARENT_PEN)
         for c in (0, 1):
             share = max(min((a.peak[c] - self.METER_LOW) / -self.METER_LOW, 1.0), 0.0)
-            lit = int(round(share * count))
-            by = top + c * (bar + 3)
-            for k in range(count):
-                if k < lit:
-                    fill = tokens.WARN if k >= warn_from else tokens.ACCENT
-                else:
-                    fill = st.METER_OFF_COLOR
-                gc.SetBrush(gc.CreateBrush(wx.Brush(colour(fill))))
-                gc.DrawRectangle(bx + k * (segment + spacing), by, segment, bar)
+            by = meter['top'] + c * (bar + 3)
+            for k in range(int(round(share * count))):
+                dc.SetBrush(brushes[k >= warn_from])
+                dc.DrawRectangle(meter['bx'] + k * (segment + spacing), by, segment, bar)
 
     def GetHit(self, point):
         for rect, key, power in self.hits:
