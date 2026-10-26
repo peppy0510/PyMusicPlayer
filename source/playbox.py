@@ -18,11 +18,11 @@ import playboxlib
 import radio
 import threading
 import time
-import instruments
 import uikit
 import wx
 
 from PIL import Image
+from macroboxlib import COUNTS
 from macroboxlib import FONT_PLAYINFO
 from macroboxlib import GetPreference
 from macroboxlib import SetPreference
@@ -30,9 +30,7 @@ from macroboxlib import PaintUnpainted
 from macroboxlib import RectBox
 from analyzerbox import AnalyzerPanel
 from masterbox import MasterPanel
-from instrumentsbox import InstrumentsPanel
 from mixerbox import MixerPanel
-from pianorollbox import PianoRollPanel
 from rackbox import Rack
 from rackbox import RackBar
 from playboxlib import AudioControl
@@ -86,11 +84,8 @@ class PlayBox(RectBox, PlayBoxControl):
         # menu, or a click on the header's spectrum or scope)
         self.Master = MasterPanel(self)
         self.Analyzer = AnalyzerPanel(self)
-        self.Instruments = InstrumentsPanel(self)
         self.Mixer = MixerPanel(self)
-        self.PianoRoll = PianoRollPanel(self)
-        self.Rack = Rack(self, [self.Analyzer, self.Master, self.Mixer, self.Instruments,
-                                self.PianoRoll])
+        self.Rack = Rack(self, [self.Analyzer, self.Master, self.Mixer])
         self.RackBar = RackBar(self)
         # the header's visualizers in ANALYZER's BARS part: its children, its drawing
         # leaving them out
@@ -555,8 +550,8 @@ class PlayBoxVisualClock(threading.Thread):
         # ANALYZER before the spectrum and the scope in it (drawn after them, it painted
         # over them)
         return [getattr(parent, name, None)
-                for name in ('RackBar', 'Analyzer', 'Master', 'Mixer', 'Instruments', 'PianoRoll',
-                             'Spectrum', 'VectorScope', 'Wave', 'WaveDetail')]
+                for name in ('RackBar', 'Analyzer', 'Master', 'Mixer', 'Spectrum',
+                             'VectorScope', 'Wave', 'WaveDetail')]
 
     def GetFPS(self):
         fps = [box.buffer.fps for box in self.GetBoxes() if box is not None]
@@ -584,22 +579,12 @@ class PlayBoxVisualClock(threading.Thread):
         PaintUnpainted()
         if self.parent.IsVisualPlaying() is False:
             # stopped: ANALYZER's meters and the rack bar's fall to rest, then nothing is
-            # drawn; INSTRUMENTS goes on while they play alone (its step lit moved only
-            # with the mouse over it)
+            # drawn
             analyzer = getattr(self.parent, 'Analyzer', None)
             if analyzer is not None and analyzer.analyzer.IsSettled() is False:
                 if analyzer.IsShown():
                     analyzer.DirectDraw()
                 self.parent.RackBar.DirectDraw()
-            panel = getattr(self.parent, 'Instruments', None)
-            if panel is not None and panel.IsShown() and panel.IsActive():
-                panel.DirectDraw()
-                panel.Update()
-                # (the piano roll's step heard with them)
-                roll = getattr(self.parent, 'PianoRoll', None)
-                if roll is not None and roll.IsShown():
-                    roll.DirectDraw()
-                    roll.Update()
             # MASTER's meters drawn once more, at rest (they held their last frame)
             master_panel = getattr(self.parent, 'Master', None)
             if master_panel is not None and not getattr(self, 'master_rested', False):
@@ -607,8 +592,7 @@ class PlayBoxVisualClock(threading.Thread):
                 self.master_rested = True
             # MIXER's meters with them (and falling to rest after)
             mixer = getattr(self.parent, 'Mixer', None)
-            if mixer is not None and mixer.IsShown() and (
-                    mixer.IsActive() or panel is not None and panel.IsActive()):
+            if mixer is not None and mixer.IsShown() and mixer.IsActive():
                 mixer.DirectDraw()
                 mixer.Update()
             return
@@ -619,7 +603,7 @@ class PlayBoxVisualClock(threading.Thread):
                 # found
                 lap = time.perf_counter()
                 box.DirectDraw()
-                instruments.COUNTS['ms ' + type(box).__name__] += int(
+                COUNTS['ms ' + type(box).__name__] += int(
                     (time.perf_counter() - lap) * 1000)
                 # put on the screen now: Windows paints only when no other message
                 # waits, and with the mouse moving over the window the frames drawn

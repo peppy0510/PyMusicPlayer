@@ -182,11 +182,9 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.TempoStrip.CatchEvent(event)
         self.PlayBox.SnapButton.CatchEvent(event)
         self.PlayBox.RackBar.CatchEvent(event)
-        # (the arrow keys walking an instrument's presets: not the list's too)
-        taken = self.PlayBox.Instruments.TakesKey(event) or self.PlayBox.PianoRoll.TakesKey(event)
         self.PlayBox.Rack.CatchEvent(event)
         self.ListSash.CatchEvent(event)
-        if taken is False and self.ListBox.IsAnyListLocked() is False\
+        if self.ListBox.IsAnyListLocked() is False\
                 and self.ListSash.IsOnSize() is False:
             self.ListTab.TabList.CatchEvent(event)
             self.ListTab.SliderV.CatchEvent(event)
@@ -587,7 +585,7 @@ class MacroBoxApp(wx.App):
         self.hang_timer.Bind(wx.EVT_TIMER, lambda event: beat.__setitem__(0, time.time()))
         self.hang_timer.Start(250)
         import ctypes
-        from instruments import COUNTS
+        from macroboxlib import COUNTS
 
         def memory():
             class Counters(ctypes.Structure):

@@ -1839,9 +1839,6 @@ class MacroBoxMenuBar():
         self.Bind(wx.EVT_MENU, self.OnAutoAnalyze, self.MenuBar.itemAutoAnalyze)
         self.Bind(wx.EVT_MENU, self.OnSkipSilence, self.MenuBar.itemSkipSilence)
         self.Bind(wx.EVT_MENU, self.OnAudioMixer, self.MenuBar.itemAudioMixer)
-        for kind, item in self.MenuBar.itemInstruments.items():
-            self.Bind(wx.EVT_MENU, lambda event, kind=kind: self.OnAddDevice(kind), item)
-        self.Bind(wx.EVT_MENU, self.OnGrabBar, self.MenuBar.itemGrabBar)
         self.Bind(wx.EVT_MENU, self.OnCheckItemsConsistency, self.MenuBar.itemCheckItemsConsistency)
         self.Bind(wx.EVT_MENU, self.OnPlayerTopShow, self.MenuBar.itemPlayerTopShow)
         self.Bind(wx.EVT_MENU, self.OnPlayerSideShow, self.MenuBar.itemPlayerSideShow)
@@ -2091,22 +2088,6 @@ class MacroBoxMenuBar():
     def OnAudioMixer(self, event):
         self.MainPanel.PlayBox.AudioControl.SetMixed(event.IsChecked())
 
-    def OnAddDevice(self, kind):
-        self.MainPanel.PlayBox.Instruments.AddDevice(kind)
-
-    def OnGrabBar(self, event):
-        # into the rack's first PS-1200 (one added when there is none)
-        control = self.MainPanel.PlayBox.AudioControl
-        sampler = next((dev for dev in control.GetDevices()
-                        if control.GetDeviceKind(dev) == 'ps1200'), None)
-        if sampler is None:
-            sampler = control.AddDevice('ps1200')
-            self.MainPanel.PlayBox.Instruments.Relayout()
-        if sampler is not None:
-            control.GrabBar(sampler)
-            # (its slices and steps drawn at once)
-            self.MainPanel.PlayBox.Instruments.Repaint()
-
     def OnAutoAnalyze(self, event):
         if event.IsChecked():
             self.MainPanel.MFEATS.SetAutoAnalyzerOn()
@@ -2274,19 +2255,6 @@ class MenuBar(wx.MenuBar):
         self.menuOption.Append(self.itemAudioMixer)
         if self.parent.MainPanel.PlayBox.AudioControl.mixed:
             self.itemAudioMixer.Check()
-        # the machines to play along (in time with the song, from its next sixteenth), as
-        # on INSTRUMENTS: RT909 (drums), PS1200 (a bar of the song sliced), BT303 (bass)
-        self.menuInstruments = wx.Menu()
-        self.itemInstruments = {}
-        for kind, label in (('rt909', u'Add RT-909 Rhythm Tracker'),
-                            ('ps1200', u'Add PS-1200 Sampling Slicer'),
-                            ('bt303', u'Add BT-303 Bass Translator'),
-                            ('sy4', u'Add SY-4 Poly Synth'),
-                            ('vr1', u'Add VR-1 Virtual Analog'),
-                            ('mp60', u'Add MP-60 Pad Sampler')):
-            self.itemInstruments[kind] = self.menuInstruments.Append(wx.ID_ANY, label)
-        self.itemGrabBar = self.menuInstruments.Append(wx.ID_ANY, u'Grab This Bar to PS-1200')
-        self.menuOption.AppendSubMenu(self.menuInstruments, u'Instruments')
         self.menuOption.AppendSeparator()
 
         # self.itemMaximizeLoudness = wx.MenuItem(

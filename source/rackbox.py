@@ -19,8 +19,8 @@ from macroboxlib import SetPreference
 
 
 # the rack: the player's zone over the deck (its header and waveforms), its modules
-# one under another as a plug-in's plates (MASTER now; an analyzer, a mixer and instruments
-# to come). a module: a header (its LED, its name, its state, its own chips and its parts')
+# one under another as a plug-in's plates (MASTER, ANALYZER
+# and MIXER). a module: a header (its LED, its name, its state, its own chips and its parts')
 # over its parts, each part folded on its own, the whole module from the control row; what
 # is shown kept (each module's PREFERENCE)
 HEADER = 24
@@ -482,17 +482,11 @@ class RackBar(RectBox):
         if master is not None:
             lit = hasattr(parent, 'cue') and parent.IsLoudOn()
             keys.append((master, 'MASTER', lit, True))
-        # MIXER: lit while something sounds through it; INSTRUMENTS: lit while one plays
-        # (under the mixer: what feeds it), its name shows or folds it (as ANALYZER's)
+        # MIXER: lit while something sounds through it, its name shows or folds it (as
+        # ANALYZER's)
         mixer = getattr(parent, 'Mixer', None)
         if mixer is not None:
             keys.append((mixer, 'MIXER', mixer.shown and mixer.IsActive(), False))
-        instruments = getattr(parent, 'Instruments', None)
-        if instruments is not None:
-            keys.append((instruments, 'INSTRUMENTS', instruments.IsActive(), False))
-        roll = getattr(parent, 'PianoRoll', None)
-        if roll is not None:
-            keys.append((roll, 'PIANO ROLL', roll.shown and roll.IsActive(), False))
         return keys
 
     def GetState(self):

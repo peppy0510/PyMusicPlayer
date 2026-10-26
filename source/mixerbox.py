@@ -20,8 +20,8 @@ from rackbox import get_font
 
 
 # MIXER: a console, a strip each channel of the audio graph (AudioControl's: the deck's,
-# each device's of the rack in its order, the master's apart at the right), its effect
-# editor after them. a strip a panel, its channel's colour on its cap (a device's own), from
+# the master's apart at the right), its effect editor after them. a strip a panel, its
+# channel's colour on its cap, from
 # the top: its name, its inserts (bass_fx's effects, effects.py: an empty one's click picks
 # one, a click on one edits it at the right, a right click's menu changes, bypasses or
 # removes it; the master's first Auto Master's), its pan, DECK's SYNC (MASTER's global
@@ -39,7 +39,7 @@ INSERT_TOP = 28
 INSERT_HEIGHT = 15
 INSERT_ROWS = 3
 KNOB_RADIUS = 10
-# a device's sends (A, B: small knobs side by side), after its inserts
+# a channel's sends (A, B: small knobs side by side), after its inserts
 SEND_RADIUS = 7
 SEND_CENTER = INSERT_TOP + INSERT_ROWS * (INSERT_HEIGHT + 2) + 6 + SEND_RADIUS + 2
 PAN_CENTER = SEND_CENTER + SEND_RADIUS + 16 + KNOB_RADIUS + 6
@@ -78,9 +78,8 @@ TEMPO_WHEEL = 0.1
 EDIT_AFTER_MS = 300
 FX_DRAG = 220.0
 FX_FINE = 0.2
-# the channels' colours (a device's its plate's: instrumentsbox's)
-CAPS = dict(player='#C9CED6', master='#E8E8E8', rt909='warn', ps1200='accent',
-            bt303='#C9CED6', sy4='#A78BFA', vr1='#2DD4BF', mp60='#E3B341', send='#8B909A')
+# the channels' colours
+CAPS = dict(player='#C9CED6', master='#E8E8E8', send='#8B909A')
 # the send buses' returns (their strips before the master's)
 RETURNS = (('send A', 'RET A'), ('send B', 'RET B'))
 
@@ -131,11 +130,7 @@ class MixerPanel(RackModule):
         return getattr(self.parent, 'AudioControl', None)
 
     def GetStrips(self):
-        control = self.GetControl()
-        if control is None:
-            return (DECK,)
-        return (DECK,) + tuple((dev, control.GetDeviceLabel(dev))
-                               for dev in control.GetDevices())
+        return (DECK,)
 
     def GetReturns(self):
         control = self.GetControl()
@@ -217,8 +212,8 @@ class MixerPanel(RackModule):
         control = self.GetControl()
         if control is None:
             return
-        # the deck's and the devices' strips from the left; the returns and MASTER held at
-        # the right (a device added: not moved); the effect editor just before them
+        # the deck's strip from the left; the returns and MASTER held at the right; the
+        # effect editor just before them
         sx = x
         for channel_id, label in self.GetStrips():
             self.DrawStrip(gc, control, channel_id, label, sx, y)
@@ -261,8 +256,7 @@ class MixerPanel(RackModule):
         gc.SetBrush(gc.CreateBrush(wx.Brush(cap)))
         gc.DrawRectangle(x + 2, y + 4, STRIP_WIDTH - 4, CAP)
         # its name
-        here = channel_id in (MASTER[0], 'player') or channel_id in dict(RETURNS)\
-            or control.GetInstrument(channel_id) is not None
+        here = channel_id in (MASTER[0], 'player') or channel_id in dict(RETURNS)
         gc.SetFont(get_font(uikit.LABEL, bold=True),
                    colour(st.RACK_TEXT_COLOR if here else st.RACK_LABEL_COLOR))
         text = label
@@ -271,19 +265,6 @@ class MixerPanel(RackModule):
         tw = gc.GetTextExtent(text)[0]
         gc.DrawText(text, cx - tw / 2.0, y + NAME_TOP)
         self.DrawInserts(gc, control, channel_id, x, y, cap)
-        # its sends (a device's: to the returns' buses, after its fader)
-        if channel_id in control.GetDevices():
-            for k, (bus_id, letter) in enumerate((('send A', 'A'), ('send B', 'B'))):
-                sx = x + STRIP_WIDTH * (0.3 + 0.4 * k)
-                sy = y + SEND_CENTER
-                hit = ('send', (channel_id, bus_id))
-                self.DrawKnob(gc, sx, sy, control.GetSend(channel_id, bus_id),
-                              self.hovered == ('knob', hit), radius=SEND_RADIUS, tint=cap)
-                gc.SetFont(get_font(8, bold=True), colour(st.RACK_LABEL_COLOR))
-                lw = gc.GetTextExtent(letter)[0]
-                gc.DrawText(letter, sx - lw / 2.0, sy + SEND_RADIUS + 3)
-                self.hits.append((wx.Rect(int(sx - 13), int(sy - SEND_RADIUS - 4), 26,
-                                          SEND_RADIUS * 2 + 18), 'knob', hit))
         # its pan
         cy = y + PAN_CENTER
         hit = ('pan', channel_id)
@@ -535,17 +516,6 @@ class MixerPanel(RackModule):
         menu.Destroy()
         self.Repaint()
 
-    def SyncDevices(self):
-        '''a device's inserts shown on its panel too (INSTRUMENTS' band): the one edited
-        here edited there'''
-        panel = getattr(self.parent, 'Instruments', None)
-        if panel is None:
-            return
-        if self.editing is not None and self.editing[0] in panel.GetDevices():
-            panel.fx_picked[self.editing[0]] = self.editing[1]
-        if panel.IsShown():
-            panel.Repaint()
-
     def PutEffect(self, channel_id, index, name):
         control = self.GetControl()
         if index is None:
@@ -557,7 +527,6 @@ class MixerPanel(RackModule):
             control.SetInsertEffect(channel_id, index, name)
             self.editing = (channel_id, index)
         self.Repaint()
-        self.SyncDevices()
 
     def Bypass(self, channel_id, index):
         control = self.GetControl()
@@ -565,14 +534,12 @@ class MixerPanel(RackModule):
         chain.slots[index].SetBypass(not chain.slots[index].bypass)
         control.KeepInserts(channel_id)
         self.Repaint()
-        self.SyncDevices()
 
     def RemoveInsert(self, channel_id, index):
         self.GetControl().RemoveInsert(channel_id, index)
         if self.editing == (channel_id, index):
             self.editing = None
         self.Repaint()
-        self.SyncDevices()
 
     # handled
 
@@ -619,7 +586,6 @@ class MixerPanel(RackModule):
             if slot is not None:
                 knob = dict((k[0], k) for k in effects.get_knobs(slot.GetEffect()))[key]
                 slot.SetParam(key, effects.from_turn(knob, turn))
-                self.SyncDevices()
             return
         if kind == 'send':
             control.SetSend(key[0], key[1], turn)
@@ -637,7 +603,7 @@ class MixerPanel(RackModule):
             if self.editing is not None:
                 control.KeepInserts(self.editing[0])
         elif hit[0] in ('tempo', 'send'):
-            control.KeepInstruments()
+            control.KeepTempo()
         else:
             control.KeepChannels()
 
@@ -765,7 +731,6 @@ class MixerPanel(RackModule):
                 slot = self.GetEditedSlot()
                 if slot is not None:
                     slot.SetParam(value[1], effects.first_values(slot.GetEffect())[value[1]])
-                    self.SyncDevices()
             elif value[0] == 'send':
                 self.SetTurn(value, 0.0)
             else:
@@ -787,7 +752,6 @@ class MixerPanel(RackModule):
                 self.ShowInsertMenu(channel_id, None)
             else:
                 self.editing = (channel_id, index)
-                self.SyncDevices()
         elif kind == 'fxkey':
             if self.editing is not None:
                 channel_id, index = self.editing

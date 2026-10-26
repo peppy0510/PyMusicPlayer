@@ -9,6 +9,7 @@ email: peppy0510@hotmail.com
 
 import audio
 import bisect
+import collections
 import ctypes
 import ctypes.wintypes
 import hashlib
@@ -60,6 +61,10 @@ PRODUCT_UPDATE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/update/check/req/'
 PRODUCT_LICENSE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/license/check/req/'
 
 TITLE = '%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
+
+# DEBUG(hang): how often costly things run (mainapp's watchdog writes them); removed
+# once found
+COUNTS = collections.Counter()
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer.db'])
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer'])
 PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'settings'])
