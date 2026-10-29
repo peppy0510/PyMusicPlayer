@@ -94,7 +94,6 @@ SCRATCH_INTERVAL = 0.002
 WAVEFORM_MODES = ('vinyl', 'seek')
 
 
-
 class AudioControl(threading.Thread):
 
     def __init__(self, parent):
@@ -1599,6 +1598,9 @@ class PlayBoxControl():
 
     def SetLoudOff(self):
         self.cue.loud_on = False
+        # a kept A/B would play the original once MASTER is on again
+        if master.METERS.IsCompared():
+            master.METERS.SetCompared(False)
         self.UpdateVSTBypass()
 
     def UpdateVSTBypass(self):

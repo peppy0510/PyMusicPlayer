@@ -589,6 +589,7 @@ class PopupMenuEventCatcher():
         x, y = self.GetScreenPosition()
         x = self.pending_popup_event.x - x
         y = self.pending_popup_event.y - y
+        uikit.mark_menu_checks(self.pending_popup_event.object)
         self.PopupMenu(self.pending_popup_event.object, (x, y))
         self.pending_popup_event.object.Destroy()
         closed = getattr(self.pending_popup_event, 'closed', None)
@@ -2803,6 +2804,7 @@ class Dropdown(wx.Control):
             item = menu.AppendCheckItem(wx.ID_ANY, choice)
             item.Check(choice == self.value)
             self.Bind(wx.EVT_MENU, lambda e, k=k: self.Choose(k), item)
+        uikit.mark_menu_checks(menu)
         self.PopupMenu(menu, (0, self.GetClientSize().height))
         menu.Destroy()
 
@@ -3019,18 +3021,85 @@ class TextCtrl(wx.TextCtrl):
         return self.frame.Destroy()
 
 
-class CheckBox(wx.CheckBox):
+class CheckBox(wx.Control):
+
+    '''wx.CheckBox's GetValue, SetValue, IsChecked and EVT_CHECKBOX, drawn in the theme's
+    accent (Windows' own ignores it)'''
+
+    SIZE = 14
 
     def __init__(self, parent, id=-1, label='', pos=(-1, -1), size=(-1, 15), style=0):
-        wx.CheckBox.__init__(self, parent, id=id,
-                             label=label, pos=pos, size=size, style=style)
+        wx.Control.__init__(self, parent, id=id, pos=pos, size=(self.SIZE, self.SIZE),
+                            style=wx.BORDER_NONE | wx.WANTS_CHARS)
         self.label = label
-        self.SetDoubleBuffered(True)
-        self.SetForegroundColour(macroboxstyle.current().UI.TEXT)
-        font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_LIGHT)
-        font.SetPixelSize((6, 12))
-        font.SetFaceName(FONT_ITEM)
-        self.SetFont(font)
+        self.value = False
+        self.hover = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.SetInitialSize((self.SIZE, self.SIZE))
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_LEFT_DOWN, lambda e: (self.SetFocus(), self.Toggle()))
+        self.Bind(wx.EVT_LEFT_DCLICK, lambda e: self.Toggle())
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda e: self.SetHover(True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(False))
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
+
+    def GetBestSize(self):
+        return wx.Size(self.SIZE, self.SIZE)
+
+    def GetValue(self):
+        return self.value
+
+    IsChecked = GetValue
+
+    def SetValue(self, value):
+        self.value = bool(value)
+        self.Refresh(False)
+
+    def SetHover(self, hover):
+        self.hover = hover
+        self.Refresh(False)
+
+    def Toggle(self):
+        if not self.IsEnabled():
+            return
+        self.SetValue(not self.value)
+        event = wx.CommandEvent(wx.wxEVT_CHECKBOX, self.GetId())
+        event.SetEventObject(self)
+        event.SetInt(int(self.value))
+        self.GetEventHandler().ProcessEvent(event)
+
+    def OnKeyDown(self, event):
+        if event.GetKeyCode() == wx.WXK_SPACE:
+            self.Toggle()
+        else:
+            event.Skip()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        ui = macroboxstyle.current().UI
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        gc = wx.GraphicsContext.Create(dc)
+        if gc is None:
+            return
+        w, h = self.GetClientSize()
+        enabled = self.IsEnabled()
+        if self.value:
+            fill = edge = ui.ACCENT if enabled else ui.FIELD_EDGE
+        else:
+            fill, edge = ui.FIELD_BG, ui.FIELD_FOCUS if self.hover and enabled else ui.FIELD_EDGE
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(fill))))
+        gc.DrawRoundedRectangle(0.5, 0.5, w - 1, h - 1, 3)
+        if self.value:
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.ACCENT_FG)).Width(1.6)
+                                   .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)))
+            path = gc.CreatePath()
+            path.MoveToPoint(w * 0.24, h * 0.52)
+            path.AddLineToPoint(w * 0.43, h * 0.71)
+            path.AddLineToPoint(w * 0.77, h * 0.31)
+            gc.StrokePath(path)
 
 
 class RadioButton(wx.RadioButton):
@@ -3190,10 +3259,11 @@ class Button(wx.Control):
 
 class SegmentBar(wx.Control):
 
-    '''keys side by side, one of them chosen (a dialog's pages, in a notebook's tabs'
-    place): on_change(index) when another is chosen'''
+    '''a dialog's page tabs: on_change(index) when another is chosen'''
 
-    GAP = 2
+    GAP = 4
+    LEFT = 0
+    MARK = 2
 
     def __init__(self, parent, labels, on_change, selection=0):
         wx.Control.__init__(self, parent, style=wx.BORDER_NONE)
@@ -3209,16 +3279,16 @@ class SegmentBar(wx.Control):
 
     def GetKeyWidths(self):
         dc = wx.ClientDC(self)
-        dc.SetFont(uikit.get_font(12))
-        return [dc.GetTextExtent(label)[0] + 28 for label in self.labels]
+        dc.SetFont(uikit.get_font(12, bold=True))
+        return [dc.GetTextExtent(label)[0] + 24 for label in self.labels]
 
     def GetBestWidth(self):
         widths = self.GetKeyWidths()
-        return sum(widths) + self.GAP * (len(widths) - 1)
+        return self.LEFT + sum(widths) + self.GAP * (len(widths) - 1)
 
     def GetRects(self):
         h = self.GetClientSize().height
-        x, rects = 0, []
+        x, rects = self.LEFT, []
         for width in self.GetKeyWidths():
             rects.append(wx.Rect(x, 0, width, h))
             x += width + self.GAP
@@ -3244,9 +3314,27 @@ class SegmentBar(wx.Control):
         dc = wx.AutoBufferedPaintDC(self)
         dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
         dc.Clear()
+        ui = macroboxstyle.current().UI
+        w, h = self.GetClientSize()
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(uikit.colour(ui.BAR_LINE)))
+        dc.DrawRectangle(0, h - 1, w, 1)
         for k, rect in enumerate(self.GetRects()):
-            uikit.draw_button(dc, tuple(rect), label=self.labels[k], on=k == self.selection,
-                              hover=k == self.hovered, font=uikit.get_font(12))
+            chosen = k == self.selection
+            if self.hovered == k and not chosen:
+                dc.SetBrush(wx.Brush(uikit.colour(ui.CONTROL_BG)))
+                dc.DrawRoundedRectangle(rect.x, rect.y + 2, rect.width, rect.height - 4 - self.MARK,
+                                        uikit.RADIUS)
+            font = uikit.get_font(12, bold=chosen)
+            dc.SetFont(font)
+            dc.SetTextForeground(uikit.colour(ui.TEXT if chosen or self.hovered == k
+                                              else ui.BAR_TEXT_DIM))
+            tw, th = dc.GetTextExtent(self.labels[k])
+            dc.DrawText(self.labels[k], rect.x + (rect.width - tw) // 2,
+                        int(uikit.get_caps_top(font, 0, h - self.MARK)))
+            if chosen:
+                dc.SetBrush(wx.Brush(uikit.colour(ui.ACCENT)))
+                dc.DrawRectangle(rect.x, h - self.MARK, rect.width, self.MARK)
 
 
 class FancyButton(wx.Button):

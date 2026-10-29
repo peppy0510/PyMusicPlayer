@@ -12,6 +12,7 @@ import macroboxstyle
 import os
 import threading
 import time
+import uikit
 import webbrowser
 import webinfo
 import wx
@@ -517,15 +518,18 @@ class MacroBoxPreference():
         accent = GetPreference('accent_color')
         return accent if accent in macroboxstyle.ACCENT_NAMES else macroboxstyle.DEFAULT_ACCENT
 
+    def MarkMenuChecks(self):
+        for k in range(self.MenuBar.GetMenuCount()):
+            uikit.mark_menu_checks(self.MenuBar.GetMenu(k))
+
     def SetAccentColor(self, accent):
-        # the scheme loaded again with it, everything drawn again on it (its pictures kept
-        # on the style's colours made again: uikit.get_style_version)
         SetPreference('accent_color', accent)
         self.st = macroboxstyle.load(GetPreference('color_scheme'), rgbstyle='dec',
                                      accent=accent)
         panel = self.MainPanel
         panel.ListBox.st = self.st.LISTBOX
         panel.PlayBox.st = self.st.PLAYBOX
+        self.MarkMenuChecks()
         for window in [self] + list(self.GetChildren()):
             self.RedrawAll(window)
         self.Refresh()
@@ -1510,7 +1514,6 @@ class PreferenceMFEATSPanel(DialogPanel):
 
     def OnAccentColor(self, event):
         self.parent.parent.parent.SetAccentColor(self.AccentColor.GetValue())
-        # the dialog too (its buttons and fields on the accent)
         self.GetTopLevelParent().Refresh()
         for window in self.GetTopLevelParent().GetChildren():
             self.parent.parent.parent.RedrawAll(window)
@@ -1724,11 +1727,13 @@ class PreferenceWebInfoPanel(DialogPanel):
             label = u'fpcalc.exe not fetched yet: it is fetched when the player starts.'
         else:
             label = u'fpcalc: %s' % (fpcalc)
-        StaticText(self, label=label, pos=(DIALOG_PAD, offset), size=(470, -1))
-        offset += DIALOG_ROW + DIALOG_GAP
+        text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
+        text.SetSize(text.GetBestSize())
+        offset += text.GetSize().height + DIALOG_GAP
         label = u'Keys stay in this PC\'s user folder. Only the tracks you look up are sent,'
         label += u'\nartist and title to Discogs and Last.fm, a fingerprint to AcoustID.'
-        StaticText(self, label=label, pos=(DIALOG_PAD, offset), size=(470, 40))
+        text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
+        text.SetSize(text.GetBestSize())
         # its names' column as wide as its widest (the dialogs' spacing)
         fit_name_column(self, DIALOG_PAD, 200)
 
@@ -1841,7 +1846,7 @@ class PreferenceBox(DialogBox):
         # the dialogs' spacing: the pages' keys PAD in, a page under them (its rows PAD
         # in from its top and sides), the footer under it; as tall as its tallest page's
         # rows and PAD under them
-        top = DIALOG_PAD + 24
+        top = DIALOG_PAD // 2 + self.TABS
         pages = (self.Notebook.MFEATSPanel, self.Notebook.ShortcutKeyPanel,
                  self.Notebook.WebInfoPanel)
         page = max(max(c.GetRect().GetBottom() + 1 for c in p.GetChildren()) for p in pages)
@@ -1853,15 +1858,18 @@ class PreferenceBox(DialogBox):
                 w = min(w, c.GetBestSize().width)
             return c.GetPosition().x + w
         wide = max(max(right(c) for c in p.GetChildren()) for p in pages)
-        width = max(wide + DIALOG_PAD, self.Pages.GetBestWidth() + DIALOG_PAD * 2)
+        width = max(wide + DIALOG_PAD, self.Pages.GetBestWidth() + DIALOG_PAD)
         self.SetClientSize((width, top + page + DIALOG_PAD + self.GetFooterHeight()))
         width, height = self.GetClientSize()
-        self.Pages.SetRect((DIALOG_PAD, DIALOG_PAD, self.Pages.GetBestWidth(), 24))
+        self.Pages.LEFT = DIALOG_PAD
+        self.Pages.SetRect((0, DIALOG_PAD // 2, width, self.TABS))
         self.Notebook.SetRect((0, top, width, height - top - self.GetFooterHeight()))
         self.Notebook.OnSize(None)
         self.PlaceButtons(right=(self.CloseButton,))
         # self.Notebook.SetRect((5, 5, width - 8, 360))
         # print(width, height, self.Notebook.GetClientSize())
+
+    TABS = 32
 
     def OnClose(self, event):
         self.Hide()
@@ -1983,6 +1991,8 @@ class MacroBoxMenuBar():
 
     def __init__(self):
         self.MenuBar = MenuBar(self)
+        # (wx.Frame's MenuBar property: assigning it sets the frame's menu bar)
+        self.MarkMenuChecks()
         # self.SetMenuBar(self.MenuBar)
         self.default_style = self.GetWindowStyle()
         self.Bind(wx.EVT_MENU, self.OnExportTracklist, self.MenuBar.itemExportTracklist)
@@ -2113,20 +2123,19 @@ class MacroBoxMenuBar():
         SetPreference('listbox_line_space', height)
         listbox.List.reInitBuffer = True
         listbox.reInitBuffer = True
+        self.CheckRowHeightItem()
 
     def OnWaveformHeight(self, event):
         self.SetWaveformHeight(*self.MenuBar.waveHeightItems[event.GetId()])
 
     def CheckWaveformHeightItems(self):
         for itemId, (kind, height) in self.MenuBar.waveHeightItems.items():
-            if height == self.waveform_heights[kind]:
-                self.MenuBar.menuView.Check(itemId, True)
+            self.MenuBar.menuView.Check(itemId, height == self.waveform_heights[kind])
 
     def CheckRowHeightItem(self):
         height = self.MainPanel.ListBox.line_space
         for itemId, value in self.MenuBar.rowHeightItems.items():
-            if value == height:
-                self.MenuBar.menuRowHeight.Check(itemId, True)
+            self.MenuBar.menuRowHeight.Check(itemId, value == height)
 
     def ColorThemeMap(self):
         color_themes = list()
@@ -2378,7 +2387,7 @@ class MenuBar(wx.MenuBar):
         for kind, label in (('whole', 'Waveform Height'), ('detail', 'Zoomed Waveform Height')):
             menu = wx.Menu()
             for height in WAVE_HEIGHTS:
-                item = menu.AppendRadioItem(wx.ID_ANY, '%d px' % (height))
+                item = menu.AppendCheckItem(wx.ID_ANY, '%d px' % (height))
                 self.waveHeightItems[item.GetId()] = (kind, height)
             self.menuView.AppendSubMenu(menu, label)
         self.menuView.AppendSeparator()
@@ -2394,7 +2403,7 @@ class MenuBar(wx.MenuBar):
         self.menuRowHeight = wx.Menu()
         self.rowHeightItems = dict()
         for height in ROW_HEIGHTS:
-            item = self.menuRowHeight.AppendRadioItem(wx.ID_ANY, '%d px' % (height))
+            item = self.menuRowHeight.AppendCheckItem(wx.ID_ANY, '%d px' % (height))
             self.rowHeightItems[item.GetId()] = height
         self.menuView.AppendSubMenu(self.menuRowHeight, 'Row Height')
 
@@ -2432,7 +2441,7 @@ class MenuBar(wx.MenuBar):
         self.itemShortLengthMenu = wx.Menu()
         self.shortLengthItems = []
         for length, label in playbox.RADIO_EDIT_LENGTHS:
-            item = self.itemShortLengthMenu.AppendRadioItem(wx.ID_ANY, label)
+            item = self.itemShortLengthMenu.AppendCheckItem(wx.ID_ANY, label)
             item.Check(length == playbox.GetRadioEditLength())
             self.shortLengthItems.append((item, length))
             self.parent.Bind(wx.EVT_MENU, lambda e, length=length:

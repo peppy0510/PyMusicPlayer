@@ -102,10 +102,10 @@ class MasterPanel(RackModule):
         return master.METERS.Read(self.GetVst()) if self.IsActive() else None
 
     def GetState(self):
-        if master.METERS.IsCompared():
-            return ('A/B: ORIGINAL', True)
         if not self.IsActive():
             return ('BYPASSED', False)
+        if master.METERS.IsCompared():
+            return ('A/B: ORIGINAL', True)
         # its AGC's and limiter's meters small in place of ACTIVE (their numbers alone before,
         # "a meter, small, would be good", the user)
         if self.IsSummaryShown():
@@ -247,10 +247,13 @@ class MasterPanel(RackModule):
 
     def GetChips(self):
         # A/B: the original at the same loudness, warned while it is heard
-        return [('ab', 'A/B', master.METERS.IsCompared(), True)]
+        return [('ab', 'A/B', self.IsActive() and master.METERS.IsCompared(), True)]
+
+    def IsChipEnabled(self, key):
+        return key != 'ab' or self.IsActive()
 
     def OnChip(self, key):
-        if key == 'ab':
+        if key == 'ab' and self.IsChipEnabled(key):
             master.METERS.SetCompared(not master.METERS.IsCompared())
             self.reInitBuffer = True
 

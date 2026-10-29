@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uikit
+import urllib.parse
 import webbrowser
 import webinfo
 import wx
@@ -532,6 +533,12 @@ class ListBoxList(RectBox):
             # (the end of the list in sight: the ground under it moved too)
             return False
         changed = [item for item, row in rows.items() if last_rows.get(item) != row]
+        if dy != 0:
+            # rows cut by the edge in the last picture came in with the old strip under them
+            strip = (h + dy, h) if dy < 0 else (0, dy)
+            changed += [item for item in rows if item not in changed
+                        and item * row_size + vpy < strip[1]
+                        and item * row_size + vpy + row_size > strip[0]]
         if dy == 0 and len(changed) == 0:
             return True
         dc = wx.BufferedDC(None, self.buffer.bmp)
@@ -956,7 +963,7 @@ class ListBoxList(RectBox):
     WAVE_DIM = 0.55
 
     # between the star's right and the order's first digit
-    ORDER_GAP = 6
+    ORDER_GAP = 10
 
     def KeepOrderRoom(self, columns, orderIdx, digit, margin):
         # the # column widened when its numbers would run into the marks before them (the
@@ -2568,7 +2575,7 @@ class ListBoxSearch(RectBox):
                 and self.IsInRect(self.chooser_rect, point):
             menu = wx.Menu()
             for label in self.SearchComboFilter.GetStrings():
-                item = menu.AppendRadioItem(wx.ID_ANY, label)
+                item = menu.AppendCheckItem(wx.ID_ANY, label)
                 item.Check(label == self.SearchComboFilter.GetStringSelection())
                 menu.Bind(wx.EVT_MENU, lambda e, label=label: self.SearchComboFilter.Choose(label),
                           item)
@@ -3234,6 +3241,7 @@ class ItemEditBox(DialogBox):
         look = menu.Append(wx.ID_ANY, 'Look Up...')
         look.Enable(self.LookUpButton.IsEnabled())
         menu.Bind(wx.EVT_MENU, self.OnLookUp, look)
+        uikit.mark_menu_checks(menu)
         window.PopupMenu(menu)
         menu.Destroy()
 
@@ -3481,6 +3489,7 @@ class ItemEditBox(DialogBox):
         add('Copy', text.Copy, text.CanCopy())
         add('Paste', text.Paste, text.CanPaste())
         add('Select All', text.SelectAll)
+        uikit.mark_menu_checks(menu)
         text.frame.PopupMenu(menu)
         menu.Destroy()
 
@@ -3807,6 +3816,315 @@ class LibrarySearchBox(DialogBox):
         self.Destroy()
 
 
+class LookUpList(wx.Window):
+
+    '''columns: [(title, width, flexible)]; cells(row): its texts; picture(row, column): a
+    bitmap drawn before the cell's text, or None'''
+
+    HEADER = 26
+    ROW = 26
+    PAD = 8
+    PICTURE_GAP = 6
+    BAR = 3
+    SCROLL = 6
+
+    def __init__(self, parent, columns, cells, picture=None):
+        wx.Window.__init__(self, parent, style=wx.WANTS_CHARS | wx.BORDER_NONE)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.columns = columns
+        self.cells = cells
+        self.picture = picture
+        self.count = 0
+        self.selected = -1
+        self.offset = 0
+        self.sort = None
+        self.drag = None
+        self.widths = []
+        self.hidden = set()
+        # told: on_select(row), on_activate(row), on_menu(row, column), on_sort(column),
+        # on_columns(hidden)
+        self.on_select = self.on_activate = self.on_menu = self.on_sort = None
+        self.on_columns = None
+        frame = wx.GetApp().GetTopWindow()
+        listbox = getattr(getattr(frame, 'MainPanel', None), 'ListBox', None)
+        self.font = getattr(listbox, 'font', None) or self.GetFont()
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_SIZE, self.OnSize)
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
+        self.Bind(wx.EVT_LEFT_DCLICK, self.OnLeftDClick)
+        self.Bind(wx.EVT_LEFT_UP, self.OnLeftUp)
+        self.Bind(wx.EVT_MOTION, self.OnMotion)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: setattr(self, 'drag', None))
+        self.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
+        self.Bind(wx.EVT_MOUSEWHEEL, self.OnWheel)
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
+
+    def SetCount(self, count):
+        self.count = count
+        self.selected = min(self.selected, count - 1)
+        self.Scroll(self.offset)
+
+    def GetSelected(self):
+        return self.selected
+
+    def Select(self, row, tell=False):
+        if not 0 <= row < self.count:
+            return
+        self.selected = row
+        self.EnsureVisible(row)
+        self.Refresh(False)
+        if tell and self.on_select:
+            self.on_select(row)
+
+    def SetSort(self, column, ascending):
+        self.sort = (column, ascending)
+        self.Refresh(False)
+
+    def GetView(self):
+        return max(self.GetClientSize().height - self.HEADER, 0)
+
+    def Scroll(self, offset):
+        most = max(self.count * self.ROW - self.GetView(), 0)
+        self.offset = int(min(max(offset, 0), most))
+        self.Refresh(False)
+
+    def EnsureVisible(self, row):
+        top, bottom = row * self.ROW, (row + 1) * self.ROW
+        if top < self.offset:
+            self.Scroll(top)
+        elif bottom > self.offset + self.GetView():
+            self.Scroll(bottom - self.GetView())
+
+    def GetWidths(self, width):
+        shown = [k not in self.hidden for k in range(len(self.columns))]
+        fixed = sum(w for (_, w, flexible), on in zip(self.columns, shown) if on and not flexible)
+        shares = sum(w for (_, w, flexible), on in zip(self.columns, shown) if on and flexible)
+        room = max(width - fixed, 0)
+        widths = [0 if not on else int(room * w / shares) if flexible else w
+                  for (_, w, flexible), on in zip(self.columns, shown)]
+        last = max((k for k, on in enumerate(shown) if on), default=None)
+        if last is not None:
+            widths[last] += width - sum(widths)
+        return widths
+
+    def SetHidden(self, hidden):
+        hidden = set(k for k in hidden if 0 <= k < len(self.columns))
+        if len(hidden) < len(self.columns):
+            self.hidden = hidden
+            self.Refresh(False)
+
+    def ShowColumnMenu(self):
+        menu = wx.Menu()
+        for k, (title, _, _) in enumerate(self.columns):
+            item = menu.AppendCheckItem(wx.ID_ANY, title)
+            item.Check(k not in self.hidden)
+            item.Enable(k in self.hidden or len(self.hidden) < len(self.columns) - 1)
+            menu.Bind(wx.EVT_MENU, lambda e, k=k: self.ToggleColumn(k), item)
+        uikit.mark_menu_checks(menu)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def ToggleColumn(self, k):
+        self.SetHidden(self.hidden ^ {k})
+        if self.on_columns:
+            self.on_columns(set(self.hidden))
+
+    def HitTest(self, point):
+        # (row or -1, column or -1); the header's row -2
+        x, y = point
+        column, left = -1, 0
+        for k, w in enumerate(self.widths):
+            if left <= x < left + w:
+                column = k
+                break
+            left += w
+        if y < self.HEADER:
+            return -2, column
+        row = int((y - self.HEADER + self.offset) // self.ROW)
+        return (row if 0 <= row < self.count else -1), column
+
+    def GetThumb(self):
+        view, total = self.GetView(), self.count * self.ROW
+        if total <= view or view <= 0:
+            return None
+        w = self.GetClientSize().width
+        height = max(int(view * view / total), 24)
+        top = self.HEADER + int((view - height) * self.offset / (total - view))
+        return wx.Rect(w - self.SCROLL - 2, top, self.SCROLL, height)
+
+    def OnSize(self, event):
+        self.Scroll(self.offset)
+        event.Skip()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        st = macroboxstyle.current().LISTBOX
+        w, h = self.GetClientSize()
+        self.widths = self.GetWidths(w)
+        dc.SetBackground(wx.Brush(wx.Colour(*st.LIST_BG_COLOR)))
+        dc.Clear()
+        self.DrawRows(dc, st, w, h)
+        self.DrawHeader(dc, st, w)
+        thumb = self.GetThumb()
+        if thumb is not None:
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetBrush(wx.Brush(wx.Colour(*st.SCROLLBAR_PN_COLOR)))
+            dc.DrawRoundedRectangle(thumb, self.SCROLL / 2.0)
+
+    def DrawRows(self, dc, st, w, h):
+        ct = st.LIST_BG_CONTRAST
+        grounds = [wx.Colour(*[min(max(v + d, 0), 255) for v in st.LIST_BG_COLOR[:3]])
+                   for d in (-ct, ct)]
+        dc.SetFont(self.font)
+        th = dc.GetTextExtent('Ag')[1]
+        first = self.offset // self.ROW
+        last = min(self.count, (self.offset + self.GetView()) // self.ROW + 1)
+        dc.SetClippingRegion(0, self.HEADER, w, h - self.HEADER)
+        for row in range(first, last):
+            y = self.HEADER + row * self.ROW - self.offset
+            selected = row == self.selected
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetBrush(wx.Brush(wx.Colour(*st.SELECTED_BG_COLOR) if selected
+                                 else grounds[row % 2]))
+            dc.DrawRectangle(0, y, w, self.ROW)
+            if selected:
+                dc.SetBrush(wx.Brush(wx.Colour(*st.SELECTED_BAR_COLOR)))
+                dc.DrawRectangle(0, y, self.BAR, self.ROW)
+            dc.SetTextForeground(wx.Colour(*(st.SELECTED_FG_COLOR if selected
+                                             else st.LIST_FG_COLOR)))
+            x = 0
+            for column, (text, width) in enumerate(zip(self.cells(row), self.widths)):
+                if not width:
+                    continue
+                bitmap = self.picture(row, column) if self.picture else None
+                left = x + self.PAD
+                if bitmap is not None and bitmap.IsOk():
+                    dc.DrawBitmap(bitmap, left, y + (self.ROW - bitmap.GetHeight()) // 2)
+                    left += bitmap.GetWidth() + self.PICTURE_GAP
+                if text:
+                    shown = wx.Control.Ellipsize(str(text), dc, wx.ELLIPSIZE_END,
+                                                 max(x + width - self.PAD - left, 1))
+                    dc.DrawText(shown, left, y + (self.ROW - th) // 2)
+                x += width
+        dc.DestroyClippingRegion()
+
+    def DrawHeader(self, dc, st, w):
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(wx.Colour(*st.HEADER_BG_COLOR)))
+        dc.DrawRectangle(0, 0, w, self.HEADER)
+        font = uikit.get_font(10)
+        dc.SetFont(font)
+        top = int(round(uikit.get_caps_top(font, 0, self.HEADER)))
+        dim = [int(v * 0.62 + g * 0.38) for v, g in zip(st.HEADER_FG_COLOR, st.HEADER_BG_COLOR)]
+        dc.SetTextForeground(wx.Colour(*dim))
+        dc.SetPen(wx.Pen(wx.Colour(*st.HEADER_PN_COLOR), 1))
+        dc.DrawLine(0, self.HEADER - 1, w, self.HEADER - 1)
+        x = 0
+        last = max((k for k, w in enumerate(self.widths) if w), default=-1)
+        for column, ((title, _, _), width) in enumerate(zip(self.columns, self.widths)):
+            if not width:
+                continue
+            sorted_here = self.sort is not None and self.sort[0] == column
+            room = width - self.PAD * 2 - (12 if sorted_here else 0)
+            dc.DrawText(wx.Control.Ellipsize(title.upper(), dc, wx.ELLIPSIZE_END,
+                                             max(room, 1)), x + self.PAD, top)
+            if sorted_here:
+                cx, cy, size = x + width - self.PAD - 3, self.HEADER // 2, 3
+                down = [(cx - size, cy - 1), (cx + size, cy - 1), (cx, cy + 2)]
+                up = [(cx - size, cy + 2), (cx + size, cy + 2), (cx, cy - 1)]
+                points = up if self.sort[1] else down
+                dc.SetBrush(wx.Brush(wx.Colour(*st.HEADER_FG_COLOR)))
+                dc.SetPen(wx.Pen(wx.Colour(*st.HEADER_FG_COLOR), 1))
+                dc.DrawPolygon(points)
+                dc.SetPen(wx.Pen(wx.Colour(*st.HEADER_PN_COLOR), 1))
+            x += width
+            if column < last:
+                dc.DrawLine(x, 5, x, self.HEADER - 5)
+
+    def OnLeftDown(self, event):
+        self.SetFocus()
+        thumb = self.GetThumb()
+        if thumb is not None and event.GetX() >= thumb.x - 2:
+            if thumb.Contains(event.GetPosition()):
+                self.drag = (event.GetY(), self.offset)
+                self.CaptureMouse()
+            else:
+                page = self.GetView() if event.GetY() > thumb.y else -self.GetView()
+                self.Scroll(self.offset + page)
+            return
+        row, column = self.HitTest(event.GetPosition())
+        if row == -2:
+            if column >= 0 and self.on_sort:
+                self.on_sort(column)
+        elif row >= 0:
+            self.Select(row, tell=True)
+
+    def OnLeftUp(self, event):
+        if self.drag is not None:
+            self.drag = None
+            if self.HasCapture():
+                self.ReleaseMouse()
+
+    def OnMotion(self, event):
+        if self.drag is None or not event.LeftIsDown():
+            return
+        thumb = self.GetThumb()
+        if thumb is None:
+            return
+        y, offset = self.drag
+        total, view = self.count * self.ROW, self.GetView()
+        moved = (event.GetY() - y) * (total - view) / max(view - thumb.height, 1)
+        self.Scroll(offset + moved)
+
+    def OnLeftDClick(self, event):
+        row, _ = self.HitTest(event.GetPosition())
+        if row >= 0 and self.on_activate:
+            self.Select(row)
+            self.on_activate(row)
+
+    def OnRightDown(self, event):
+        self.SetFocus()
+        row, column = self.HitTest(event.GetPosition())
+        if row == -2:
+            self.ShowColumnMenu()
+        elif row >= 0:
+            self.Select(row, tell=True)
+            if self.on_menu:
+                self.on_menu(row, column)
+
+    def OnWheel(self, event):
+        self.Scroll(self.offset - event.GetWheelRotation() / 120.0 * 3 * self.ROW)
+
+    TRACK_MOVES = {'previous_track': -1, 'next_track': 1}
+
+    def GetTrackMove(self, event):
+        frame = wx.GetApp().GetTopWindow()
+        if not hasattr(frame, 'GetNameSpaceByRawKeyFlag'):
+            return None
+        namespace = frame.GetNameSpaceByRawKeyFlag(
+            event.GetRawKeyFlags(), event.CmdDown() or event.ControlDown(), event.ShiftDown())
+        return self.TRACK_MOVES.get(namespace)
+
+    def OnKeyDown(self, event):
+        key = event.GetKeyCode()
+        page = max(self.GetView() // self.ROW - 1, 1)
+        moves = {wx.WXK_UP: -1, wx.WXK_DOWN: 1, wx.WXK_PAGEUP: -page, wx.WXK_PAGEDOWN: page}
+        track = self.GetTrackMove(event)
+        if track is not None:
+            self.Select(min(max(self.selected + track, 0), self.count - 1), tell=True)
+        elif key in moves:
+            self.Select(min(max(self.selected + moves[key], 0), self.count - 1), tell=True)
+        elif key == wx.WXK_HOME:
+            self.Select(0, tell=True)
+        elif key == wx.WXK_END:
+            self.Select(self.count - 1, tell=True)
+        elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+            if self.selected >= 0 and self.on_activate:
+                self.on_activate(self.selected)
+        else:
+            event.Skip()
+
+
 class WebInfoBox(DialogBox):
 
     COVER = 200
@@ -3836,13 +4154,13 @@ class WebInfoBox(DialogBox):
         self.SetClientSize((self.GetClientSize().width, DIALOG_PAD + self.COVER + DIALOG_GAP
                             + 18 + DIALOG_PAD + self.GetFooterHeight()))
         width, height = self.GetClientSize()
-        self.List = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        # (Cover: none, - ; fetching, ... ; its size; failed)
-        columns = (('Source', 65), ('Cover', 75), ('Artist', 120), ('Title', 130),
-                   ('Album', 110), ('Release', 170), ('Genre', 80), ('Length', 50),
-                   ('Year', 45), ('Score', 45))
-        for i, (title, column_width) in enumerate(columns):
-            self.List.InsertColumn(i, title, width=column_width)
+        # (Cover: none -, fetching ..., failed Failed)
+        columns = (('Source', 72, False), ('Cover', 118, False), ('Artist', 120, True),
+                   ('Title', 130, True), ('Album', 110, True), ('Release', 170, True),
+                   ('Genre', 90, False), ('Length', 64, False), ('Year', 62, False),
+                   ('Score', 64, False))
+        self.List = LookUpList(self, columns, self.GetRowCells, self.GetRowPicture)
+        self.thumbs = dict()
         # the rows in the order shown, each an index into candidates (Apply and the menu
         # are told by it): a header clicked sorts them, again the other way (the user)
         self.order = list(range(len(candidates)))
@@ -3850,13 +4168,16 @@ class WebInfoBox(DialogBox):
         self.sort_ascending = True
         # the Cover column's text by address, for a row a sort has moved
         self.cover_cells = dict()
-        for i in range(len(candidates)):
-            self.List.InsertItem(i, '')
-        self.FillRows()
-        self.List.Bind(wx.EVT_LIST_COL_CLICK, self.OnColumnClick)
-        self.List.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnApply)
-        self.List.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.OnRowMenu)
-        self.List.Bind(wx.EVT_LIST_ITEM_SELECTED, self.OnSelected)
+        self.List.SetCount(len(candidates))
+        self.List.on_sort = self.OnColumnClick
+        self.List.on_activate = lambda row: self.OnApply(None)
+        self.List.on_menu = self.OnRowMenu
+        self.List.on_select = self.OnSelected
+        titles = [title for title, _, _ in columns]
+        hidden = GetPreference('lookup_hidden_columns') or []
+        self.List.SetHidden([titles.index(v) for v in hidden if v in titles])
+        self.List.on_columns = lambda hidden: SetPreference(
+            'lookup_hidden_columns', [titles[k] for k in sorted(hidden)])
         self.Cover = wx.StaticBitmap(self, bitmap=wx.Bitmap(self.COVER, self.COVER))
         self.CoverText = StaticText(self, label='', style=wx.ALIGN_CENTER)
         self.ApplyButton = Button(self, label='Apply', primary=True)
@@ -3877,7 +4198,14 @@ class WebInfoBox(DialogBox):
             StaticText(self, label=' / '.join(errors),
                        pos=(DIALOG_PAD, bottom - DIALOG_ROW + 3),
                        size=(cx - DIALOG_PAD * 2, 18))
-        top = self.PlaceButtons(right=(self.ApplyButton, self.CancelButton))
+        self.PageButton = Button(self, label='Open Page')
+        self.PageButton.Bind(wx.EVT_BUTTON, lambda e: self.OpenPage(self.GetChosen()))
+        self.PageButton.SetToolTip(wx.ToolTip('Open the chosen release on its service'))
+        self.YouTubeButton = Button(self, label='YouTube')
+        self.YouTubeButton.Bind(wx.EVT_BUTTON, lambda e: self.SearchYouTube(self.GetChosen()))
+        self.YouTubeButton.SetToolTip(wx.ToolTip('Look for its artist and title on YouTube'))
+        top = self.PlaceButtons(right=(self.PageButton, self.YouTubeButton, self.ApplyButton,
+                                       self.CancelButton))
         # what Apply takes from the row, each field on its own (Tags, the four together,
         # before: the user), its cover; kept for the next Look Up (a field not set yet as
         # Tags was)
@@ -3893,7 +4221,8 @@ class WebInfoBox(DialogBox):
             x += used + DIALOG_PAD
         self.candidates_found = bool(candidates)
         if candidates:
-            self.List.Select(0)
+            self.List.Select(0, tell=True)
+            self.List.SetFocus()
         self.SetApply()
         if any(v['image'] for v in candidates):
             threading.Thread(target=self.FetchCovers, daemon=True).start()
@@ -3908,10 +4237,16 @@ class WebInfoBox(DialogBox):
         return (v['source'], cover, v['artist'], v['title'], v['album'], v['release'],
                 v['genre'], webinfo.format_duration(v['duration']), v['year'], score)
 
+    def GetRowCells(self, row):
+        return self.GetRowValues(self.order[row])
+
+    def GetRowPicture(self, row, column):
+        if column != 1:
+            return None
+        return self.thumbs.get(self.candidates[self.order[row]]['image'])
+
     def FillRows(self):
-        for row, k in enumerate(self.order):
-            for column, value in enumerate(self.GetRowValues(k)):
-                self.List.SetItem(row, column, value)
+        self.List.Refresh(False)
 
     def GetSortKey(self, k, column):
         # Length, Year and Score as numbers, Cover by the picture's size, the rest as text
@@ -3931,35 +4266,27 @@ class WebInfoBox(DialogBox):
             return int(w) * int(h)
         return text.casefold() if text else None
 
-    def OnColumnClick(self, event):
-        column = event.GetColumn()
+    def OnColumnClick(self, column):
         if column < 0:
             return
         ascending = not self.sort_ascending if column == self.sort_column else True
         self.sort_column, self.sort_ascending = column, ascending
-        row = self.List.GetFirstSelected()
+        row = self.List.GetSelected()
         chosen = self.order[row] if row >= 0 else None
         keys = dict((k, self.GetSortKey(k, column)) for k in self.order)
         present = sorted([k for k in self.order if keys[k] is not None], key=keys.get,
                          reverse=not ascending)
         self.order = present + [k for k in self.order if keys[k] is None]
-        self.FillRows()
-        if hasattr(self.List, 'ShowSortIndicator'):
-            self.List.ShowSortIndicator(column, ascending)
+        self.List.SetSort(column, ascending)
         # the chosen row stays chosen where it has moved to
         if chosen is not None:
-            self.List.Select(row, 0)
-            row = self.order.index(chosen)
-            self.List.Select(row)
-            self.List.Focus(row)
-            self.List.EnsureVisible(row)
+            self.List.Select(self.order.index(chosen))
+        self.FillRows()
 
-    def OnRowMenu(self, event):
+    def OnRowMenu(self, idx, column):
         # a row's menu: its values put in the editor's fields one at a time, the cell under
         # the pointer copied, its page opened (the right-click opened the page alone)
-        idx = event.GetIndex()
         row = self.candidates[self.order[idx]]
-        _, _, column = self.List.HitTestSubItem(event.GetPoint())
         menu = wx.Menu()
 
         def add(name, action, enable=True):
@@ -3977,10 +4304,13 @@ class WebInfoBox(DialogBox):
                 lambda key=key, value=value: self.use(key.capitalize(), value),
                 self.use is not None)
         menu.AppendSeparator()
-        cell = self.List.GetItemText(idx, column) if column >= 0 else ''
+        cell = self.GetRowCells(idx)[column] if column >= 0 else ''
         add('Copy "%s"' % (cell if len(cell) <= 40 else cell[:37] + '...') if cell else 'Copy',
             lambda: self.CopyText(cell), bool(cell))
-        add('Open Source Page', lambda: webbrowser.open(row['url']), bool(row['url']))
+        add('Open Source Page', lambda: self.OpenPage(row), bool(row['url']))
+        add('Search on YouTube', lambda: self.SearchYouTube(row),
+            bool(row['artist'] or row['title']))
+        uikit.mark_menu_checks(menu)
         self.List.PopupMenu(menu)
         menu.Destroy()
 
@@ -3996,7 +4326,7 @@ class WebInfoBox(DialogBox):
         self.ApplyButton.Enable(self.candidates_found and any(self.apply.values()))
 
     def OnApply(self, event):
-        idx = self.List.GetFirstSelected()
+        idx = self.List.GetSelected()
         if idx < 0 or not any(self.apply.values()):
             return
         self.selected = self.order[idx]
@@ -4027,15 +4357,48 @@ class WebInfoBox(DialogBox):
         dc.SelectObject(wx.NullBitmap)
         return bmp, None
 
+    def MakeThumb(self, data):
+        side = LookUpList.ROW - 6
+        try:
+            image = wx.Image(io.BytesIO(data))
+        except Exception:
+            return None
+        if not image.IsOk():
+            return None
+        w, h = image.GetSize()
+        scale = min(side / w, side / h)
+        return wx.Bitmap(image.Scale(max(1, int(w * scale)), max(1, int(h * scale)),
+                                     wx.IMAGE_QUALITY_HIGH))
+
     def SetCover(self, data, label, bitmap=None):
         self.Cover.SetBitmap(bitmap or self.MakeCover(data)[0])
         self.CoverText.SetLabel(label)
 
-    def OnSelected(self, event):
+    def OnSelected(self, row):
         # its cover at once when fetched, else fetched next
-        idx = self.order[event.GetIndex()]
+        idx = self.order[row]
         self.cover_first = idx
         self.ShowCover(idx)
+        chosen = self.candidates[idx]
+        if hasattr(self, 'PageButton'):
+            self.PageButton.Enable(bool(chosen['url']))
+            self.YouTubeButton.Enable(bool(chosen['artist'] or chosen['title']))
+
+    def GetChosen(self):
+        row = self.List.GetSelected()
+        return self.candidates[self.order[row]] if row >= 0 else None
+
+    def OpenPage(self, chosen):
+        if chosen and chosen['url']:
+            webbrowser.open(chosen['url'])
+
+    def GetYouTubeURL(self, chosen):
+        words = ' '.join(v for v in (chosen['artist'], chosen['title']) if v)
+        return 'https://www.youtube.com/results?search_query=' + urllib.parse.quote_plus(words)
+
+    def SearchYouTube(self, chosen):
+        if chosen and (chosen['artist'] or chosen['title']):
+            webbrowser.open(self.GetYouTubeURL(chosen))
 
     def ShowCover(self, idx):
         # idx: the candidate's, not its row's
@@ -4073,13 +4436,13 @@ class WebInfoBox(DialogBox):
         if not self or self.closing:
             return
         bitmap, size = self.MakeCover(data)
-        self.covers[url] = (bitmap, label if size else (label or 'Not an image'))
+        self.covers[url] = (bitmap, label or ('%d x %d' % size if size else 'Not an image'))
         # its rows told (the same cover may be several releases')
         self.cover_cells[url] = '%d x %d' % size if size else 'Failed'
-        for row, k in enumerate(self.order):
-            if self.candidates[k]['image'] == url:
-                self.List.SetItem(row, 1, self.cover_cells[url])
-        idx = self.List.GetFirstSelected()
+        if size:
+            self.thumbs[url] = self.MakeThumb(data)
+        self.FillRows()
+        idx = self.List.GetSelected()
         if idx >= 0 and self.candidates[self.order[idx]]['image'] == url:
             self.ShowCover(self.order[idx])
 

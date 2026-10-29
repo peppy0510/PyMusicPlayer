@@ -11,9 +11,7 @@ from utilities import rgb_dec2hex
 
 STYLE_NAMES = sorted(['Dark Red', 'Dark Black', 'Dark Gray', 'Light Gray', 'Snow White'])
 DEFAULT_NAME = 'Dark Red'
-# the accent (Preferences > Accent Color): the scheme's own blue, or red in its place on
-# the buttons on, the selected rows and their bar, a field's focus and the insert cursors
-# (the warnings' orange and the meters' blues kept as they are)
+# red in place of the scheme's blue on these tokens
 ACCENT_NAMES = ('Blue', 'Red')
 DEFAULT_ACCENT = 'Blue'
 ACCENT_TOKENS = (('UI', ('ACCENT', 'FIELD_FOCUS')),
@@ -21,12 +19,9 @@ ACCENT_TOKENS = (('UI', ('ACCENT', 'FIELD_FOCUS')),
                               'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')),
                  ('EDITBOX', ('SELECTED_BG_COLOR', 'SELECTED_BAR_COLOR',
                               'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')))
-# red's, dark and light: the full one, and the selected rows' muted one (a third over the
-# rows, as the blue's)
+# (dark, light): the accent, and the selected rows' muted one
 RED = {True: ('#D8383F', '#5E1F27'), False: ('#C8303A', '#F4CDD1')}
-# each token's own value (the scheme's), by its class, kept at its first change
 accent_originals = dict()
-# a new number at every load (uikit.get_style_version)
 VERSION = 0
 # the style loaded last (load): the dialogs and the standard controls take its UI colours
 CURRENT = None
@@ -72,8 +67,6 @@ def load(name, rgbstyle='dec', accent=None):
 
 
 def apply_accent(style, accent):
-    # the scheme's blue tokens (the ones blue in it: a light scheme's black insert cursor
-    # left) red, or back to its own
     strong, muted = (rgb_hex2dec(v) for v in RED[bool(getattr(style.UI, 'DARK', True))])
     for cname, pnames in ACCENT_TOKENS:
         cls = getattr(style, cname, None)

@@ -180,6 +180,9 @@ class RackModule(RectBox):
     def OnChip(self, key):
         pass
 
+    def IsChipEnabled(self, key):
+        return True
+
     # a power key in its header (MASTER on or off), else an icon of what it is (ANALYZER's
     # meter): PyWinAudio's rack's units and its meter view
     POWER = False
@@ -545,6 +548,7 @@ class RackModule(RectBox):
         compact = level >= 2
         for rect, (key, label, on, warned, kind), corners in layout:
             hover = self.hovered == key
+            enabled = self.IsChipEnabled(key)
             if compact and level >= 3:
                 label = SHORT_LABELS.get(label, label)
             if kind == 'switch':
@@ -552,7 +556,8 @@ class RackModule(RectBox):
             else:
                 uikit.draw_button(dc, rect, label=label, on=on and not warned,
                                   warn=on and warned, hover=hover, font=font, corners=corners,
-                                  down=getattr(self, 'key_down', None) == key)
+                                  down=getattr(self, 'key_down', None) == key,
+                                  disabled=not enabled)
             self.hits.append((wx.Rect(*rect), 'chip', key))
 
     def DrawHeaderRight(self, gc, w, least):
@@ -661,5 +666,5 @@ class RackModule(RectBox):
             self.reInitBuffer = True
         elif hit[1] in self.parts:
             self.TogglePart(hit[1])
-        else:
+        elif self.IsChipEnabled(hit[1]):
             self.OnChip(hit[1])

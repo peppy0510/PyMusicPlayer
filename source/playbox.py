@@ -1059,7 +1059,7 @@ class PlayBoxControlButton(RectBox):
         # mode's lengths (HIGHLIGHT's as the main menu's, SHORT's PlayBox.RADIO_EDIT_LENGTHS)
         menu = wx.Menu()
         for kind, label in (('highlight', 'Highlight'), ('short', 'Short')):
-            item = menu.AppendRadioItem(wx.ID_ANY, label)
+            item = menu.AppendCheckItem(wx.ID_ANY, label)
             item.Check(kind == self.kind)
             menu.Bind(wx.EVT_MENU, lambda e, kind=kind: self.SetMode(kind, True), item)
         menu.AppendSeparator()
@@ -1067,14 +1067,14 @@ class PlayBoxControlButton(RectBox):
             frame = self.parent.parent.parent
             current = self.parent.GetHighlightStaticPeriodTime()
             for i, seconds in enumerate(frame.MenuBar.highlightDurationItems):
-                item = menu.AppendRadioItem(wx.ID_ANY, '%d bars (about %d s)'
+                item = menu.AppendCheckItem(wx.ID_ANY, '%d bars (about %d s)'
                                             % (seconds // 2, seconds))
                 item.Check(seconds == current)
                 menu.Bind(wx.EVT_MENU, lambda e, i=i: self.ChooseHighlightLength(i), item)
         else:
             current = self.parent.GetRadioEditLength()
             for length, label in self.parent.RADIO_EDIT_LENGTHS:
-                item = menu.AppendRadioItem(wx.ID_ANY, label)
+                item = menu.AppendCheckItem(wx.ID_ANY, label)
                 item.Check(length == current)
                 menu.Bind(wx.EVT_MENU,
                           lambda e, length=length: self.parent.SetRadioEditLength(length), item)
@@ -1729,7 +1729,7 @@ class SnapButton(RectBox):
             return
         menu = wx.Menu()
         for mode, label, _ in self.parent.SNAP_MODES[1:]:
-            item = menu.AppendRadioItem(wx.ID_ANY, label)
+            item = menu.AppendCheckItem(wx.ID_ANY, label)
             item.Check(mode == self.parent.GetSnapUnit())
             menu.Bind(wx.EVT_MENU, lambda e, mode=mode: self.Choose(mode), item)
         # under the key, from its face's left (a dropdown's)

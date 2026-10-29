@@ -7,6 +7,7 @@ email: peppy0510@hotmail.com
 '''
 
 
+import ctypes
 import functools
 import macroboxstyle
 import math
@@ -41,9 +42,49 @@ def ui():
     return macroboxstyle.current().UI
 
 
+# Windows draws its own check in the system's blue
+CHECK_MARKS = {}
+
+
+def get_check_mark():
+    accent = tuple(colour(ui().ACCENT).Get(False))
+    try:
+        size = ctypes.windll.user32.GetSystemMetrics(71) or 15
+    except Exception:
+        size = 15
+    key = (accent, size)
+    if key not in CHECK_MARKS:
+        image = wx.Image(size, size)
+        image.InitAlpha()
+        image.SetAlpha(bytes(size * size))
+        bitmap = wx.Bitmap(image, 32)
+        dc = wx.MemoryDC(bitmap)
+        gc = wx.GraphicsContext.Create(dc)
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(*accent)).Width(max(1.6, size / 8.0))
+                               .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)))
+        # at the mark's right: Windows keeps a fixed gap after the mark
+        path = gc.CreatePath()
+        path.MoveToPoint(size * 0.38, size * 0.52)
+        path.AddLineToPoint(size * 0.58, size * 0.72)
+        path.AddLineToPoint(size * 0.91, size * 0.30)
+        gc.StrokePath(path)
+        del gc
+        dc.SelectObject(wx.NullBitmap)
+        CHECK_MARKS[key] = bitmap
+    return CHECK_MARKS[key]
+
+
+def mark_menu_checks(menu):
+    mark = get_check_mark()
+    for item in menu.GetMenuItems():
+        if item.GetSubMenu() is not None:
+            mark_menu_checks(item.GetSubMenu())
+        elif item.GetKind() == wx.ITEM_CHECK:
+            item.SetBitmaps(mark, wx.NullBitmap)
+
+
 def get_style_version():
-    # for the pictures kept on the style's colours: its classes are the same ones after an
-    # accent's change (their values changed in them), a new number at every load
+    # the style's classes stay the same objects when the accent changes
     return macroboxstyle.VERSION
 
 
