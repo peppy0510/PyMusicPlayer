@@ -12,6 +12,9 @@ import collections
 import io
 import mfeats
 import mutagen
+import mutagen.flac
+import mutagen.id3
+import mutagen.mp4
 import numpy
 import os
 import queue
@@ -44,9 +47,10 @@ class ListImages():
         self.jobs = queue.LifoQueue()
         threading.Thread(target=self.Run, daemon=True).start()
 
-    def GetBitmap(self, kind, mdx, path, width, height, ground):
-        '''the cell's bitmap, or None while it is being made'''
-        key = (kind, mdx, width, height, tuple(ground))
+    def GetBitmap(self, kind, mdx, path, width, height, ground, square=False):
+        '''the cell's bitmap, or None while it is being made (square: a cover cut to a
+        square on its middle, View's Square Album Images)'''
+        key = (kind, mdx, width, height, tuple(ground), square)
         bitmap = self.bitmaps.get(key)
         if bitmap is not None:
             self.bitmaps.move_to_end(key)
@@ -71,13 +75,19 @@ class ListImages():
             self.bitmaps.popitem(last=False)
         return bitmap
 
-    def Forget(self, mdx):
-        # a song analyzed (again): its waveform made anew
+    def Forget(self, mdx, kind='wave'):
+        # a song analyzed (again): its waveform made anew; a cover put in its tags: its
+        # cover read again (the thumbnail on disk too)
         with self.lock:
             for store in (self.bitmaps, self.images):
-                for key in [k for k in store if k[1] == mdx and k[0] == 'wave']:
+                for key in [k for k in store if k[1] == mdx and k[0] == kind]:
                     store.pop(key, None)
-            self.asked = set(k for k in self.asked if not (k[1] == mdx and k[0] == 'wave'))
+            self.asked = set(k for k in self.asked if not (k[1] == mdx and k[0] == kind))
+        if kind == 'cover':
+            try:
+                os.remove(os.path.join(self.folder, '%s.png' % (mdx)))
+            except OSError:
+                pass
 
     def Run(self):
         while True:
@@ -99,10 +109,10 @@ class ListImages():
                 pass
 
     def Make(self, key, path):
-        kind, mdx, width, height, ground = key
+        kind, mdx, width, height, ground, square = key
         if kind == 'wave':
             return self.MakeWave(mdx, width, height, ground)
-        return self.MakeCover(mdx, path, width, height, ground)
+        return self.MakeCover(mdx, path, width, height, ground, square)
 
     def MakeWave(self, mdx, width, height, ground):
         resp = mfeats.getby_key_value('mdx', mdx)
@@ -110,7 +120,7 @@ class ListImages():
             return None
         return audio.paint_waveform_3band(resp.waveform, width, height, ground=ground)
 
-    def MakeCover(self, mdx, path, width, height, ground):
+    def MakeCover(self, mdx, path, width, height, ground, square=False):
         thumbnail = os.path.join(self.folder, '%s.png' % (mdx))
         if os.path.isfile(thumbnail):
             # an empty file: the song has no cover
@@ -129,27 +139,160 @@ class ListImages():
             picture = Image.open(io.BytesIO(data)).convert('RGB')
             picture.thumbnail((COVER_SIZE, COVER_SIZE))
             picture.save(thumbnail)
+        # fitted in the cell's square as it is (a cover not square was stretched to one),
+        # the room it leaves the row's ground; or cut to the square first
+        if square:
+            picture = picture.crop(get_square_box(*picture.size))
         side = min(width, height)
-        picture = picture.resize((side, side), Image.LANCZOS)
+        scale = 1.0 * side / max(picture.size)
+        size = tuple(max(1, int(round(v * scale))) for v in picture.size)
+        picture = picture.resize(size, Image.LANCZOS)
         canvas = Image.new('RGB', (width, height), tuple(int(v) for v in ground))
-        canvas.paste(picture, ((width - side) // 2, (height - side) // 2))
+        canvas.paste(picture, ((width - size[0]) // 2, (height - size[1]) // 2))
         return numpy.asarray(canvas, dtype=numpy.uint8)
 
 
+# a picture's types in the tags: the front cover, or one not said (taken for the cover)
+FRONT = 3
+COVER_TYPES = (0, FRONT)
+# a cover put in a song's tags at most this wide (a photo of 4000 px made every song
+# several MB larger) and kept as it is when JPEG or PNG and no wider
+COVER_MOST = 1000
+
+
 def read_cover(path):
-    # the first picture in the song's tags (ID3 APIC, FLAC or MP4 cover), or None
+    # the front cover in the song's tags (ID3 APIC, FLAC or MP4 cover), else the first
+    # picture, or None
     tags = mutagen.File(path)
     if tags is None:
         return None
     pictures = getattr(tags, 'pictures', None)
     if pictures:
-        return pictures[0].data
+        return next((v for v in pictures if v.type == FRONT), pictures[0]).data
     if tags.tags is None:
         return None
-    for key in tags.tags.keys():
-        if key.startswith('APIC'):
-            return tags.tags[key].data
+    frames = [tags.tags[k] for k in tags.tags.keys() if k.startswith('APIC')]
+    if frames:
+        return next((v for v in frames if v.type == FRONT), frames[0]).data
     covers = tags.tags.get('covr') if hasattr(tags.tags, 'get') else None
     if covers:
         return bytes(covers[0])
     return None
+
+
+def make_cover(data):
+    '''(bytes, mime, width, height) of a picture to put in tags: JPEG or PNG as it is
+    when no wider than COVER_MOST, else made a JPEG that wide; None if not a picture'''
+    try:
+        picture = Image.open(io.BytesIO(data))
+        picture.load()
+    except Exception:
+        return None
+    kind = picture.format
+    width, height = picture.size
+    if kind in ('JPEG', 'PNG') and max(width, height) <= COVER_MOST:
+        return (data, 'image/jpeg' if kind == 'JPEG' else 'image/png', width, height)
+    picture = picture.convert('RGB')
+    picture.thumbnail((COVER_MOST, COVER_MOST), Image.LANCZOS)
+    out = io.BytesIO()
+    picture.save(out, 'JPEG', quality=92)
+    return (out.getvalue(), 'image/jpeg') + picture.size
+
+
+def get_square_box(width, height):
+    # (left, top, right, bottom) of the middle square
+    side = min(width, height)
+    left, top = (width - side) // 2, (height - side) // 2
+    return (left, top, left + side, top + side)
+
+
+def is_square(data):
+    # (None: not a picture)
+    try:
+        width, height = Image.open(io.BytesIO(data)).size
+    except Exception:
+        return None
+    return width == height
+
+
+def crop_square(data):
+    '''the picture cut to a square on its middle, its shorter side's size (the tag editor's
+    cover menu); PNG kept PNG, any other made a JPEG; None if not a picture'''
+    try:
+        picture = Image.open(io.BytesIO(data))
+        picture.load()
+    except Exception:
+        return None
+    kind = picture.format
+    picture = picture.crop(get_square_box(*picture.size))
+    out = io.BytesIO()
+    if kind == 'PNG':
+        picture.save(out, 'PNG')
+    else:
+        picture.convert('RGB').save(out, 'JPEG', quality=92)
+    return out.getvalue()
+
+
+def write_cover(path, data):
+    '''the picture put in the song's tags as its front cover (MP3, FLAC, MP4/M4A), the
+    other pictures (a back cover, the artist) kept; raises ValueError for a picture or a
+    file it cannot'''
+    cover = make_cover(data)
+    if cover is None:
+        raise ValueError('not a picture')
+    data, mime, width, height = cover
+    kind = os.path.splitext(path)[1].lower()
+    if kind == '.mp3':
+        try:
+            tags = mutagen.id3.ID3(path)
+        except mutagen.id3.ID3NoHeaderError:
+            tags = mutagen.id3.ID3()
+        for key in [k for k in tags.keys() if k.startswith('APIC')]:
+            if tags[key].type in COVER_TYPES:
+                del tags[key]
+        tags.add(mutagen.id3.APIC(encoding=3, mime=mime, type=FRONT, desc='', data=data))
+        tags.save(path)
+    elif kind == '.flac':
+        song = mutagen.flac.FLAC(path)
+        kept = [v for v in song.pictures if v.type not in COVER_TYPES]
+        song.clear_pictures()
+        picture = mutagen.flac.Picture()
+        picture.type, picture.mime, picture.data = FRONT, mime, data
+        picture.width, picture.height, picture.depth = width, height, 24
+        for v in [picture] + kept:
+            song.add_picture(v)
+        song.save()
+    elif kind in ('.m4a', '.mp4', '.aac', '.alac'):
+        song = mutagen.mp4.MP4(path)
+        if song.tags is None:
+            song.add_tags()
+        imageformat = mutagen.mp4.MP4Cover.FORMAT_PNG if mime == 'image/png'\
+            else mutagen.mp4.MP4Cover.FORMAT_JPEG
+        song.tags['covr'] = [mutagen.mp4.MP4Cover(data, imageformat=imageformat)]
+        song.save()
+    else:
+        raise ValueError('covers are not put in %s files' % (kind.lstrip('.').upper()))
+
+
+def remove_cover(path):
+    '''every picture taken out of the song's tags (MP3, FLAC, MP4/M4A: the front cover
+    alone left the back one shown as its cover); raises ValueError for a file it cannot'''
+    kind = os.path.splitext(path)[1].lower()
+    if kind == '.mp3':
+        try:
+            tags = mutagen.id3.ID3(path)
+        except mutagen.id3.ID3NoHeaderError:
+            return
+        tags.delall('APIC')
+        tags.save(path)
+    elif kind == '.flac':
+        song = mutagen.flac.FLAC(path)
+        song.clear_pictures()
+        song.save()
+    elif kind in ('.m4a', '.mp4', '.aac', '.alac'):
+        song = mutagen.mp4.MP4(path)
+        if song.tags is not None and 'covr' in song.tags:
+            del song.tags['covr']
+            song.save()
+    else:
+        raise ValueError('covers are not taken out of %s files' % (kind.lstrip('.').upper()))

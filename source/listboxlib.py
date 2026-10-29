@@ -133,15 +133,14 @@ class ListBoxListDnD(wx.FileDropTarget):
 
     def ImportFiles(self, inpaths, insertItemIdx=-1,
                     selectedList=None, permit_duplicated=False, filtered=False):
-        # self.parent.parent.parent.SetCursorWAIT()
+        # the files read first (their tags, their length, their analysis), the lists usable
+        # meanwhile; locked only while they are joined into the list (locked from the start,
+        # nothing could be done in the lists for as long as the disk took: 40 songs held
+        # them seconds, the user)
         jobsegSize = 100
-        # If blocking is 0, the thread will return
-        # If blocking is 1, the thread will block and wait
-        threadListLock.acquire(1)
-        isLocked = True
         if selectedList is None:
             selectedList = self.parent.parent.selectedList
-        self.parent.parent.SetListLock(selectedList)
+        isLocked = False
 
         try:
             extended_paths = []
@@ -160,6 +159,18 @@ class ListBoxListDnD(wx.FileDropTarget):
 
             pathIdx = self.parent.parent.GetColumnKeyToIdx('path', selectedList)
             orderIdx = self.parent.parent.GetColumnKeyToIdx('order', selectedList)
+            columns = self.parent.parent.innerList[selectedList].columns
+            made = []
+            for path in extended_paths:
+                item = MakeMusicFileItem(path, 0, columns)
+                if item is not None:
+                    made.append((path, item))
+
+            # If blocking is 0, the thread will return
+            # If blocking is 1, the thread will block and wait
+            threadListLock.acquire(1)
+            isLocked = True
+            self.parent.parent.SetListLock(selectedList)
             sortedColumnIdx = self.parent.parent.GetLastSortedColumn(selectedList)[0]
 
             isOrdered = sortedColumnIdx == orderIdx
@@ -178,20 +189,19 @@ class ListBoxListDnD(wx.FileDropTarget):
                 isInsertable = False
                 order = self.parent.parent.GetItemsLength(selectedList) + 1
 
-            for segcnt in range(0, len(extended_paths), jobsegSize):
+            for segcnt in range(0, len(made), jobsegSize):
 
                 innerListSeg = []
-                for path in extended_paths[segcnt:segcnt + jobsegSize]:
+                for path, item in made[segcnt:segcnt + jobsegSize]:
 
                     if permit_duplicated is False:
                         if list(filter(lambda v: v[pathIdx] == path,
                                        self.parent.parent.innerList[selectedList].items)) != []:
                             already_have_count += 1
                             continue
-                    columns = self.parent.parent.innerList[selectedList].columns
-                    item = MakeMusicFileItem(path, order, columns)
-                    if item is None:
-                        continue
+                    # (its place in the list now it is joined)
+                    item = list(item)
+                    item[orderIdx] = order
                     order += 1
                     imported_count += 1
 
@@ -226,7 +236,7 @@ class ListBoxListDnD(wx.FileDropTarget):
                 # imported_count += 1
                 self.parent.parent.reInitBuffer = True
             try:
-                del extended_paths, stats, innerListSeg
+                del extended_paths, stats, innerListSeg, made
             except Exception:
                 pass
 
@@ -255,7 +265,7 @@ class ListBoxListDnD(wx.FileDropTarget):
         finally:
             if isLocked:
                 threadListLock.release()
-            self.parent.parent.SetListUnLock(selectedList)
+                self.parent.parent.SetListUnLock(selectedList)
 
     def SearchPatternIncludeSub(self, filepath, pattern='*', visited=None):
         # filepath = unicode(filepath)
@@ -621,7 +631,14 @@ class ListControl():
                              ignore_case=ignore_case, selectedList=listIdx)
 
     def SetFilterOffAll(self):
-        for listIdx in range(len(self.innerList)):
+        # drawn again only when a filter was let go: the empty search row asks this at every
+        # global event, and the list drawn each time took the GUI thread from the waveforms
+        # (they moved in jerks, the user)
+        filtered = [listIdx for listIdx in range(len(self.innerList))
+                    if self.IsFiltered(listIdx)]
+        if filtered == []:
+            return
+        for listIdx in filtered:
             self.SetFilterOff(listIdx)
         self.parent.ListSearch.reInitBuffer = True
         # the whole list drawn again (the search row alone was)

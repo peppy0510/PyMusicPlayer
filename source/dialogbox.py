@@ -7,9 +7,12 @@ email: peppy0510@hotmail.com
 '''
 
 
+import audio
+import collections
 import images
 import json
 import macroboxstyle
+import mfeats
 import socket
 import threading
 import urllib
@@ -18,9 +21,11 @@ import wx
 
 from macroboxlib import Button
 from macroboxlib import ProgressBar
-from macroboxlib import CheckBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
+from macroboxlib import DIALOG_GAP
+from macroboxlib import DIALOG_PAD
+from macroboxlib import make_check
 from macroboxlib import FONT_ITEM
 from macroboxlib import FancyButton
 from macroboxlib import FancyDialogBox
@@ -207,11 +212,20 @@ class CheckFilesConsistencyPanel(DialogPanel):
         font.SetPixelSize((7, 14))
         font.SetFaceName(FONT_ITEM)
         text.SetFont(font)
-        text.SetPosition((20, 20))
-        text.SetInitialSize((width - 40, height))
+        # the dialogs' spacing: PAD in
+        text.SetPosition((DIALOG_PAD, DIALOG_PAD))
+        lines = text.GetBestSize().height
+        text.SetInitialSize((width - DIALOG_PAD * 2, lines))
+        # its words' height and PAD over and under them
+        self.content_height = DIALOG_PAD * 2 + lines
+        self.SetSize((width, self.content_height))
 
     def OnClose(self, event):
         self.Destroy()
+
+
+# a progress's words, its bar under them and PAD round them
+PROGRESS_HEIGHT = DIALOG_PAD * 2 + 18 + DIALOG_GAP + 10
 
 
 class CheckFilesConsistencyProgressPanel(DialogPanel):
@@ -220,11 +234,13 @@ class CheckFilesConsistencyProgressPanel(DialogPanel):
         DialogPanel.__init__(self, parent)
         self.parent = parent
         width, height = self.parent.GetClientSize()
-        self.SetRect((0, 0, width, 65))
+        self.SetRect((0, 0, width, PROGRESS_HEIGHT))
         width, height = self.GetClientSize()
-        self.TextMessage = StaticText(self, id=-1, label='', pos=(20, 20))
+        # the dialogs' spacing: the words PAD in, the bar GAP under them
+        self.TextMessage = StaticText(self, id=-1, label='', pos=(DIALOG_PAD, DIALOG_PAD))
         self.ProgressBar = ProgressBar(self, range=self.parent.items_number)
-        self.ProgressBar.SetRect((20, 50, width - 40, 10))
+        self.ProgressBar.SetRect((DIALOG_PAD, DIALOG_PAD + 18 + DIALOG_GAP,
+                                  width - DIALOG_PAD * 2, 10))
 
     def OnClose(self, event):
         self.Destroy()
@@ -254,15 +270,15 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
 
         self.items_number = self.ListBox.GetTotalItemsNumber()
         self.ConfirmPanel = CheckFilesConsistencyPanel(self)
+        # its words (CheckFilesConsistencyPanel), the footer under them
+        self.SetClientSize((self.GetClientSize().width,
+                            self.ConfirmPanel.content_height + self.GetFooterHeight()))
 
-        width, height = self.GetClientSize()
         self.ApplyButton = Button(self, label='Start', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CloseButton = Button(self, label='Close')
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        y = height - self.CloseButton.GetSize().height - 20
-        self.ApplyButton.SetPosition((width - 95 - 80, y))
-        self.CloseButton.SetPosition((width - 95, y))
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
 
     def Notify(self):
         if self.stop:
@@ -273,10 +289,10 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
         self.error_counter = self.ListBox.consistency_check_error_counter
 
         if self.error_counter != 0 and self.ListBox.consistency_check_counter == self.items_number:
-            self.RemoveButton = Button(self, label='Remove broken tracks')
-            _, y, _, height = self.ApplyButton.GetRect()
+            self.RemoveButton = Button(self, label='Remove broken tracks', size=(150, 26))
             self.RemoveButton.Bind(wx.EVT_BUTTON, self.OnRemove)
-            self.RemoveButton.SetRect((20, y, 150, height))
+            self.PlaceButtons(right=(self.ApplyButton, self.CloseButton),
+                              left=(self.RemoveButton,))
 
         if self.ListBox.consistency_check_counter >= self.items_number:
             self.ListBox.consistency_check_counter = 0
@@ -299,14 +315,9 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
         for v in self.ConfirmPanel.text_messages:
             v.Destroy()
         self.ConfirmPanel.Destroy()
-        width, height = self.GetSize()
-        self.SetSize((width, 155))
+        self.SetClientSize((self.GetClientSize().width, PROGRESS_HEIGHT + self.GetFooterHeight()))
         self.ProgressPanel = CheckFilesConsistencyProgressPanel(self)
-
-        width, height = self.GetClientSize()
-        y = height - self.CloseButton.GetSize().height - 20
-        self.ApplyButton.SetPosition((width - 95 - 80, y))
-        self.CloseButton.SetPosition((width - 95, y))
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
         self.CloseButton.SetLabelText('Cancel')
 
         self.Timer = CheckItemsConsistencyConfirmBoxTimer(self)
@@ -404,9 +415,87 @@ class AutoCheckUpdate(wx.Timer):
         self.Destroy()
 
 
+class AnalyzerVersionBox(DialogBox):
+
+    '''the playlists' songs analyzed by an older analyzer (or their grid by an older one,
+    or not made, or not analyzed at all) counted, and analyzed again when asked (the auto
+    analyzer did it unasked, when it was on; off, they stayed as they were)'''
+
+    WIDTH = 440
+
+    def __init__(self, parent):
+        DialogBox.__init__(self, parent, size=(self.WIDTH, 200))
+        self.parent = parent
+        self.ListBox = self.parent.MainPanel.ListBox
+        self.SetTitle('Check Analyzer Versions')
+        self.queued = 0
+        label, self.outdated = self.Count()
+        width = self.GetClientSize().width
+        self.Message = StaticText(self, label=label, pos=(DIALOG_PAD, DIALOG_PAD))
+        self.Message.SetInitialSize((width - DIALOG_PAD * 2, self.Message.GetBestSize().height))
+        self.SetClientSize((width, DIALOG_PAD * 2 + self.Message.GetSize().height
+                            + self.GetFooterHeight()))
+        self.ApplyButton = Button(self, label='Analyze Again', primary=True, size=(110, 26))
+        self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
+        self.ApplyButton.Enable(self.outdated > 0)
+        self.CloseButton = Button(self, label='Close')
+        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
+
+    def Count(self):
+        # (the words told, the songs to analyze again): each song once, the stations left out
+        state = mfeats.get_analysis_versions()
+        paths = dict()
+        for listIdx in range(len(self.ListBox.innerList)):
+            pathIdx = self.ListBox.GetColumnKeyToIdx('path', listIdx)
+            mdxIdx = self.ListBox.GetColumnKeyToIdx('mdx', listIdx)
+            for item in self.ListBox.innerList[listIdx].items:
+                if not audio.is_stream_path(item[pathIdx]):
+                    paths[item[pathIdx]] = item[mdxIdx]
+        older, grids, none, failed = collections.Counter(), 0, 0, 0
+        for mdx in paths.values():
+            row = state.get(mdx)
+            if row is None:
+                none += 1
+            elif row[0] != mfeats.MFEATS_VERSION:
+                older[row[0] or '?'] += 1
+            elif row[1]:
+                failed += 1
+            elif row[2] != mfeats.GRID_VERSION:
+                grids += 1
+        outdated = sum(older.values()) + grids + none
+        lines = ['The playlists\' %d tracks against the analyzer %s (its grid %s):'
+                 % (len(paths), mfeats.MFEATS_VERSION, mfeats.GRID_VERSION)]
+        versions = ', '.join('%s: %d' % (v, n) for v, n in sorted(older.items(), reverse=True))
+        lines.append('Analyzed by an older analyzer: %d%s'
+                     % (sum(older.values()), ' (%s)' % (versions) if versions else ''))
+        lines.append('Grid older or not made: %d' % (grids))
+        lines.append('Not analyzed yet: %d' % (none))
+        if failed:
+            lines.append('Not analyzable (left as they are): %d' % (failed))
+        lines.append('')
+        lines.append('Analyze the %d tracks again? It may take a while.' % (outdated)
+                     if outdated else 'All of them are analyzed by this version.')
+        return '\n'.join(lines), outdated
+
+    def OnApply(self, event):
+        # marked to be analyzed and queued (as the auto analyzer does: its progress in the
+        # list's status)
+        self.parent.MainPanel.MFEATS.QueueOutdated(mfeats.get_done_mdx(), asked=True)
+        self.ApplyButton.Disable()
+        self.ApplyButton.SetLabel('Queued')
+        self.ListBox.reInitBuffer = True
+
+    def OnClose(self, event):
+        if self.IsModal():
+            self.EndModal(0)
+        self.Destroy()
+
+
 class UpdateBoxCommon(DialogBox):
 
-    def __init__(self, parent, size=(-1, -1), pos=(-1, -1)):
+    def __init__(self, parent, size=(-1, -1), pos=(-1, -1), content=None):
+        # content: its words' (and bar's) height, PAD round them (a progress's at most)
         DialogBox.__init__(self, parent, size=size, pos=pos)
         self.parent = parent
         self.CloseButton = Button(self, label='Close')
@@ -415,22 +504,21 @@ class UpdateBoxCommon(DialogBox):
         self.DownloadButton.Bind(wx.EVT_BUTTON, self.OnDownload)
         self.DownloadButton.Disable()
 
-        self.AutoCheckUpdate = CheckBox(self)
-        self.AutoCheckUpdate.Bind(wx.EVT_CHECKBOX, self.OnAutoCheckUpdate)
-        label = u'Auto check update on startup'
-        self.AutoCheckText = StaticText(self, label=label)
+        # the words (and a progress's bar) PAD in, the footer under them: the check box at
+        # its left, the buttons at its right (the dialogs' spacing)
+        self.SetClientSize((self.GetClientSize().width,
+                            (content or PROGRESS_HEIGHT) + self.GetFooterHeight()))
+        top = self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
         preference = GetPreference('auto_check_update')
-        if preference is None or preference:
-            self.AutoCheckUpdate.SetValue(1)
+        self.AutoCheckUpdate, _ = make_check(self, u'Auto check update on startup',
+                                             (DIALOG_PAD, top + 5), preference is not False,
+                                             self.OnAutoCheckUpdate)
 
     def OnDownload(self, event):
         webbrowser.open(MACROBOX_DOWNLOAD_URL)
 
-    def OnAutoCheckUpdate(self, event):
-        if event.IsChecked():
-            SetPreference('auto_check_update', True)
-        else:
-            SetPreference('auto_check_update', False)
+    def OnAutoCheckUpdate(self, value):
+        SetPreference('auto_check_update', bool(value))
 
 
 class UpdatePanel(wx.Panel):
@@ -443,7 +531,7 @@ class UpdatePanel(wx.Panel):
         self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         width, height = self.parent.GetSize()
         self.SetRect((0, 0, width, 58))
-        self.TextMessage = StaticText(self, label='', pos=(18, 20))
+        self.TextMessage = StaticText(self, label='', pos=(DIALOG_PAD, DIALOG_PAD))
 
     def OnClose(self, event):
         self.Destroy()
@@ -452,7 +540,7 @@ class UpdatePanel(wx.Panel):
 class AutoUpdateBox(UpdateBoxCommon):
 
     def __init__(self, parent, result):
-        UpdateBoxCommon.__init__(self, parent, size=(400, 130))
+        UpdateBoxCommon.__init__(self, parent, size=(400, 130), content=DIALOG_PAD * 2 + 18)
         self.parent = parent
         self.result = result
         self.SetTitle('Update Notify')
@@ -465,12 +553,7 @@ class AutoUpdateBox(UpdateBoxCommon):
         self.OnSize(None)
 
     def OnSize(self, event):
-        width, height = self.GetClientSize()
-        height -= self.CloseButton.GetSize().height + 20
-        self.AutoCheckUpdate.SetPosition((20, height + 5))
-        self.AutoCheckText.SetPosition((20 + 25, height + 5))
-        self.DownloadButton.SetPosition((width - 95 - 80, height))
-        self.CloseButton.SetPosition((width - 95, height))
+        self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
 
     def OnClose(self, event):
         self.Destroy()
@@ -484,14 +567,15 @@ class UpdateCheckProgressPanel(DialogPanel):
         width, height = self.GetClientSize()
         label = u'Check avaliable update.'
         self.TextMessage = StaticText(self, label=label)
-        self.TextMessage.SetPosition((20, 20))
+        self.TextMessage.SetPosition((DIALOG_PAD, DIALOG_PAD))
         self.ProgressBar = ProgressBar(self, range=self.parent.Thread.max_step)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
 
     def OnSize(self, event):
         width, height = self.GetClientSize()
-        self.ProgressBar.SetRect((20, 50, width - 40, 10))
+        self.ProgressBar.SetRect((DIALOG_PAD, DIALOG_PAD + 18 + DIALOG_GAP,
+                                  width - DIALOG_PAD * 2, 10))
 
     def OnClose(self, event):
         self.Destroy()
@@ -530,12 +614,8 @@ class UpdateBox(UpdateBoxCommon):
     def OnSize(self, event):
         self.ProgressPanel.OnSize(None)
         width, height = self.GetClientSize()
-        self.ProgressPanel.SetSize((width, 60))
-        height -= self.CloseButton.GetSize().height + 20
-        self.AutoCheckUpdate.SetPosition((20, height + 5))
-        self.AutoCheckText.SetPosition((20 + 25, height + 5))
-        self.DownloadButton.SetPosition((width - 95 - 80, height))
-        self.CloseButton.SetPosition((width - 95, height))
+        self.ProgressPanel.SetSize((width, PROGRESS_HEIGHT))
+        self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
 
     def UpdateProgress(self):
         if hasattr(self, 'Thread') is False:

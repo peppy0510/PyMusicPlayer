@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import codecs
+import collections
 import ctypes
 import math
 import addons
@@ -302,6 +303,13 @@ def is_waveform_3band(waveform):
         and waveform.shape[1] == 5 and len(waveform) > 0
 
 
+# the whole waveform's columns a pixel, kept for the last few (waveform, width): its
+# grounds and its heights painted from them (a long mix's reading them took 70 ms a
+# picture, three a size, its height changed: View > Waveform Height)
+WAVEFORM_COLUMNS_KEPT = 4
+waveform_columns = collections.OrderedDict()
+
+
 def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
                          start=None, end=None, spread=WAVEFORM_BAND_SPREAD):
     # waveform: uint8 columns of (sqrt peak, sqrt level, low, mid, high shares)
@@ -314,6 +322,23 @@ def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
     spread = min(spread, max((width - 1) // 2, 0))
     ground = numpy.array(ground, dtype=float)
     dim = numpy.array(dim, dtype=float)
+    if start is None:
+        key = (id(waveform), width, spread)
+        kept = waveform_columns.get(key)
+        if kept is None or kept[0] is not waveform:
+            kept = (waveform,) + get_waveform_columns(waveform, width, None, None, spread)
+            waveform_columns[key] = kept
+            while len(waveform_columns) > WAVEFORM_COLUMNS_KEPT:
+                waveform_columns.popitem(last=False)
+        peaks, levels, shares, inside = kept[1:]
+    else:
+        peaks, levels, shares, inside = get_waveform_columns(waveform, width, start, end,
+                                                             spread)
+    return paint_waveform_columns(peaks, levels, shares, inside, width, height, ground, dim)
+
+
+def get_waveform_columns(waveform, width, start, end, spread):
+    # (peaks, levels, band shares, inside) a pixel column
     count = len(waveform)
     if start is None:
         start, end = (0, count)
@@ -353,7 +378,10 @@ def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
             [numpy.convolve(shares[:, i], kernel, 'same') for i in range(3)]) / near[:, None]
     levels = numpy.where(inside, levels, 0)
     peaks = numpy.where(inside, peaks, 0)
+    return peaks, levels, shares, inside
 
+
+def paint_waveform_columns(peaks, levels, shares, inside, width, height, ground, dim):
     reach = height * 0.5
     talls = numpy.round(levels[:, None] * reach * numpy.minimum(shares / WAVEFORM_BAND_FULL_SHARE, 1))
     tallest = numpy.argmax(shares, axis=1)

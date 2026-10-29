@@ -14,6 +14,7 @@ import library
 import listimages
 import macroboxstyle
 import math
+import mfeats
 import os
 import radio
 import stat
@@ -37,12 +38,17 @@ from listboxtab import ListBoxTabDnD
 from listboxtab import ListBoxTabSliderV
 from listboxtab import TabRenameBox
 from macroboxlib import Button
-from macroboxlib import CheckBox
 from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
+from macroboxlib import ConfirmDialogBox
 from macroboxlib import NativeComboBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
+from macroboxlib import DIALOG_GAP
+from macroboxlib import DIALOG_PAD
+from macroboxlib import DIALOG_ROW
+from macroboxlib import fit_name_column
+from macroboxlib import make_check
 from macroboxlib import EVT_GLOBAL
 from macroboxlib import FONT_ITEM
 from macroboxlib import FONT_ITEM_SIZE
@@ -604,14 +610,15 @@ class ListBoxList(RectBox):
         # favorite tracks (every playlist's rows)
         favorites = set()
         # the songs and Browse's stations not starred: an outline, faint (the Favorites'
-        # rows none: all of them are)
+        # rows all starred: their star taken off by a click, as the favorite tracks')
         outline = None
         if self.parent.innerList[listIdx].title != radio.RADIO_TITLE:
             bg = wx.Colour(self.parent.st.LIST_BG_COLOR)
             fg = wx.Colour(self.parent.st.LIST_FG_COLOR)
             outline = wx.Colour(*[int(a + (b - a) * 0.22) for a, b in
                                   zip(bg.Get()[:3], fg.Get()[:3])])
-        if self.parent.innerList[listIdx].title in (radio.BROWSE_TITLE, radio.RECENT_TITLE):
+        if self.parent.innerList[listIdx].title in (radio.BROWSE_TITLE, radio.RECENT_TITLE,
+                                                    radio.RADIO_TITLE):
             favorites = radio.get_favorite_urls(self.parent)
         elif self.parent.innerList[listIdx].title not in radio.RADIO_TABS:
             favorites = set(library.get_favorite_tracks())
@@ -782,6 +789,7 @@ class ListBoxList(RectBox):
         # the titles did): their row's ground over them at WAVE_DIM
         cue = self.parent.parent.PlayBox.cue
         playing = cue.path if cue.listId == self.parent.innerList[listIdx].Id else None
+        square = self.parent.parent.parent.IsCoverSquareOn()
         gc = None
         for kind, row, item, column in pictures:
             if item >= len(items):
@@ -794,7 +802,7 @@ class ListBoxList(RectBox):
             if width < 4 or height < 4:
                 continue
             bitmap = self.images.GetBitmap(kind, items[item][mdxIdx], items[item][pathIdx],
-                                           width, height, ground)
+                                           width, height, ground, square=square)
             if bitmap:
                 x, y = column.x + 2, row_size * row + top + 1
                 dc.DrawBitmap(bitmap, x, y)
@@ -877,11 +885,10 @@ class ListBoxList(RectBox):
         return None
 
     def GetStarItem(self, event):
-        # the song (or a Browse row's station) under the pointer in the star's span, None
-        # elsewhere (or in the Favorites: all starred, taken out by their menu)
+        # the song (or a station's row) under the pointer in the star's span, None elsewhere
+        # (the Favorites' too: their star none, taken out by their menu alone, "it should
+        # be there to take it off at once", the user)
         if self.onClient is False:
-            return None
-        if self.parent.innerList[self.parent.selectedList].title == radio.RADIO_TITLE:
             return None
         span = self.GetStarSpan()
         if span is None or not span[0] <= event.X <= span[1]:
@@ -911,8 +918,8 @@ class ListBoxList(RectBox):
         self.star_down = item
         self.reInitBuffer = True
         path = self.parent.GetItemValueByColumnKey(item, 'path')
-        if self.parent.innerList[self.parent.selectedList].title in (radio.BROWSE_TITLE,
-                                                                       radio.RECENT_TITLE):
+        if self.parent.innerList[self.parent.selectedList].title in (
+                radio.BROWSE_TITLE, radio.RECENT_TITLE, radio.RADIO_TITLE):
             radio.toggle_favorite(self.parent.parent, path)
         else:
             toggle_favorite_tracks(self.parent, [path])
@@ -2045,7 +2052,7 @@ class ListBoxSearch(RectBox):
             # a filter let go: it would hide the directory's rows
             text.ChangeValue('')
             self.parent.ListBox.SetFilterOffAll()
-            text.SetHint('Station name, searched as you type')
+            self.SetHints('Station name, searched as you type', 'Station name')
             combo.Set(['Top voted'])
             combo.SetSelection(0)
             self.chooser_width = 190
@@ -2067,18 +2074,19 @@ class ListBoxSearch(RectBox):
             threading.Thread(target=run, daemon=True).start()
         elif mode == 'favorites':
             # (the recent stations' too)
-            text.SetHint('Filter stations by name or tags')
+            self.SetHints('Filter stations by name or tags', 'Filter stations')
             combo.Set([label for label, _ in self.FAVORITE_KEYS])
             combo.SetSelection(0)
             self.query_columnKey = self.FAVORITE_KEYS[0][1]
             self.chooser_width = 96
         elif self.scope == 'library':
-            text.SetHint('Search all playlists (found in the Search tab)')
+            self.SetHints('Search all playlists (found in the Search tab)',
+                          'Search all playlists')
             # its place kept, the chooser shown off (the field's width does not jump as the
             # scope changes): the library is searched in all its fields
             self.chooser_width = 96
         else:
-            text.SetHint('Filter this playlist')
+            self.SetHints('Filter this playlist', 'Filter')
             self.query_columnKey = getattr(self, 'playlist_key', 'filename')
             combo.Set(list(combo.choices))
             combo.SetStringSelection(self.query_columnKey.capitalize()
@@ -2200,6 +2208,12 @@ class ListBoxSearch(RectBox):
 
     # Draw ListBoxList
 
+    # inside the field: the room between its parts and at its edges, the magnifier's width
+    # (its ring and its handle) and the clear mark's
+    FIELD_PAD = 8
+    MAGNIFIER = 9
+    MARK = 7
+
     def SetRectDraw(self, dc):
         # a rounded field (a magnifier, the text box inside it, a clear mark with text),
         # outlined in the accent while typed in; the chooser as the control buttons are
@@ -2213,15 +2227,19 @@ class ListBoxSearch(RectBox):
         # (the keys' corners: uikit.RADIUS, one for every box; 6 before)
         gc.DrawRoundedRectangle(x + 0.5, y + 0.5, w - 1, h - 1, uikit.RADIUS)
         ink = wx.Colour(tokens.BAR_TEXT_DIM)
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.6)))
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.4)))
         gc.SetBrush(wx.NullGraphicsBrush)
-        cx, cy = x + 13, y + h / 2.0 - 1
-        gc.DrawEllipse(cx - 4.5, cy - 4.5, 9, 9)
-        gc.StrokeLine(cx + 3.2, cy + 3.2, cx + 6.5, cy + 6.5)
+        # (7 across: 9 read larger than the text beside it; its middle a row over the
+        # field's (on the hint's capitals' it read low: the user); FIELD_PAD in
+        cx, cy = x + self.FIELD_PAD + 3.5, y + h / 2.0 - 1
+        gc.DrawEllipse(cx - 3.5, cy - 3.5, 7, 7)
+        gc.StrokeLine(cx + 2.5, cy + 2.5, cx + 5.2, cy + 5.2)
         if self.SearchText.GetValue():
-            cx, cy = self.clear_rect.x + self.clear_rect.width / 2.0, y + h / 2.0
-            gc.StrokeLine(cx - 3.5, cy - 3.5, cx + 3.5, cy + 3.5)
-            gc.StrokeLine(cx - 3.5, cy + 3.5, cx + 3.5, cy - 3.5)
+            # MARK across, FIELD_PAD from the edge
+            half = self.MARK / 2.0
+            cx, cy = x + w - self.FIELD_PAD - half, y + h / 2.0
+            gc.StrokeLine(cx - half, cy - half, cx + half, cy + half)
+            gc.StrokeLine(cx - half, cy + half, cx + half, cy - half)
         pointer = self.ScreenToClient(wx.GetMousePosition())
         if self.chooser_rect.width > 0:
             if self.IsLibraryScope():
@@ -2273,15 +2291,50 @@ class ListBoxSearch(RectBox):
         # lower, measured)
         self.field_rect = wx.Rect(8 + 26 + 8, top, max(0, right - 8 - 26 - 8), h - 11)
         x, y, fw, fh = self.field_rect
-        self.clear_rect = wx.Rect(x + fw - 24, y, 24, fh)
+        # inside it FIELD_PAD apart, either side alike: its edge, the magnifier, the text,
+        # the clear mark, its edge (the text ran on to the mark, 11 px from the magnifier
+        # and 9 from the edge: the user); the mark taken by the room round it too
+        self.clear_rect = wx.Rect(x + fw - self.FIELD_PAD * 2 - self.MARK, y,
+                                  self.FIELD_PAD * 2 + self.MARK, fh)
         tokens = macroboxstyle.current().UI
         self.SearchText.SetBackgroundColour(tokens.CONTROL_BG)
         self.SearchText.SetForegroundColour(tokens.BAR_TEXT)
+        # (the text control's own margins none: its text at its left)
+        self.SearchText.SetMargins(0, 0)
         th = min(self.SearchText.GetBestSize().height, fh - 2)
-        self.SearchText.SetRect((x + 26, y + (fh - th) // 2, max(0, fw - 26 - 26), th))
+        left = self.FIELD_PAD + self.MAGNIFIER + self.FIELD_PAD
+        right = self.FIELD_PAD + self.MARK + self.FIELD_PAD
+        self.SearchText.SetRect((x + left, y + (fh - th) // 2, max(0, fw - left - right), th))
+        self.FitHint()
         self.text_best = self.SearchText.GetBestSize().height
         self.text_xys = ((10, 5),)
         self.DirectDraw()
+
+    def SetHints(self, full, short):
+        # the field's hint, its short one when the field is narrow (FitHint)
+        self.hints = (full, short)
+        self.FitHint()
+
+    def FitHint(self):
+        '''the hint whole, else its short one, else that cut with an ellipsis, else none:
+        cut by the field's edge it read as broken (the user)'''
+        hints = getattr(self, 'hints', None)
+        if hints is None:
+            return
+        room = self.SearchText.GetSize().width - 8
+        hint = ''
+        for text in hints:
+            if self.SearchText.GetTextExtent(text)[0] <= room:
+                hint = text
+                break
+        else:
+            text = hints[-1]
+            while len(text) > 1 and self.SearchText.GetTextExtent(text + '\u2026')[0] > room:
+                text = text[:-1].rstrip()
+            if len(text) > 1:
+                hint = text + '\u2026'
+        if hint != self.SearchText.GetHint():
+            self.SearchText.SetHint(hint)
 
     def HandleEventDrawnControls(self, event):
         # a click on the chooser opens its choices as a menu, on the clear mark empties
@@ -2590,6 +2643,193 @@ class ListBoxSliderH(RectBox):
         self.DirectDraw()
 
 
+class CoverDrop(wx.FileDropTarget):
+
+    def __init__(self, field):
+        wx.FileDropTarget.__init__(self)
+        self.field = field
+
+    def OnDropFiles(self, x, y, filenames):
+        self.field.ChooseFile(filenames[0])
+        return True
+
+
+class CoverField(wx.Window):
+
+    '''the editor's cover: the song's, or one chosen (a click for a file, a file dropped on
+    it, or Look Up's) to be put in its tags when the page is saved, marked NEW till then;
+    or taken out of them (its menu), marked REMOVE'''
+
+    WILDCARD = 'Images (*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif)|' \
+        '*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif'
+
+    def __init__(self, parent, pos, size):
+        wx.Window.__init__(self, parent, pos=pos, size=size, style=wx.BORDER_NONE)
+        self.data = None
+        self.chosen = None
+        self.remove = False
+        self.path = None
+        self.note = ''
+        self.bitmap = None
+        self.hover = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+        self.SetToolTip(wx.ToolTip('Click to choose an image, or drop one here; right-click to'
+                                   ' remove the cover.\nChanged in the file\'s tags when saved.'))
+        self.SetDropTarget(CoverDrop(self))
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_LEFT_UP, self.OnClick)
+        self.Bind(wx.EVT_RIGHT_UP, self.OnMenu)
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda e: self.SetHover(True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(False))
+
+    def SetHover(self, hover):
+        self.hover = hover
+        self.Refresh()
+
+    def SetSong(self, path):
+        # the song's own cover, nothing chosen
+        try:
+            data = listimages.read_cover(path)
+        except Exception:
+            data = None
+        self.path = path
+        self.chosen = None
+        self.remove = False
+        self.SetData(data, '' if data else 'No cover')
+
+    def SetData(self, data, note=''):
+        self.data, self.note, self.bitmap = data, note, None
+        if data:
+            try:
+                image = wx.Image(io.BytesIO(data))
+            except Exception:
+                image = None
+            if image is not None and image.IsOk():
+                w, h = self.GetClientSize()
+                scale = min((w - 2) / float(image.GetWidth()), (h - 2) / float(image.GetHeight()))
+                self.bitmap = wx.Bitmap(image.Scale(max(1, int(image.GetWidth() * scale)),
+                                                    max(1, int(image.GetHeight() * scale)),
+                                                    wx.IMAGE_QUALITY_HIGH))
+        self.Refresh()
+
+    def SetChosen(self, data):
+        # a picture to be put in the tags (the page saved)
+        if listimages.make_cover(data) is None:
+            self.SetNote('Not an image')
+            return
+        self.chosen = data
+        self.remove = False
+        self.SetData(data)
+
+    def SetRemove(self):
+        # the tags' pictures to be taken out (the page saved)
+        self.chosen = None
+        self.remove = True
+        self.SetData(None, 'No cover')
+
+    def HasChange(self):
+        return self.chosen is not None or self.remove
+
+    def SetNote(self, note):
+        # a word over the cover (loading, a failure), the cover kept
+        self.note = note
+        self.Refresh()
+
+    def Saved(self):
+        self.chosen = None
+        self.remove = False
+        self.Refresh()
+
+    def OnMenu(self, event):
+        # the editor's menu (ItemEditBox.MakeMenu), the cover's items in it
+        self.GetTopLevelParent().ShowMenu(self)
+
+    def AppendMenu(self, menu):
+        choose = menu.Append(wx.ID_ANY, 'Choose Cover Image...')
+        menu.Bind(wx.EVT_MENU, lambda e: self.OnClick(None), choose)
+        remove = menu.Append(wx.ID_ANY, 'Remove Cover')
+        remove.Enable(bool(self.data) and not self.remove or self.chosen is not None)
+        menu.Bind(wx.EVT_MENU, lambda e: self.SetRemove(), remove)
+        # the cover shown (the song's or the one chosen) cut to a square on its middle, a
+        # change like a chosen one (NEW, taken back by Undo)
+        crop = menu.Append(wx.ID_ANY, 'Crop to Square')
+        shown = self.chosen if self.chosen is not None else None if self.remove else self.data
+        crop.Enable(bool(shown) and listimages.is_square(shown) is False)
+        menu.Bind(wx.EVT_MENU, lambda e: self.CropSquare(shown), crop)
+        # back to the song's own, the change not saved
+        undo = menu.Append(wx.ID_ANY, 'Undo Cover Change')
+        undo.Enable(self.HasChange() and self.path is not None)
+        menu.Bind(wx.EVT_MENU, lambda e: self.SetSong(self.path), undo)
+
+    def CropSquare(self, data):
+        square = listimages.crop_square(data)
+        if square is None:
+            self.SetNote('Not an image')
+            return
+        self.SetChosen(square)
+
+    def ChooseFile(self, path):
+        try:
+            with open(path, 'rb') as file:
+                data = file.read()
+        except OSError as error:
+            self.SetNote(error.strerror or 'Not read')
+            return
+        self.SetChosen(data)
+
+    def OnClick(self, event):
+        dialog = wx.FileDialog(self.GetTopLevelParent(), 'Choose a cover image',
+                               wildcard=self.WILDCARD, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        if dialog.ShowModal() == wx.ID_OK:
+            self.ChooseFile(dialog.GetPath())
+        dialog.Destroy()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        ui = macroboxstyle.current().UI
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        gc = wx.GraphicsContext.Create(dc)
+        edge = ui.ACCENT if self.chosen is not None else ui.WARN if self.remove else\
+            ui.FIELD_FOCUS if self.hover else ui.FIELD_EDGE
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
+        gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
+        if self.bitmap is not None:
+            bw, bh = self.bitmap.GetSize()
+            gc.DrawBitmap(self.bitmap, (w - bw) // 2, (h - bh) // 2, bw, bh)
+        if self.chosen is not None or self.remove:
+            # NEW or REMOVE (not saved yet) in a chip at its top left, not the edge's
+            # colour alone; REMOVE in the warning's (orange)
+            chip, face, ink = ('NEW', ui.ACCENT, wx.WHITE) if self.chosen is not None\
+                else ('REMOVE', ui.WARN, uikit.colour(ui.WARN_FG))
+            uikit.set_font(gc, uikit.get_font(uikit.MICRO, bold=True), ink)
+            tw, th = gc.GetTextExtent(chip)[:2]
+            gc.SetPen(wx.NullGraphicsPen)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(face))))
+            gc.DrawRoundedRectangle(6, 6, tw + 10, th + 4, uikit.RADIUS)
+            gc.DrawText(chip, 11, 8)
+        hint = '' if self.bitmap else 'Saved without one' if self.remove else 'Click or drop an image'
+        lines = [v for v in (self.note, hint) if v]
+        if lines:
+            # in a band across its bottom over a cover, on its middle without one
+            uikit.set_font(gc, uikit.get_font(uikit.LABEL), uikit.colour(ui.BAR_TEXT_DIM))
+            heights = [gc.GetTextExtent(v)[1] for v in lines]
+            total = sum(heights) + 4 * (len(lines) - 1)
+            y = (h - total) / 2.0
+            if self.bitmap is not None:
+                y = h - total - 10
+                gc.SetPen(wx.NullGraphicsPen)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 170))))
+                gc.DrawRectangle(1, y - 6, w - 2, total + 12)
+                uikit.set_font(gc, uikit.get_font(uikit.LABEL), wx.WHITE)
+            for line, lh in zip(lines, heights):
+                gc.DrawText(line, (w - gc.GetTextExtent(line)[0]) / 2.0, y)
+                y += lh + 4
+
+
 class ItemEditPanel(DialogPanel):
 
     def __init__(self, parent, pos=(0, 0)):
@@ -2597,11 +2837,46 @@ class ItemEditPanel(DialogPanel):
         self.Show(False)
         self.parent = parent
         x, y = pos
-        width, height = self.parent.GetSize()
-        self.SetRect((x, y, width - 4, 247))
+        width, height = self.parent.GetClientSize()
+        self.SetRect((x, y, width, self.GetContentHeight()))
         self.labels = ('Path', 'Filename', 'Duration', 'Size', 'Bitrate',
                        'Channel', 'Artist', 'Title', 'Album', 'Genre', 'Key', 'Tempo')
         self.disables = ('Duration', 'Type', 'Size', 'Bitrate', 'Channel', 'Path')
+        # the file's modified date kept as it was when its tags are saved (KEEP); read
+        # once, kept on a click
+        keep = GetPreference('item_editor_keep_modified')
+        self.keep_modified = keep is not False
+
+    # 16 px round the fields (and the footer's buttons: ItemEditBox), a field 22 tall and 8
+    # between them (21 over them, 6 under them, 10 and 15 at the sides before: the user);
+    # four columns a row of four (a name, 8 px, its field; 16 between them), Genre's field
+    # across two of them
+    # (the dialogs' spacing: macroboxlib.DIALOG_PAD and the rest)
+    PAD = DIALOG_PAD
+    ROW = DIALOG_ROW
+    ROW_GAP = DIALOG_GAP
+    LABEL = 50
+    LABEL_GAP = DIALOG_GAP
+    # (Modified: the file's modified date, not a list's column, shown; KEEP: the check
+    # box keeping it as it was when saved, across two columns)
+    ROWS = (('Path',), ('Filename',), ('Duration', 'Size', 'Bitrate', 'Channel'),
+            ('Modified', None, 'KEEP', None),
+            ('Artist',), ('Title',), ('Album',), ('Genre', None, 'Key', 'Tempo'))
+    RIGHT = ('Duration', 'Size', 'Bitrate', 'Channel', 'Tempo')
+    # the fields' width; the cover (CoverField) at their left, as tall as their rows
+    GRID = 552
+
+    @classmethod
+    def GetCoverSize(cls):
+        return len(cls.ROWS) * cls.ROW + (len(cls.ROWS) - 1) * cls.ROW_GAP
+
+    @classmethod
+    def GetContentHeight(cls):
+        return cls.PAD * 2 + cls.GetCoverSize()
+
+    @classmethod
+    def GetContentWidth(cls):
+        return cls.PAD * 3 + cls.GetCoverSize() + cls.GRID
 
     def SetPage(self, item_idx):
         if hasattr(self, 'TextCtrls') is False:
@@ -2624,92 +2899,77 @@ class ItemEditPanel(DialogPanel):
                 # value = value.decode(sys.getfilesystemencoding())
                 self.TextCtrls[i].SetValue(value)
             if v in self.disables:
-                # shown as values, not fields
+                # shown in fields of their edge alone
                 self.TextCtrls[i].SetReadOnly()
+        path = self.parent.parent.parent.GetItemValueByColumnKey(item_idx, 'path')
+        self.Cover.SetSong(path)
+        self.SetModified(path)
         self.Refresh()
 
     def InitTextCtrls(self):
         width, height = self.GetClientSize()
-        posX = 76
-        posY = 25
-        twh = (50, 20)
-        right = 27
-        self.TextCtrls = list()
-        self.StaticTexts = list()
-
-        self.StaticTexts += [StaticText(self, label=self.labels[0], pos=(15, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1),
-                                    size=(width - posX - right, 22))]
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[1], pos=(15, posY - 5 + 4),
-                                        size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(posX, posY - 5 + 1),
-                                    size=(width - posX - right, 22))]
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[2], pos=(
-            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
-
-        self.StaticTexts += [StaticText(self, label=self.labels[3], pos=(
-            15 + 145 - 2, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX + 145 - 2, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
-
-        self.StaticTexts += [StaticText(self, label=self.labels[4], pos=(
-            15 + 300 - 10 - 4, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX + 300 - 10 - 4, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
-
-        self.StaticTexts += [StaticText(self, label=self.labels[5], pos=(
-            15 + 300 - 10 + 145 - 6, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX + 300 - 10 + 145 - 6, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
-
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[6], pos=(
-            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX, posY - 5 + 1), size=(width - posX - right, 22))]
-
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[7], pos=(
-            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX, posY - 5 + 1), size=(width - posX - right, 22))]
-
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[8], pos=(
-            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX, posY - 5 + 1), size=(width - posX - right, 22))]
-
-        posY += 30
-
-        self.StaticTexts += [StaticText(self, label=self.labels[9], pos=(
-            15, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX, posY - 5 + 1), size=(210 - 4, 22))]
-
-        self.StaticTexts += [StaticText(self, label=self.labels[10], pos=(
-            15 + 300 - 10 - 4, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        # (Key's field on Bitrate's column, Tempo's name on its row: both were off)
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX + 300 - 10 - 4, posY - 5 + 1), size=(65 - 2, 22))]
-
-        self.StaticTexts += [StaticText(self, label=self.labels[11], pos=(
-            15 + 300 - 10 + 145 - 6, posY - 5 + 4), size=twh, style=wx.ALIGN_RIGHT)]
-        self.TextCtrls += [TextCtrl(self, pos=(
-            posX + 300 - 10 + 145 - 6, posY - 5 + 1), size=(65 - 2, 22), style=wx.ALIGN_RIGHT)]
+        size = self.GetCoverSize()
+        self.Cover = CoverField(self, (self.PAD, self.PAD), (size, size))
+        start = self.PAD * 2 + size
+        right = width - self.PAD
+        column = (right - start - self.PAD * 3) / 4.0
+        fields = dict()
+        y = self.PAD
+        for row in self.ROWS:
+            for k, label in enumerate(row):
+                if label is None:
+                    continue
+                x = int(round(start + k * (column + self.PAD)))
+                left = x + self.LABEL + self.LABEL_GAP
+                # (the last of a row, or one alone, to the right edge; Genre over None's
+                # column too)
+                last = k == len(row) - 1
+                spans = 2 if k + 1 < len(row) and row[k + 1] is None else 1
+                end = right if last else int(round(
+                    start + (k + spans) * (column + self.PAD) - self.PAD))
+                if label == 'KEEP':
+                    self.KeepModified, _ = make_check(
+                        self, 'Keep the modified date on save', (left, y + 3),
+                        self.keep_modified, self.OnKeepModified)
+                    continue
+                style = wx.ALIGN_RIGHT if label in self.RIGHT else 0
+                text = StaticText(self, label=label, pos=(x, y + 3),
+                                  size=(self.LABEL, 20), style=wx.ALIGN_RIGHT)
+                fields[label] = (text, TextCtrl(self, pos=(left, y),
+                                                size=(end - left, self.ROW), style=style))
+            y += self.ROW + self.ROW_GAP
+        self.StaticTexts = [fields[v][0] for v in self.labels]
+        self.TextCtrls = [fields[v][1] for v in self.labels]
+        # an editable field's changes marked as they are typed; its own menu (Look Up's
+        # values, Revert, Apply to All, and cut, copy and paste: ItemEditBox.ShowFieldMenu)
+        for i, label in enumerate(self.labels):
+            if label in self.disables:
+                continue
+            text = self.TextCtrls[i]
+            text.Bind(wx.EVT_TEXT, lambda e: (self.parent.UpdateMarks(), e.Skip()))
+            text.Bind(wx.EVT_CONTEXT_MENU, lambda e, i=i: self.parent.ShowFieldMenu(i))
+        self.Modified = fields['Modified'][1]
+        self.Modified.SetReadOnly()
         # the names dimmed, the values (and the fields) brighter
-        for text in self.StaticTexts:
+        for text, _ in fields.values():
             text.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+        # the editor's menu on its ground and its names too, not on the cover alone (the
+        # fields keep their own: cut, copy, paste)
+        for window in [self] + [c for c in self.GetChildren() if isinstance(c, wx.StaticText)]:
+            window.Bind(wx.EVT_RIGHT_UP, lambda e, window=window:
+                        self.parent.ShowMenu(window))
+
+    def OnKeepModified(self, value):
+        self.keep_modified = value
+        SetPreference('item_editor_keep_modified', value)
+
+    def SetModified(self, path):
+        try:
+            stamp = os.stat(path).st_mtime
+        except OSError:
+            self.Modified.SetValue('')
+            return
+        self.Modified.SetValue(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stamp)))
 
     def OnClose(self, event):
         self.Destroy()
@@ -2720,38 +2980,58 @@ class ItemEditBox(DialogBox):
     def __init__(self, parent):
         DialogBox.__init__(self, parent, size=(600, 320))
         self.parent = parent
-        self.auto_save = True
         self.SetTitle('Track Information Editor')
         self.selectedList = self.parent.parent.selectedList
         self.selectedItems = self.parent.parent.GetSelectedItems()
         self.total_items = len(self.selectedItems)
         self.selected_idx = 0
-        width, height = self.GetClientSize()
-        self.CloseButton = Button(self, label='Close')
-        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        w, h = self.CloseButton.GetSize()
-        height -= h + 15
-        left = 2
-        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
-        self.PageNumber = StaticText(self, label=label, pos=(
-            width - 95 - 160 - 120 + left, height + 5), size=(80, 20), style=wx.ALIGN_RIGHT)
-        self.CloseButton.SetPosition((width - 95 + 3 + left, height))
+        # the tracks' changes held till Save (Prev and Next and Close each saved, none could
+        # be taken back: the user): {item: dict(fields={name: value}, cover=('chosen', its
+        # bytes) or ('remove', None) or None)}; Cancel, the window's close or Esc lets them
+        # go (asked when there are); Look Up's rows of each track, its fields' values to
+        # choose from
+        self.pending = dict()
+        self.lookups = dict()
+        # the fields (ItemEditPanel), the footer under them
+        self.SetClientSize((ItemEditPanel.GetContentWidth(),
+                            ItemEditPanel.GetContentHeight() + self.GetFooterHeight()))
+        self.SaveButton = Button(self, label='Save', primary=True)
+        self.SaveButton.Bind(wx.EVT_BUTTON, self.OnSave)
+        self.CancelButton = Button(self, label='Cancel')
+        self.CancelButton.Bind(wx.EVT_BUTTON, self.OnClose)
         self.NextButton = Button(self, label='Next')
-        self.NextButton.SetPosition((width - 95 - 80 + 3 + left, height))
         self.NextButton.Bind(wx.EVT_BUTTON, self.OnNext)
         self.PrevButton = Button(self, label='Prev')
         self.PrevButton.Bind(wx.EVT_BUTTON, self.OnPrev)
-        self.PrevButton.SetPosition((width - 95 - 80 * 2 + 3 + left, height))
         self.LookUpButton = Button(self, label='Look Up')
         self.LookUpButton.Bind(wx.EVT_BUTTON, self.OnLookUp)
-        self.LookUpButton.SetPosition((10, height))
+        top = self.PlaceButtons(right=(self.PrevButton, self.NextButton, self.SaveButton,
+                                       self.CancelButton),
+                                left=(self.LookUpButton,))
+        # the page's number PAD before Prev, on the buttons' middle (and the tracks changed)
+        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
+        self.PageNumber = StaticText(self, label=label, pos=(
+            self.PrevButton.GetPosition().x - DIALOG_PAD - 160, top + 5), size=(160, 20),
+            style=wx.ALIGN_RIGHT)
         self.LookUpButton.SetToolTip(wx.ToolTip(
             'Find artist, title, album and genre on Discogs, Last.fm and AcoustID.'
             '\nThe keys are set in Preference > Web Services.'))
         self.ItemEditPanel = ItemEditPanel(self)
-        self.ItemEditPanel.SetPage(self.selectedItems[self.selected_idx])
-        self.AutoSeButtonState()
+        self.SetPage()
         self.ItemEditPanel.Show(True)
+        for window in (self, self.PageNumber):
+            window.Bind(wx.EVT_RIGHT_UP, lambda e, window=window: self.ShowMenu(window))
+
+    def ShowMenu(self, window):
+        # the editor's menu, where it was asked for: the cover's items, Look Up
+        menu = wx.Menu()
+        self.ItemEditPanel.Cover.AppendMenu(menu)
+        menu.AppendSeparator()
+        look = menu.Append(wx.ID_ANY, 'Look Up...')
+        look.Enable(self.LookUpButton.IsEnabled())
+        menu.Bind(wx.EVT_MENU, self.OnLookUp, look)
+        window.PopupMenu(menu)
+        menu.Destroy()
 
     def GetFieldText(self, label):
         return self.ItemEditPanel.TextCtrls[self.ItemEditPanel.labels.index(label)]
@@ -2789,13 +3069,62 @@ class ItemEditBox(DialogBox):
             return
         itemIdx = self.selectedItems[self.selected_idx]
         length = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'duration')
-        dialog = WebInfoBox(self, candidates, errors, length)
+        # its rows kept: each field's values to choose from (its menu, its mark)
+        self.lookups[itemIdx] = candidates
+        self.UpdateMarks()
+        dialog = WebInfoBox(self, candidates, errors, length, use=self.UseLookUpValue)
         if dialog.ShowModal() == wx.ID_OK and dialog.selected is not None:
             chosen = candidates[dialog.selected]
-            for label in ('Artist', 'Title', 'Album', 'Genre'):
-                if chosen[label.lower()]:
+            # the fields ticked alone (Tags, all four, before: the user)
+            for label in self.LOOKUP_FIELDS:
+                if dialog.apply[label.lower()] and chosen[label.lower()]:
                     self.GetFieldText(label).SetValue(chosen[label.lower()])
+            if dialog.apply['cover'] and chosen['image']:
+                self.UseLookUpValue('Cover', chosen['image'])
         dialog.Destroy()
+
+    # the fields Look Up fills (its rows' keys, in lower case)
+    LOOKUP_FIELDS = ('Artist', 'Title', 'Album', 'Genre')
+
+    def UseLookUpValue(self, label, value):
+        # one value of a Look Up's row in its field (its cover: fetched, from the disk when
+        # fetched for its preview), held as the editor's changes are
+        if label != 'Cover':
+            self.GetFieldText(label).SetValue(value)
+            return
+        self.ItemEditPanel.Cover.SetNote('Loading...')
+        thread = threading.Thread(target=self.FetchCoverThread,
+                                  args=(self.selected_idx, value))
+        thread.daemon = True
+        thread.start()
+
+    def FetchCoverThread(self, selected_idx, url):
+        try:
+            data, note = webinfo.fetch_image(url), ''
+        except Exception as error:
+            data, note = None, str(error)
+        wx.CallAfter(self.OnCoverFetched, selected_idx, data, note)
+
+    def OnCoverFetched(self, selected_idx, data, note):
+        if not self or selected_idx != self.selected_idx:
+            return
+        if data:
+            self.ItemEditPanel.Cover.SetChosen(data)
+        else:
+            self.ItemEditPanel.Cover.SetNote(note or 'No cover')
+
+    def KeepModified(self, itemIdx, before):
+        # the file's modified date put back as it was before its tags and cover were
+        # written (the panel's KEEP; a rename does not move it); the accessed one too
+        if before is None or not self.ItemEditPanel.keep_modified:
+            return
+        path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
+        try:
+            if os.stat(path).st_mtime_ns != before.st_mtime_ns:
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        except OSError as error:
+            wx.MessageBox('The modified date was not kept.\n%s' % (error), 'Modified',
+                          wx.OK | wx.ICON_WARNING, self)
 
     def OnAutoSave(self, event):
         if event.IsChecked():
@@ -2854,98 +3183,279 @@ class ItemEditBox(DialogBox):
         if resp is False:
             self.SetValue(self.restore_value)
 
-    def OnSave(self, event):
+    # held
+
+    def StashPage(self):
+        # the page's changes (its fields and cover against the file's) held for Save
+        panel = self.ItemEditPanel
         itemIdx = self.selectedItems[self.selected_idx]
-        is_playing_item = False
-        if self.parent.parent.parent.PlayBox.IsPlaying():
-            path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
-            if path == self.parent.parent.parent.PlayBox.GetPlayingItemInfo('path'):
-                is_playing_item = True
-                self.parent.parent.parent.PlayBox.OnPause()
-                # resume = self.parent.parent.parent.PlayBox.cue.resume
-
-        for i, v in enumerate(self.ItemEditPanel.labels):
-            if v in self.ItemEditPanel.disables:
+        fields = dict()
+        for i, label in enumerate(panel.labels):
+            if label in panel.disables:
                 continue
-            columnIdx = self.parent.parent.GetColumnKeyToIdx(v.lower())
-            if v.lower() == 'filename':
-                newFilename = self.ItemEditPanel.TextCtrls[i].GetValue()
-                newFilename = self.parent.parent.LimitFileName(newFilename)
-                oldPath = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
-                pathBase = os.path.sep.join(oldPath.split(os.path.sep)[:-1])
-                fileType = os.path.splitext(oldPath)[-1]
-                newPath = os.path.sep.join([pathBase, newFilename])
-                newPath = ''.join([newPath, fileType])
-                if oldPath != newPath:
-                    path_resp = self.parent.parent.RenameFileByItemIdx(itemIdx, newPath)
-                    if path_resp is False:
-                        self.ItemEditPanel.TextCtrls[i].SetValue(
-                            self.ItemEditPanel.restore_value[i])
-                else:
-                    path_resp = True
-            elif self.parent.parent.IsID3TAGColumnByColumnIdx(columnIdx):
-                newValue = self.ItemEditPanel.TextCtrls[i].GetValue()
-                oldValue = self.ItemEditPanel.restore_value[i]
-                # if type(oldValue) != unicode:
-                #     oldValue = oldValue.decode(sys.getfilesystemencoding())
-                if newValue == oldValue:
-                    continue
-                if v.lower() == 'tempo':
-                    try:
-                        newValue = float(newValue)
-                        newValue = u'%05.1f' % (0.1 * round(newValue * 10))
-                    except Exception:
-                        newValue = ''
-                tag_resp = self.parent.parent.RenameID3TAGByColumnItemIdx(
-                    columnIdx, itemIdx, newValue)
-                if tag_resp is False:
-                    self.ItemEditPanel.TextCtrls[i].SetValue(
-                        self.ItemEditPanel.restore_value[i])
+            value = panel.TextCtrls[i].GetValue()
+            if value != panel.restore_value[i]:
+                fields[label] = value
+        cover = panel.Cover
+        change = ('remove', None) if cover.remove else\
+            ('chosen', cover.chosen) if cover.chosen is not None else None
+        if fields or change is not None:
+            self.pending[itemIdx] = dict(fields=fields, cover=change)
+        else:
+            self.pending.pop(itemIdx, None)
 
-        if is_playing_item:
-            if path_resp:
-                self.parent.parent.parent.PlayBox.cue.path = newPath
-                self.parent.parent.parent.PlayBox.cue.mdx\
-                    = self.parent.parent.parent.PlayBox.GetMDX(newPath)
-                self.parent.parent.parent.PlayBox.cue.item\
-                    = MakeMusicFileItem(newPath, 0, ListBoxColumn())
-            self.parent.parent.parent.PlayBox.OnResume()
-        self.SetPage()
+    def UpdateMarks(self):
+        # a changed field's name in the accent and a bar at its left; a field's mark (its
+        # menu) when Look Up has values for it; the tracks changed by the page's number
+        panel = getattr(self, 'ItemEditPanel', None)
+        # (not while a page is read in: its fields set from the file and its held changes
+        # over them one at a time, a page's changes taken as none and let go)
+        if panel is None or getattr(self, 'loading', False):
+            return
+        ui = macroboxstyle.current().UI
+        for i, label in enumerate(panel.labels):
+            if label in panel.disables:
+                continue
+            text = panel.TextCtrls[i]
+            changed = text.GetValue() != panel.restore_value[i]
+            text.frame.SetChanged(changed)
+            name = panel.StaticTexts[i]
+            colour = wx.Colour(ui.ACCENT if changed else ui.BAR_TEXT_DIM)
+            if name.GetForegroundColour() != colour:
+                name.SetForegroundColour(colour)
+                name.Refresh()
+            text.frame.SetMark((lambda i=i: self.ShowFieldMenu(i)) if self.GetPicks(label)
+                               else None)
+        self.StashPage()
+        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
+        if self.total_items > 1 and self.pending:
+            label = '%d changed   %s' % (len(self.pending), label)
+        if self.PageNumber.GetLabelText() != label:
+            size = self.PageNumber.GetSize()
+            self.PageNumber.SetLabelText(label)
+            self.PageNumber.SetInitialSize(size)
+
+    def GetPicks(self, label):
+        # [(value, its sources)] Look Up found for this field of the page's track
+        if label not in self.LOOKUP_FIELDS:
+            return []
+        rows = self.lookups.get(self.selectedItems[self.selected_idx]) or []
+        picks = dict()
+        for row in rows:
+            value = (row.get(label.lower()) or '').strip()
+            if value:
+                sources = picks.setdefault(value, [])
+                if row['source'] not in sources:
+                    sources.append(row['source'])
+        return list(picks.items())
+
+    def ShowFieldMenu(self, i):
+        # a field's menu: Look Up's values for it, Revert, Apply to All, and the text's own
+        panel = self.ItemEditPanel
+        label, text = panel.labels[i], panel.TextCtrls[i]
+        menu = wx.Menu()
+
+        def add(name, action, enable=True):
+            item = menu.Append(wx.ID_ANY, name)
+            item.Enable(enable)
+            menu.Bind(wx.EVT_MENU, lambda e: action(), item)
+
+        picks = self.GetPicks(label)
+        for value, sources in picks:
+            shown = value if len(value) <= 60 else value[:57] + '...'
+            add('%s\t%s' % (shown.replace('&', '&&'), ', '.join(sources)),
+                lambda value=value: text.SetValue(value))
+        if picks:
+            menu.AppendSeparator()
+        original = panel.restore_value[i]
+        add('Revert', lambda: text.SetValue(original), text.GetValue() != original)
+        if self.total_items > 1 and label != 'Filename':
+            add('Apply to All %d Tracks' % (self.total_items),
+                lambda: self.ApplyToAll(label, text.GetValue()))
+        menu.AppendSeparator()
+        add('Cut', text.Cut, text.CanCut())
+        add('Copy', text.Copy, text.CanCopy())
+        add('Paste', text.Paste, text.CanPaste())
+        add('Select All', text.SelectAll)
+        text.frame.PopupMenu(menu)
+        menu.Destroy()
+
+    def ApplyToAll(self, label, value):
+        # this field's value for every track being edited (held for Save as the page's;
+        # a track whose own is that already left unchanged)
+        listbox = self.parent.parent
+        current = self.selectedItems[self.selected_idx]
+        for itemIdx in self.selectedItems:
+            if itemIdx == current:
+                continue
+            change = self.pending.setdefault(itemIdx, dict(fields=dict(), cover=None))
+            own = listbox.GetItemValueByColumnKey(itemIdx, label.lower())
+            own = str(own) if isinstance(own, (int, float)) else own
+            if value == own:
+                change['fields'].pop(label, None)
+            else:
+                change['fields'][label] = value
+            if not change['fields'] and change['cover'] is None:
+                self.pending.pop(itemIdx, None)
+        self.UpdateMarks()
+
+    # saved
+
+    def OnSave(self, event):
+        # every track's changes written, then closed
+        self.StashPage()
+        for itemIdx in [v for v in self.selectedItems if v in self.pending]:
+            self.WriteItem(itemIdx, self.pending.pop(itemIdx))
         self.parent.parent.List.DirectDraw()
+        self.EndModal(wx.ID_OK)
+
+    def WriteItem(self, itemIdx, change):
+        # a track's fields (its file renamed first, its tags under its name after) and its
+        # cover written; the song playing paused for it and played on
+        listbox = self.parent.parent
+        playbox = listbox.parent.PlayBox
+        path = listbox.GetItemValueByColumnKey(itemIdx, 'path')
+        try:
+            before = os.stat(path)
+        except OSError:
+            before = None
+        playing = playbox.IsPlaying() and path == playbox.GetPlayingItemInfo('path')
+        if playing:
+            playbox.OnPause()
+        renamed = None
+        for label in self.ItemEditPanel.labels:
+            if label not in change['fields']:
+                continue
+            value = change['fields'][label]
+            columnIdx = listbox.GetColumnKeyToIdx(label.lower())
+            if label == 'Filename':
+                name = listbox.LimitFileName(value)
+                base = os.path.sep.join(path.split(os.path.sep)[:-1])
+                newPath = os.path.sep.join([base, name]) + os.path.splitext(path)[-1]
+                if newPath != path and listbox.RenameFileByItemIdx(itemIdx, newPath) is not False:
+                    renamed = newPath
+            elif listbox.IsID3TAGColumnByColumnIdx(columnIdx):
+                if label == 'Tempo':
+                    try:
+                        value = u'%05.1f' % (0.1 * round(float(value) * 10))
+                    except Exception:
+                        value = ''
+                listbox.RenameID3TAGByColumnItemIdx(columnIdx, itemIdx, value)
+        if change['cover'] is not None:
+            self.WriteCover(itemIdx, *change['cover'])
+        self.KeepModified(itemIdx, before)
+        if playing:
+            if renamed:
+                playbox.cue.path = renamed
+                playbox.cue.mdx = playbox.GetMDX(renamed)
+                playbox.cue.item = MakeMusicFileItem(renamed, 0, ListBoxColumn())
+            playbox.OnResume()
+
+    def WriteCover(self, itemIdx, kind, data):
+        # the cover chosen put in the song's tags, or its pictures taken out; the list's and
+        # the player's read again
+        listbox = self.parent.parent
+        path = listbox.GetItemValueByColumnKey(itemIdx, 'path')
+        try:
+            if kind == 'remove':
+                listimages.remove_cover(path)
+            else:
+                listimages.write_cover(path, data)
+        except Exception as error:
+            wx.MessageBox('The cover was not saved.\n%s' % (error), 'Cover',
+                          wx.OK | wx.ICON_WARNING, self)
+            return
+        images = getattr(self.parent, 'images', None)
+        if images is not None:
+            images.Forget(listbox.GetItemValueByColumnKey(itemIdx, 'mdx'), 'cover')
+        playbox = listbox.parent.PlayBox
+        if playbox.cue.path == path:
+            playbox.Apic.HandleApicChange(forced=True)
+
+    # paged
 
     def OnPrev(self, event):
-        if self.auto_save:
-            self.OnSave(None)
-        self.selected_idx -= 1
-        if self.selected_idx < 0:
-            self.selected_idx = 0
-            return
-        self.SetPage()
+        if self.selected_idx > 0:
+            self.StashPage()
+            self.selected_idx -= 1
+            self.SetPage()
 
     def OnNext(self, event):
-        if self.auto_save:
-            self.OnSave(None)
-        self.selected_idx += 1
-        if self.selected_idx > self.total_items - 1:
-            self.selected_idx = self.total_items - 1
-            return
-        self.SetPage()
+        if self.selected_idx < self.total_items - 1:
+            self.StashPage()
+            self.selected_idx += 1
+            self.SetPage()
 
     def SetPage(self):
+        # the track's fields as its file has them, its held changes over them
         self.Freeze()
+        self.loading = True
         self.AutoSeButtonState()
-        self.ItemEditPanel.SetPage(self.selectedItems[self.selected_idx])
-        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
-        size = self.PageNumber.GetSize()
-        self.PageNumber.SetLabelText(label)
-        self.PageNumber.SetInitialSize(size)
+        itemIdx = self.selectedItems[self.selected_idx]
+        panel = self.ItemEditPanel
+        panel.SetPage(itemIdx)
+        change = self.pending.get(itemIdx)
+        if change is not None:
+            for label, value in change['fields'].items():
+                panel.TextCtrls[panel.labels.index(label)].SetValue(value)
+            if change['cover'] is not None:
+                kind, data = change['cover']
+                if kind == 'remove':
+                    panel.Cover.SetRemove()
+                else:
+                    panel.Cover.SetChosen(data)
+        self.loading = False
+        self.UpdateMarks()
         self.Thaw()
 
     def OnClose(self, event):
-        if self.auto_save:
-            self.OnSave(None)
-        self.EndModal(0)
-        self.Destroy()
+        # Cancel, the window's close, Esc: the changes let go, asked first when there are
+        self.StashPage()
+        if self.pending and not confirm_discard_edits(self, len(self.pending)):
+            return
+        self.pending.clear()
+        self.EndModal(wx.ID_CANCEL)
+
+
+class DiscardEditsBox(ConfirmDialogBox):
+
+    # the editor's changes let go: Discard, or back to them
+    def __init__(self, parent, count, answer):
+        ConfirmDialogBox.__init__(self, parent)
+        self.answer = answer
+        self.SetTitle('Discard Changes')
+        self.ApplyButton.SetLabelText('Discard')
+        self.CloseButton.SetLabelText('Keep Editing')
+        self.Message.Hide()
+        tracks = 'this track' if count == 1 else '%d tracks' % (count)
+        self.Text = wx.StaticText(self, label='Discard the changes to %s?\nNothing has been '
+                                  'written to the files.' % (tracks),
+                                  style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
+        self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
+        self.Text.SetFont(uikit.get_font(uikit.BODY))
+        self.SetClientSize((340, DIALOG_PAD * 2 + 40 + self.GetFooterHeight()))
+        self.OnSize(None)
+
+    def OnSize(self, event):
+        ConfirmDialogBox.OnSize(self, event)
+        if getattr(self, 'Text', None) is not None:
+            width, height = self.GetClientSize()
+            self.Text.SetRect((DIALOG_PAD, DIALOG_PAD, width - DIALOG_PAD * 2, 40))
+
+    def OnApply(self, event):
+        self.answer.append(True)
+        self.OnClose(event)
+
+
+def confirm_discard_edits(parent, count):
+    # True when the editor's changes are to be let go (asked over it)
+    answer = []
+    box = DiscardEditsBox(parent, count, answer)
+    x, y, w, h = parent.GetRect()
+    bw, bh = box.GetSize()
+    box.SetPosition((x + (w - bw) // 2, y + (h - bh) // 2))
+    box.ShowModal()
+    return bool(answer)
 
 
 def show_library_results(mainpanel, title, songs):
@@ -2960,64 +3470,134 @@ def show_library_results(mainpanel, title, songs):
 
 class LibrarySearchBox(DialogBox):
 
-    # the library (every playlist's songs) searched: words, a BPM range, a key and a genre
-    # together; what matches goes to the Search tab
+    # the library (every playlist's songs) searched: words, a BPM within a share of one, a
+    # key and a genre together; what matches goes to the Search tab
+    # (a BPM's low and high, the key and the genre typed before: the BPM as a DJ asks it,
+    # the key in the notation set, the genres the library has)
+    TOLERANCES = (1, 2, 3, 5, 8)
+    TOLERANCE = 3
+    ANY = 'Any'
+
     def __init__(self, parent, mainpanel):
         DialogBox.__init__(self, parent, size=(440, 250))
         self.mainpanel = mainpanel
         self.SetTitle('Find in Library')
-        x, y = (90, 16)
+        self.songs = library.collect(self.mainpanel.ListBox)
+        # the dialogs' spacing: names right-aligned in a column PAD in (as wide as its
+        # widest: fit_name_column), a field GAP past its name, rows GAP apart; the footer
+        # under them, the result's words in it
+        name, step = 70, DIALOG_ROW + DIALOG_GAP
+        x, y = DIALOG_PAD + name + DIALOG_GAP, DIALOG_PAD
+        width = x + 320 + DIALOG_PAD
+        self.SetClientSize((width, DIALOG_PAD + step * 3 + DIALOG_ROW + DIALOG_PAD
+                            + self.GetFooterHeight()))
         style = wx.TE_PROCESS_ENTER
-        StaticText(self, label='Words', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
-        self.Words = TextCtrl(self, pos=(x, y), size=(320, 22), style=style)
-        y += 32
-        StaticText(self, label='BPM', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
-        self.Low = TextCtrl(self, pos=(x, y), size=(60, 22), style=style)
-        StaticText(self, label='to', pos=(x + 66, y + 3), size=(16, -1))
-        self.High = TextCtrl(self, pos=(x + 86, y), size=(60, 22), style=style)
-        self.Octave = CheckBox(self, label='Half and double too', pos=(x + 160, y + 4))
-        y += 32
-        StaticText(self, label='Key', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
-        self.Key = TextCtrl(self, pos=(x, y), size=(60, 22), style=style)
-        self.Compatible = CheckBox(self, label='Compatible keys too', pos=(x + 160, y + 4))
-        y += 32
-        StaticText(self, label='Genre', pos=(10, y + 3), size=(70, -1), style=wx.ALIGN_RIGHT)
-        self.Genre = TextCtrl(self, pos=(x, y), size=(150, 22), style=style)
-        for control in (self.Words, self.Low, self.High, self.Key, self.Genre):
+
+        def label(text, y):
+            StaticText(self, label=text, pos=(DIALOG_PAD, y + 3), size=(name, -1),
+                       style=wx.ALIGN_RIGHT)
+        label('Words', y)
+        self.Words = TextCtrl(self, pos=(x, y), size=(320, DIALOG_ROW), style=style)
+        y += step
+        # the BPM and how far from it (DJs' 3% at first), the half and the double too
+        label('BPM', y)
+        self.Tempo = TextCtrl(self, pos=(x, y), size=(60, DIALOG_ROW), style=style)
+        StaticText(self, label='\u00b1', pos=(x + 60 + DIALOG_GAP, y + 3), size=(10, -1))
+        self.Tolerance = ComboBox(self, value='%d%%' % (self.TOLERANCE),
+                                  choices=['%d%%' % (v) for v in self.TOLERANCES],
+                                  pos=(x + 60 + DIALOG_GAP * 2 + 10, y), size=(64, DIALOG_ROW),
+                                  style=wx.CB_READONLY)
+        # the check boxes a group past the fields, one column
+        cx = x + 60 + DIALOG_GAP * 2 + 10 + 64 + DIALOG_PAD
+        self.Octave, _ = make_check(self, 'Half and double too', (cx, y + 3), False,
+                                    lambda value: None)
+        y += step
+        # the 24 keys in the notation the analysis writes them in (Options' key format)
+        label('Key', y)
+        self.Key = ComboBox(self, value=self.ANY, choices=[self.ANY] + self.GetKeys(),
+                            pos=(x, y), size=(60 + DIALOG_GAP * 2 + 10 + 64, DIALOG_ROW),
+                            style=wx.CB_READONLY)
+        self.Compatible, _ = make_check(self, 'Compatible keys too', (cx, y + 3), False,
+                                        lambda value: None)
+        y += step
+        # the genres the library's songs have
+        label('Genre', y)
+        self.Genre = ComboBox(self, value=self.ANY, choices=[self.ANY] + self.GetGenres(),
+                              pos=(x, y), size=(320, DIALOG_ROW), style=wx.CB_READONLY)
+        for control in (self.Words, self.Tempo):
             control.Bind(wx.EVT_TEXT_ENTER, self.OnSearch)
-        width, height = self.GetClientSize()
-        self.Status = StaticText(self, label='', pos=(10, height - 60), size=(width - 20, 18))
-        self.PlayingButton = Button(self, label='From playing song')
-        self.PlayingButton.SetRect((10, height - 36, 130, 26))
+        shift = fit_name_column(self, DIALOG_PAD, name)
+        width -= shift
+        self.SetClientSize((width, self.GetClientSize().height))
+        self.PlayingButton = Button(self, label='From playing song', size=(130, 26))
         self.PlayingButton.Bind(wx.EVT_BUTTON, self.OnPlaying)
         self.SearchButton = Button(self, label='Search', primary=True)
-        self.SearchButton.SetPosition((width - 175, height - 36))
         self.SearchButton.Bind(wx.EVT_BUTTON, self.OnSearch)
         self.CloseButton = Button(self, label='Close')
-        self.CloseButton.SetPosition((width - 90, height - 36))
         self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+        top = self.PlaceButtons(right=(self.SearchButton, self.CloseButton),
+                                left=(self.PlayingButton,))
+        # the result's words between the buttons, PAD from either, on their middle
+        left = self.PlayingButton.GetRect().GetRight() + 1 + DIALOG_PAD
+        self.Status = StaticText(self, label='', pos=(left, top + 5),
+                                 size=(self.SearchButton.GetPosition().x - DIALOG_PAD - left, 18),
+                                 style=wx.ALIGN_RIGHT | wx.ST_NO_AUTORESIZE)
+
+    def GetKeyFormat(self):
+        # Options' key format: flat, sharp (the first one) or Camelot
+        kind = GetPreference('key_format_type')
+        return kind if kind in (0, 1, 2) else 1
+
+    def GetKeys(self):
+        # the 24 keys in the format: Camelot's by the wheel (1A, 1B, 2A ...), the notes' a
+        # root's major and minor by the octave (C, Cm, C#, C#m ...)
+        names = mfeats.get_chord_type_definition()[self.GetKeyFormat()]
+        if self.GetKeyFormat() == 2:
+            return sorted(names, key=lambda v: (int(v[:-1]), v[-1]))
+        return [v for k in range(12) for v in (names[k], names[k + 12])]
+
+    def GetGenres(self):
+        # the genres the songs' tags have, each once whatever its case, by name (the folders'
+        # names too a while: not genres, the user)
+        genres = dict()
+        for song in self.songs:
+            genre = str(song.values.get('genre', '') or '').strip()
+            if genre:
+                genres.setdefault(genre.lower(), genre)
+        return sorted(genres.values(), key=lambda v: v.lower())
 
     def OnPlaying(self, event):
         playbox = self.mainpanel.PlayBox
-        tempo = playbox.GetPlayingTempo()
+        self.FromSong(playbox.GetPlayingTempo(), playbox.GetPlayingKey())
+
+    def FromSong(self, tempo, key):
+        # a song's tempo within 3% (its half and double too) and its key with its compatible
+        # ones (the playing one's, or a row's: the list's and the header's menus)
+        tempo = library.to_float(tempo)
         if tempo > 0:
-            self.Low.SetValue('%.1f' % (tempo * 0.97))
-            self.High.SetValue('%.1f' % (tempo * 1.03))
+            self.Tempo.SetValue('%.1f' % (tempo))
+            self.Tolerance.SetValue('%d%%' % (self.TOLERANCE))
             self.Octave.SetValue(True)
-        key = playbox.GetPlayingKey()
+        key = (key or '').strip()
         if key and key not in ('-', ' '):
-            self.Key.SetValue(key)
-            self.Compatible.SetValue(True)
+            key = mfeats.convert_chord_type(key.strip(), self.GetKeyFormat())
+            if key in self.GetKeys():
+                self.Key.SetValue(key)
+                self.Compatible.SetValue(True)
 
     def OnSearch(self, event):
-        songs = library.collect(self.mainpanel.ListBox)
+        tempo = library.to_float(self.Tempo.GetValue())
+        share = int(self.Tolerance.GetValue().rstrip('%')) / 100.0
+        low, high = (tempo * (1 - share), tempo * (1 + share)) if tempo > 0 else (0.0, 0.0)
+        key, genre = self.Key.GetValue(), self.Genre.GetValue()
+        # the library as it is now (its genres as it was opened)
+        self.songs = library.collect(self.mainpanel.ListBox)
         found = library.search(
-            songs, text=self.Words.GetValue(), low=library.to_float(self.Low.GetValue()),
-            high=library.to_float(self.High.GetValue()), octave=self.Octave.GetValue(),
-            key=self.Key.GetValue().strip(), compatible=self.Compatible.GetValue(),
-            genre=self.Genre.GetValue())
+            self.songs, text=self.Words.GetValue(), low=low, high=high,
+            octave=self.Octave.GetValue(), key='' if key == self.ANY else key,
+            compatible=self.Compatible.GetValue(), genre='' if genre == self.ANY else genre)
         show_library_results(self.mainpanel, library.SEARCH_TITLE, found)
-        self.Status.SetLabel('%d of %d songs in the library' % (len(found), len(songs)))
+        self.Status.SetLabel('%d of %d songs' % (len(found), len(self.songs)))
 
     def OnClose(self, event):
         self.Destroy()
@@ -3027,30 +3607,51 @@ class WebInfoBox(DialogBox):
 
     COVER = 200
 
-    def __init__(self, parent, candidates, errors, length=''):
+    def __init__(self, parent, candidates, errors, length='', use=None):
         DialogBox.__init__(self, parent, size=(1150, 340))
+        # use(field, value): one cell's value put in the editor's field (its menu)
+        self.use = use
+        # not double-buffered as the dialogs are (WS_EX_COMPOSITED): Windows' list in such
+        # a window painted without end, the player behind it at 3 to 10 frames a second
+        # while it was open (the user; 59 with it hidden, measured)
+        self.SetDoubleBuffered(False)
         title = 'Look Up: %d found' % (len(candidates))
         if length:
             title += ', this file %s' % (length)
         self.SetTitle(title)
         self.candidates = candidates
         self.selected = None
-        self.cover_timer = None
+        # every row's cover fetched while it is open, one after another (the row chosen
+        # first), by address: (picture, note), shown at once when its row is chosen; whether
+        # a row has one told in its Cover column (each row's was fetched only once chosen,
+        # waited for to know if it had one at all: the user)
+        self.covers = dict()
+        self.cover_first = 0
+        self.closing = False
+        # as tall as the cover and its note under it (the note ran into the footer's line)
+        self.SetClientSize((self.GetClientSize().width, DIALOG_PAD + self.COVER + DIALOG_GAP
+                            + 18 + DIALOG_PAD + self.GetFooterHeight()))
         width, height = self.GetClientSize()
         self.List = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        columns = (('Source', 65), ('Artist', 120), ('Title', 140), ('Album', 120),
-                   ('Release', 230), ('Genre', 80), ('Length', 50), ('Year', 45), ('Score', 45))
+        # (Cover: none, - ; fetching, ... ; its size; failed)
+        columns = (('Source', 65), ('Cover', 75), ('Artist', 120), ('Title', 130),
+                   ('Album', 110), ('Release', 170), ('Genre', 80), ('Length', 50),
+                   ('Year', 45), ('Score', 45))
         for i, (title, column_width) in enumerate(columns):
             self.List.InsertColumn(i, title, width=column_width)
-        for i, v in enumerate(candidates):
-            score = '' if v['score'] is None else '%.2f' % (v['score'])
-            values = (v['source'], v['artist'], v['title'], v['album'], v['release'],
-                      v['genre'], webinfo.format_duration(v['duration']), v['year'], score)
-            self.List.InsertItem(i, values[0])
-            for column, value in enumerate(values[1:], 1):
-                self.List.SetItem(i, column, value)
+        # the rows in the order shown, each an index into candidates (Apply and the menu
+        # are told by it): a header clicked sorts them, again the other way (the user)
+        self.order = list(range(len(candidates)))
+        self.sort_column = None
+        self.sort_ascending = True
+        # the Cover column's text by address, for a row a sort has moved
+        self.cover_cells = dict()
+        for i in range(len(candidates)):
+            self.List.InsertItem(i, '')
+        self.FillRows()
+        self.List.Bind(wx.EVT_LIST_COL_CLICK, self.OnColumnClick)
         self.List.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.OnApply)
-        self.List.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.OnOpenLink)
+        self.List.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.OnRowMenu)
         self.List.Bind(wx.EVT_LIST_ITEM_SELECTED, self.OnSelected)
         self.Cover = wx.StaticBitmap(self, bitmap=wx.Bitmap(self.COVER, self.COVER))
         self.CoverText = StaticText(self, label='', style=wx.ALIGN_CENTER)
@@ -3058,31 +3659,148 @@ class WebInfoBox(DialogBox):
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.CancelButton = Button(self, label='Cancel')
         self.CancelButton.Bind(wx.EVT_BUTTON, self.OnCancel)
-        w, h = self.CancelButton.GetSize()
-        bottom = height - h - 10
-        self.List.SetRect((10, 10, width - 30 - self.COVER,
-                           bottom - 20 - (20 if errors else 0)))
-        self.Cover.SetRect((width - 10 - self.COVER, 10, self.COVER, self.COVER))
-        self.CoverText.SetRect((width - 10 - self.COVER, 10 + self.COVER + 6, self.COVER, 18))
+        # the dialogs' spacing: the list and the cover PAD in and PAD apart, the cover's
+        # note GAP under it; the services' errors a row at the list's foot; the footer
+        bottom = self.GetContentBottom()
+        rows = DIALOG_ROW + DIALOG_GAP if errors else 0
+        cx = width - DIALOG_PAD - self.COVER
+        self.List.SetRect((DIALOG_PAD, DIALOG_PAD, cx - DIALOG_PAD * 2,
+                           bottom - DIALOG_PAD - rows))
+        self.Cover.SetRect((cx, DIALOG_PAD, self.COVER, self.COVER))
+        self.CoverText.SetRect((cx, DIALOG_PAD + self.COVER + DIALOG_GAP, self.COVER, 18))
         self.SetCover(None, '')
         if errors:
             StaticText(self, label=' / '.join(errors),
-                       pos=(10, bottom - 25), size=(width - 20, 18))
-        self.CancelButton.SetPosition((width - 95, bottom))
-        self.ApplyButton.SetPosition((width - 95 - 80, bottom))
+                       pos=(DIALOG_PAD, bottom - DIALOG_ROW + 3),
+                       size=(cx - DIALOG_PAD * 2, 18))
+        top = self.PlaceButtons(right=(self.ApplyButton, self.CancelButton))
+        # what Apply takes from the row, each field on its own (Tags, the four together,
+        # before: the user), its cover; kept for the next Look Up (a field not set yet as
+        # Tags was)
+        tags = GetPreference('lookup_apply_tags') is not False
+        self.apply = dict()
+        for key in self.APPLY_KEYS:
+            kept = GetPreference('lookup_apply_%s' % (key))
+            self.apply[key] = (tags if key != 'cover' else True) if kept is None else bool(kept)
+        x = DIALOG_PAD
+        for key in self.APPLY_KEYS:
+            _, used = make_check(self, key.capitalize(), (x, top + 5), self.apply[key],
+                                 lambda value, key=key: self.SetApply(key, value))
+            x += used + DIALOG_PAD
+        self.candidates_found = bool(candidates)
         if candidates:
             self.List.Select(0)
-        else:
-            self.ApplyButton.Disable()
+        self.SetApply()
+        if any(v['image'] for v in candidates):
+            threading.Thread(target=self.FetchCovers, daemon=True).start()
+
+    # Apply's checks, in the list's order
+    APPLY_KEYS = ('artist', 'title', 'album', 'genre', 'cover')
+
+    def GetRowValues(self, k):
+        v = self.candidates[k]
+        score = '' if v['score'] is None else '%.2f' % (v['score'])
+        cover = self.cover_cells.get(v['image'], '...') if v['image'] else '-'
+        return (v['source'], cover, v['artist'], v['title'], v['album'], v['release'],
+                v['genre'], webinfo.format_duration(v['duration']), v['year'], score)
+
+    def FillRows(self):
+        for row, k in enumerate(self.order):
+            for column, value in enumerate(self.GetRowValues(k)):
+                self.List.SetItem(row, column, value)
+
+    def GetSortKey(self, k, column):
+        # Length, Year and Score as numbers, Cover by the picture's size, the rest as text
+        # (case aside); None for an empty cell, which goes last either way
+        v = self.candidates[k]
+        if column == 7:
+            return v['duration'] or None
+        if column == 8:
+            return int(v['year'][:4]) if v['year'][:4].isdigit() else None
+        if column == 9:
+            return v['score']
+        text = self.GetRowValues(k)[column]
+        if column == 1:
+            if ' x ' not in text:
+                return None
+            w, h = text.split(' x ')
+            return int(w) * int(h)
+        return text.casefold() if text else None
+
+    def OnColumnClick(self, event):
+        column = event.GetColumn()
+        if column < 0:
+            return
+        ascending = not self.sort_ascending if column == self.sort_column else True
+        self.sort_column, self.sort_ascending = column, ascending
+        row = self.List.GetFirstSelected()
+        chosen = self.order[row] if row >= 0 else None
+        keys = dict((k, self.GetSortKey(k, column)) for k in self.order)
+        present = sorted([k for k in self.order if keys[k] is not None], key=keys.get,
+                         reverse=not ascending)
+        self.order = present + [k for k in self.order if keys[k] is None]
+        self.FillRows()
+        if hasattr(self.List, 'ShowSortIndicator'):
+            self.List.ShowSortIndicator(column, ascending)
+        # the chosen row stays chosen where it has moved to
+        if chosen is not None:
+            self.List.Select(row, 0)
+            row = self.order.index(chosen)
+            self.List.Select(row)
+            self.List.Focus(row)
+            self.List.EnsureVisible(row)
+
+    def OnRowMenu(self, event):
+        # a row's menu: its values put in the editor's fields one at a time, the cell under
+        # the pointer copied, its page opened (the right-click opened the page alone)
+        idx = event.GetIndex()
+        row = self.candidates[self.order[idx]]
+        _, _, column = self.List.HitTestSubItem(event.GetPoint())
+        menu = wx.Menu()
+
+        def add(name, action, enable=True):
+            item = menu.Append(wx.ID_ANY, name.replace('&', '&&'))
+            item.Enable(enable)
+            menu.Bind(wx.EVT_MENU, lambda e: action(), item)
+
+        for key in self.APPLY_KEYS:
+            value = row['image'] if key == 'cover' else row[key]
+            if not value:
+                continue
+            shown = 'its cover' if key == 'cover' else\
+                (value if len(value) <= 50 else value[:47] + '...')
+            add('Use %s: %s' % (key.capitalize(), shown),
+                lambda key=key, value=value: self.use(key.capitalize(), value),
+                self.use is not None)
+        menu.AppendSeparator()
+        cell = self.List.GetItemText(idx, column) if column >= 0 else ''
+        add('Copy "%s"' % (cell if len(cell) <= 40 else cell[:37] + '...') if cell else 'Copy',
+            lambda: self.CopyText(cell), bool(cell))
+        add('Open Source Page', lambda: webbrowser.open(row['url']), bool(row['url']))
+        self.List.PopupMenu(menu)
+        menu.Destroy()
+
+    def CopyText(self, text):
+        if wx.TheClipboard.Open():
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
+            wx.TheClipboard.Close()
+
+    def SetApply(self, key=None, value=None):
+        if key is not None:
+            self.apply[key] = value
+            SetPreference('lookup_apply_%s' % (key), value)
+        self.ApplyButton.Enable(self.candidates_found and any(self.apply.values()))
 
     def OnApply(self, event):
         idx = self.List.GetFirstSelected()
-        if idx < 0:
+        if idx < 0 or not any(self.apply.values()):
             return
-        self.selected = idx
+        self.selected = self.order[idx]
         self.EndModal(wx.ID_OK)
 
-    def SetCover(self, data, label):
+    def MakeCover(self, data):
+        # the picture fitted in the cover's square on its ground, or the ground alone;
+        # (picture, its own size or None)
         image = None
         if data:
             try:
@@ -3097,48 +3815,69 @@ class WebInfoBox(DialogBox):
             image.Resize((self.COVER, self.COVER),
                          ((self.COVER - image.GetWidth()) // 2,
                           (self.COVER - image.GetHeight()) // 2), *macroboxstyle.current().UI.RAISED_BG)
-            self.Cover.SetBitmap(wx.Bitmap(image))
-        else:
-            bmp = wx.Bitmap(self.COVER, self.COVER)
-            dc = wx.MemoryDC(bmp)
-            dc.SetBackground(wx.Brush(macroboxstyle.current().UI.RAISED_BG))
-            dc.Clear()
-            dc.SelectObject(wx.NullBitmap)
-            self.Cover.SetBitmap(bmp)
+            return wx.Bitmap(image), (w, h)
+        bmp = wx.Bitmap(self.COVER, self.COVER)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(macroboxstyle.current().UI.RAISED_BG))
+        dc.Clear()
+        dc.SelectObject(wx.NullBitmap)
+        return bmp, None
+
+    def SetCover(self, data, label, bitmap=None):
+        self.Cover.SetBitmap(bitmap or self.MakeCover(data)[0])
         self.CoverText.SetLabel(label)
 
     def OnSelected(self, event):
-        # only the row the selection rests on is fetched, not every row passed over
-        if self.cover_timer is not None:
-            self.cover_timer.Stop()
-        self.cover_timer = wx.CallLater(250, self.LoadCover, event.GetIndex())
+        # its cover at once when fetched, else fetched next
+        idx = self.order[event.GetIndex()]
+        self.cover_first = idx
+        self.ShowCover(idx)
 
-    def LoadCover(self, idx):
+    def ShowCover(self, idx):
+        # idx: the candidate's, not its row's
         url = self.candidates[idx]['image']
         if not url:
             self.SetCover(None, 'No cover')
+        elif url in self.covers:
+            bitmap, label = self.covers[url]
+            self.SetCover(None, label, bitmap)
+        else:
+            self.SetCover(None, 'Loading...')
+
+    def FetchCovers(self):
+        # the rows' covers one at a time (webinfo's limiter between them), the row chosen
+        # first, then the rest in their order; from the disk when fetched before
+        done = set()
+        while not self.closing:
+            order = [self.cover_first] + list(range(len(self.candidates)))
+            todo = [k for k in order if self.candidates[k]['image']
+                    and self.candidates[k]['image'] not in done]
+            if not todo:
+                return
+            idx = todo[0]
+            url = self.candidates[idx]['image']
+            done.add(url)
+            try:
+                data, label = webinfo.fetch_image(url), ''
+            except Exception as error:
+                data, label = None, str(error)
+            if self.closing:
+                return
+            wx.CallAfter(self.OnCoverLoaded, url, data, label)
+
+    def OnCoverLoaded(self, url, data, label):
+        if not self or self.closing:
             return
-        self.SetCover(None, 'Loading...')
-        thread = threading.Thread(target=self.LoadCoverThread, args=(idx, url))
-        thread.daemon = True
-        thread.start()
-
-    def LoadCoverThread(self, idx, url):
-        try:
-            data, label = webinfo.fetch_image(url), ''
-        except Exception as error:
-            data, label = None, str(error)
-        wx.CallAfter(self.OnCoverLoaded, idx, data, label)
-
-    def OnCoverLoaded(self, idx, data, label):
-        if not self or self.List.GetFirstSelected() != idx:
-            return
-        self.SetCover(data, label)
-
-    def OnOpenLink(self, event):
-        url = self.candidates[event.GetIndex()]['url']
-        if url:
-            webbrowser.open(url)
+        bitmap, size = self.MakeCover(data)
+        self.covers[url] = (bitmap, label if size else (label or 'Not an image'))
+        # its rows told (the same cover may be several releases')
+        self.cover_cells[url] = '%d x %d' % size if size else 'Failed'
+        for row, k in enumerate(self.order):
+            if self.candidates[k]['image'] == url:
+                self.List.SetItem(row, 1, self.cover_cells[url])
+        idx = self.List.GetFirstSelected()
+        if idx >= 0 and self.candidates[self.order[idx]]['image'] == url:
+            self.ShowCover(self.order[idx])
 
     def OnCancel(self, event):
         self.EndModal(wx.ID_CANCEL)
@@ -3147,8 +3886,8 @@ class WebInfoBox(DialogBox):
         self.EndModal(wx.ID_CANCEL)
 
     def Destroy(self):
-        if self.cover_timer is not None:
-            self.cover_timer.Stop()
+        # (the covers' fetching ended with it)
+        self.closing = True
         return DialogBox.Destroy(self)
 
 
@@ -3300,130 +4039,92 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         stations = bool(selected) and all(
             audio.is_stream_path(rows[i][pathIdx]) for i in selected if i < len(rows))
 
-        if single:
-            idx = 1
-            name = 'Play'
-            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
-
-        if stations is False:
-            idx = 2
-            name = 'Edit'
-            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
-
-        # WebLink
-
-        # if single:
-        #   self.AppendSeparator()
-        #   idx = 120;
-        #   self.itemWebLink = wx.Menu()
-        #   for ps in self.weblink_preset:
-        #       idx += 1
-        #       fields = ' + '.join((ps[2], ps[3])).strip(' + ')
-        #       name = '\t'.join((ps[0], fields))
-        #       menuitem = wx.MenuItem(self.itemWebLink,\
-        #           idx, name, wx.EmptyString, wx.ITEM_NORMAL)
-        #       self.itemWebLink.Append(menuitem)
-        #       self.Bind(wx.EVT_MENU, self.OnWebLink, menuitem)
-        #       menuitem.Destroy()
-        #   idx = 7; name = 'Web Link'
-        #   self.AppendMenu(idx, name, self.itemWebLink)
-
-        self.AppendSeparator()
-
-        idx = 3
-        name = 'Delete'
-        self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
+        # in groups (the user): playing and keeping it | its tags and analysis | finding
+        # songs like it | its file | taken out of the list, last; a station's: played,
+        # kept, taken out
         title = listbox.innerList[listbox.selectedList].title
+
+        def add(idx, name):
+            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
+
+        def add_item(name, handler):
+            item = wx.MenuItem(self, wx.ID_ANY, name, wx.EmptyString, wx.ITEM_NORMAL)
+            self.Append(item)
+            self.Bind(wx.EVT_MENU, handler, item)
+
+        if single:
+            add(1, 'Play')
         if not stations:
             # a song starred (or let go): the favorite tracks (the sidebar's Library)
             paths = self.GetSelectedPaths()
             starred = set(library.get_favorite_tracks())
-            name = 'Remove from Favorite tracks' if paths and all(v in starred for v in paths)\
-                else 'Add to Favorite tracks'
-            item = wx.MenuItem(self, wx.ID_ANY, name, wx.EmptyString, wx.ITEM_NORMAL)
-            self.Append(item)
-            self.Bind(wx.EVT_MENU, self.OnToggleFavoriteTracks, item)
+            add_item('Remove from Favorite tracks' if paths and all(v in starred for v in paths)
+                     else 'Add to Favorite tracks', self.OnToggleFavoriteTracks)
         if stations and title != radio.RADIO_TITLE:
             # found or put elsewhere: kept in the radio's favorites
-            item = wx.MenuItem(self, wx.ID_ANY, 'Add to Favorite stations', wx.EmptyString,
-                               wx.ITEM_NORMAL)
-            self.Append(item)
-            self.Bind(wx.EVT_MENU, self.OnAddFavorites, item)
+            add_item('Add to Favorite stations', self.OnAddFavorites)
         if title == radio.RADIO_TITLE:
-            item = wx.MenuItem(self, wx.ID_ANY, 'Add Station URL...', wx.EmptyString,
-                               wx.ITEM_NORMAL)
-            self.Append(item)
-            self.Bind(wx.EVT_MENU, self.OnAddStationURL, item)
-        if stations:
-            return
+            add_item('Add Station URL...', self.OnAddStationURL)
 
-        idx = 4
-        name = 'Analyze'
-        self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
+        if not stations:
+            # ConvertTempoRange
 
-        if single:
-            idx = 5
-            name = 'Open Containing Folder'
-            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
-            idx = 6
-            name = 'Find Similar'
-            self.Append(wx.MenuItem(self, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-            self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[len(self.MenuItems) - 1])
+            self.itemConvertTempoRange = wx.Menu()
+
+            idx = 101
+            name = 'Convert to Up Tempo (95bpm~)'
+            self.itemConvertTempoRange.Append(wx.MenuItem(
+                self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
+                      self.itemConvertTempoRange.MenuItems[0])
+
+            idx = 102
+            name = 'Convert to Down Tempo (~120bpm)'
+            self.itemConvertTempoRange.Append(wx.MenuItem(
+                self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
+                      self.itemConvertTempoRange.MenuItems[1])
+
+            # ConvertKeyFormat
+
+            self.itemConvertKeyFormat = wx.Menu()
+
+            idx = 111
+            name = 'Convert Key Format to Flat (Dbm)'
+            self.itemConvertKeyFormat.Append(wx.MenuItem(
+                self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[0])
+
+            idx = 112
+            name = 'Convert Key Format to Sharp (C#m)'
+            self.itemConvertKeyFormat.Append(wx.MenuItem(
+                self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[1])
+
+            idx = 113
+            name = 'Convert Key Format to Camelot (12A)'
+            self.itemConvertKeyFormat.Append(wx.MenuItem(
+                self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
+            self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[2])
+
+            self.AppendSeparator()
+            # (Edit Track Info as the player's header names it; Edit alone before)
+            add(2, 'Edit Track Info...')
+            add(4, 'Analyze')
+            self.Append(8, 'Convert Tempo Range', self.itemConvertTempoRange)
+            self.Append(9, 'Convert Key Format', self.itemConvertKeyFormat)
+            if single:
+                self.AppendSeparator()
+                add(6, 'Find Similar')
+                # Find in Library with this song's tempo and key set (File's starts empty)
+                add(7, 'Find in Library...')
+                self.AppendSeparator()
+                add(5, 'Open Containing Folder')
 
         self.AppendSeparator()
-
-        # ConvertTempoRange
-
-        self.itemConvertTempoRange = wx.Menu()
-
-        idx = 101
-        name = 'Convert to Up Tempo (95bpm~)'
-        self.itemConvertTempoRange.Append(wx.MenuItem(
-            self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
-                  self.itemConvertTempoRange.MenuItems[0])
-
-        idx = 102
-        name = 'Convert to Down Tempo (~120bpm)'
-        self.itemConvertTempoRange.Append(wx.MenuItem(
-            self.itemConvertTempoRange, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertTempoRange,
-                  self.itemConvertTempoRange.MenuItems[1])
-
-        idx = 8
-        name = 'Convert Tempo Range'
-        self.Append(idx, name, self.itemConvertTempoRange)
-
-        # ConvertKeyFormat
-
-        self.itemConvertKeyFormat = wx.Menu()
-
-        idx = 111
-        name = 'Convert Key Format to Flat (Dbm)'
-        self.itemConvertKeyFormat.Append(wx.MenuItem(
-            self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[0])
-
-        idx = 112
-        name = 'Convert Key Format to Sharp (C#m)'
-        self.itemConvertKeyFormat.Append(wx.MenuItem(
-            self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[1])
-
-        idx = 113
-        name = 'Convert Key Format to Camelot (12A)'
-        self.itemConvertKeyFormat.Append(wx.MenuItem(
-            self.itemConvertKeyFormat, idx, name, wx.EmptyString, wx.ITEM_NORMAL))
-        self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[2])
-
-        idx = 9
-        name = 'Convert Key Format'
-        self.Append(idx, name, self.itemConvertKeyFormat)
+        # (the rows taken out of this list, the files kept: Delete read as the files')
+        add(3, 'Remove from List')
 
     def GetSelectedStations(self):
         # the selected rows' stations (their names and tags as their rows have them)
@@ -3502,12 +4203,23 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             self.OpenContainingFolder()
         elif event.Id == 6:
             self.FindSimilar()
+        elif event.Id == 7:
+            self.FindInLibrary()
         # elif event.Id == 7-diff:
         #   self.AnalyzeSelectedItems()
         # elif event.Id == 8-diff:
         #   self.AnalyzeSelectedItems(forced=True)
         # elif event.Id == 8-diff:
         #   self.CheckItemsConsistency()
+
+    def FindInLibrary(self):
+        listbox = self.parent.parent
+        selected = listbox.GetSelectedItems()
+        if selected == []:
+            return
+        song = (listbox.GetItemValueByColumnKey(selected[0], 'tempo'),
+                listbox.GetItemValueByColumnKey(selected[0], 'key'))
+        wx.GetTopLevelParent(listbox).OnFindInLibrary(None, song=song)
 
     def FindSimilar(self):
         # the library ranked against the song on a thread (each song's waveform is read
@@ -3675,8 +4387,9 @@ class StatusBox(RectBox):
         font.SetFaceName(FONT_ITEM)
         dc.SetFont(font)
         tw, th = dc.GetTextExtent(message_right)
-        # 9 rows over the capitals and 9 under (7 left 10 and 8, measured)
-        ty = 6
+        # 10 rows over the capitals and 9 under (9 and 10, the middle by the rows, read high:
+        # the user; 7 left 10 and 8 before, measured)
+        ty = 7
         xys = ((self.MESSAGE_LEFT_X, ty), (w - tw - 10, ty),)
         if self.progress is not None:
             # the run's progress: a thin bar before its text, kept where the run's longest

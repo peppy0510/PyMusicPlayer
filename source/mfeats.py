@@ -1267,6 +1267,10 @@ HIGHLIGHT_CALM = 0.5
 # 8 bars
 EDIT_MAIN = 0.85
 EDIT_FULL = 0.75
+# and its mids (200 to 1500 Hz: the pads, the lead, the voice) on their own at this share of
+# their body's: a DJ intro's or outro's guide beat (kick and hats) loud and bright enough
+# in the three together was taken for the main part ("up to the guide beats", the user)
+EDIT_MIDS = 0.6
 EDIT_BREAK_HEAD = 1
 EDIT_BREAK_TAIL = 2
 
@@ -1588,13 +1592,14 @@ def get_phrase_start(grid):
     return downbeat + (((grid.phrase or 0) + (grid.phrase_shift or 0)) % 4) * period * 4
 
 
-def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None):
+def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=None):
     """(start, end, cuts) of a DJ track played as a radio edit, or None (too short, or no
     main part): from the first block of its main part (the intro skipped) to the last one's
     end (the outro skipped), its long breakdowns shortened, cuts [(from, to)] jumped over.
     blocks of 4 bars from the phrase's start; a cut is whole 8 bars, so the song's phrases
-    go on across it. target: about this many seconds (shorten_edit), the edit as it is
-    without"""
+    go on across it. target: about this many seconds (window_edit: its start and end
+    brought in, no jump added), the edit as it is without. keep: (start, end) seconds played
+    whole whatever is cut (the highlight: SHORT left it out of most songs, the user)"""
     bar = 4 * 60.0 / bpm
     block = bar * 4
     first = phrase_start % block
@@ -1611,13 +1616,15 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None):
     columns = len(waveform) / duration
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     full = level.copy()
+    shares = []
     for band in (3, 4):
         share = amplitude * waveform[:, band].astype(float) / 255.0
         values = numpy.array([share[int((first + i * block) * columns):
                                     int((first + (i + 1) * block) * columns)].mean()
                               for i in range(count)])
-        full += values / (numpy.quantile(values, 0.75) + 1e-12)
-    main = (level >= EDIT_MAIN) & (full / 3.0 >= EDIT_FULL)
+        shares.append(values / (numpy.quantile(values, 0.75) + 1e-12))
+        full += shares[-1]
+    main = (level >= EDIT_MAIN) & (full / 3.0 >= EDIT_FULL) & (shares[0] >= EDIT_MIDS)
     # two blocks running: a lone loud one in an intro is not its main part
     starts = [i for i in range(count - 1) if main[i] and main[i + 1]]
     if not starts:
@@ -1640,49 +1647,71 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None):
             cut_from = first + (i + EDIT_BREAK_HEAD) * block
             cuts.append((cut_from, cut_from + pairs * 2 * block))
         i = j
+    kept = None
+    if keep is not None and keep[1] > keep[0]:
+        kept = (max(int((keep[0] - first) // block), 0),
+                min(int(numpy.ceil((keep[1] - first) / block - 1e-6)), count))
+        head, tail = min(head, kept[0]), max(tail, kept[1])
+        cuts = [(a, b) for a, b in cuts if b <= keep[0] + 1e-6 or a >= keep[1] - 1e-6]
     if target:
-        cuts = shorten_edit(first, block, head, tail, cuts, target,
-                            numpy.stack((level, low, full / 3.0), axis=1))
+        head, tail, cuts = window_edit(first, block, head, tail, cuts, target, low, kept)
     return (first + head * block, min(first + tail * block, duration), cuts)
 
 
-# a shortened edit keeps this many blocks (4 bars) at its start and its end whole
-EDIT_KEEP_ENDS = 2
+# a timed edit (window_edit): never shorter than this many blocks (4 bars); a start or an
+# end off a part's (on its 8 bars' steps instead) weighed as this many blocks more off the
+# time asked, a start after the edit's own as one more
+EDIT_END_LEAST = 8
+EDIT_OFF_PART = 2
+EDIT_LATE_START = 1
 
 
-def shorten_edit(first, block, head, tail, cuts, target, features):
-    '''the edit's cuts with more 8 bars of its main part cut till it plays about target
-    seconds: first the 8 bars most like the 8 before them (a repeat), never its first and
-    last EDIT_KEEP_ENDS blocks; on its 8 bars' steps from its start, so its phrases go on
-    across them; cuts touching joined into one jump'''
-    def played(cuts):
-        return (tail - head) * block - sum(b - a for a, b in cuts)
-
-    def to_block(seconds):
-        return int(round((seconds - first) / block))
-
-    taken = set()
+def window_edit(first, block, head, tail, cuts, target, low, kept=None):
+    '''(head, tail, cuts) of the edit played about target seconds, its jumps the edit's own
+    (cutting its repeats too, 8 bars here and there, joined parts that did not follow: "the
+    pieces joined awkwardly", the user): of its blocks a stretch from its start or a part's
+    (the kick and bass back) to its end or a part's end (the kick and bass falling: a
+    breakdown's start, the outro's), else on its 8 bars' steps from its start; holding kept
+    (blocks: the highlight) whole; the nearest target, a start or end off a part's and a
+    late start weighed against it (EDIT_OFF_PART, EDIT_LATE_START)'''
+    cut = set()
     for a, b in cuts:
-        taken.update(range(to_block(a), to_block(b)))
-    candidates = []
-    for i in range(head + EDIT_KEEP_ENDS, tail - EDIT_KEEP_ENDS - 1, 2):
-        if {i, i + 1} & taken or i - 2 < head:
-            continue
-        distance = numpy.abs(features[i:i + 2] - features[i - 2:i]).sum()
-        candidates.append((distance, i))
-    candidates.sort()
-    cuts = list(cuts)
-    for _, i in candidates:
-        if played(cuts) <= target + block:
+        cut.update(range(int(round((a - first) / block)), int(round((b - first) / block))))
+    # blocks played before each block (prefix sums)
+    played = [0]
+    for i in range(tail + 1):
+        played.append(played[-1] + (head <= i < tail and i not in cut))
+    if played[tail] * block <= target + block:
+        return head, tail, cuts
+
+    def is_start(i):
+        return i == head or (head < i < tail and low[i - 1] < HIGHLIGHT_CALM <= low[i])
+
+    def is_end(i):
+        return i == tail or (head < i < tail and low[i] < HIGHLIGHT_CALM <= low[i - 1])
+
+    steps = set(range(head, tail + 1, 2))
+    starts = [i for i in range(head, tail) if (is_start(i) or i in steps) and i not in cut]
+    ends = [i for i in range(head + 1, tail + 1) if (is_end(i) or i in steps)
+            and i - 1 not in cut]
+    best = None
+    for s in starts:
+        if kept is not None and s > kept[0]:
             break
-        cuts.append((first + i * block, first + (i + 2) * block))
-    joined = []
-    for a, b in sorted(cuts):
-        if joined and a <= joined[-1][1] + 1e-6:
-            joined[-1] = (joined[-1][0], max(joined[-1][1], b))
-        else:
-            joined.append((a, b))
-    return joined
+        for e in ends:
+            if e - s < EDIT_END_LEAST or (kept is not None and e < kept[1]):
+                continue
+            off = abs((played[e] - played[s]) * block - target) / block
+            off += (0 if is_start(s) else EDIT_OFF_PART) + (0 if is_end(e) else EDIT_OFF_PART)
+            off += EDIT_LATE_START if s > head else 0
+            if best is None or off < best[0]:
+                best = (off, s, e)
+    if best is None:
+        return head, tail, cuts
+    _, s, e = best
+    start_at, end_at = first + s * block, first + e * block
+    return s, e, [(max(a, start_at), min(b, end_at)) for a, b in cuts
+                  if a < end_at - 1e-6 and b > start_at + 1e-6]
 
 
 def get_beat_changes(mono, fs, start, period):
@@ -2103,6 +2132,19 @@ def get_done_mdx():
     finally:
         conn.close()
     return set(row[0] for row in rows)
+
+
+def get_analysis_versions():
+    '''{mdx: (its analysis' version, its error, its grid's version or None)} of every song
+    analyzed (Options > Check Analyzer Versions)'''
+    conn = connect_grid()
+    try:
+        rows = conn.execute(
+            'SELECT m.mdx, m.version, m.error, g.version FROM mfeats m '
+            'LEFT JOIN %s g ON g.mdx = m.mdx' % (GRID_TABLE)).fetchall()
+    finally:
+        conn.close()
+    return dict((row[0], tuple(row[1:])) for row in rows)
 
 
 def is_grid_current(mdx):

@@ -7,8 +7,6 @@
 
 import addons
 import audio
-import audiograph
-import effects
 import collections
 import ctypes
 import ctypes.wintypes
@@ -96,10 +94,6 @@ SCRATCH_INTERVAL = 0.002
 WAVEFORM_MODES = ('vinyl', 'seek')
 
 
-# the player's deck in the audio graph (AudioControl.graph), and its master bus
-PLAYER_DECK = 'player'
-MASTER_BUS = audiograph.MASTER
-
 
 class AudioControl(threading.Thread):
 
@@ -108,13 +102,6 @@ class AudioControl(threading.Thread):
         self.parent = parent
         self.loop = True
         self.hStream = 0
-        # the stream played through the audio graph's master mixer, as its deck 'player'
-        # (audiograph: the decks, their effects, the buses), else on its own as before;
-        # audio_mixer False goes back (Option > Audio Mixer)
-        self.mixed = GetPreference('audio_mixer') is not False
-        self.graph = None
-        # MIXER's global tempo and DECK SYNC (GetTempoState), read when first wanted
-        self.tempo_state = None
         self.interval = 0.005
         self.fadein = Struct(cnt=0.0, time=0.0)
         self.fadeout = Struct(cnt=0.0, time=0.0)
@@ -156,7 +143,6 @@ class AudioControl(threading.Thread):
             self.AutoFadeInOutTime()
             self.LoopFadeInEvent()
             self.LoopFadeOutEvent()
-            self.TickTempo()
 
     def RunScratch(self):
         # the scratch on a beat of its own: every 2 ms while a hand is on the
@@ -376,306 +362,12 @@ class AudioControl(threading.Thread):
         self.resume = None
         self.pending = False
 
-    def GetGraph(self):
-        '''made at the first stream, the master mixer playing from then on: its chains and
-        channels as kept (audio_graph), Auto Master first in the master's chain (the
-        whole mix through it), the
-        player's volume after it (Graph.SetOutput: its AGC not working against it)'''
-        if self.graph is None:
-            self.graph = audiograph.Graph()
-            data = GetPreference('audio_graph')
-            if isinstance(data, dict):
-                self.graph.SetData(data, sources={PLAYER_DECK: None})
-            if PLAYER_DECK not in self.graph.decks:
-                self.graph.AddDeck(PLAYER_DECK, None)
-            # (kept on the deck's chain by the version before: moved to the master's)
-            deck_chain = self.graph.GetChain(PLAYER_DECK)
-            deck_chain.slots = [slot for slot in deck_chain.slots if slot.path != 'automaster']
-            if self.GetAutomasterSlot() is None:
-                self.graph.GetChain(bus_id=MASTER_BUS).slots.insert(
-                    0, audiograph.FxSlot('automaster', name='Auto Master'))
-            # the send buses (before the decks are built: they split to them), their
-            # returns' effects at first a reverb and a delay, all wet
-            for bus_id, name in zip(audiograph.SENDS, ('reverb', 'delay')):
-                if bus_id not in self.graph.buses:
-                    bus = self.graph.AddBus(bus_id)
-                    values = effects.first_values(name)
-                    values['mix'] = 1.0
-                    bus.chain.slots.append(audiograph.FxSlot('bfx:' + name, values, name=name))
-            self.SyncAutomaster()
-            self.graph.Build()
-            self.graph.SetOutput(self.parent.GetVolume())
-            slot = self.GetAutomasterSlot()
-            self.vstHandle = slot.handle if slot is not None else None
-        return self.graph
-
-    def GetAutomasterSlot(self):
-        chain = self.graph.GetChain(bus_id=MASTER_BUS) if self.graph else None
-        for slot in (chain.slots if chain else []):
-            if slot.path == 'automaster':
-                return slot
-        return None
-
-    def SyncAutomaster(self):
-        # its parameters MASTER's panel keeps (master.get_values), on or passed by as
-        # MASTER is (on the master: at once)
-        slot = self.GetAutomasterSlot()
-        if slot is not None:
-            for index, value in enumerate(master.get_values()):
-                slot.SetParam(index, value)
-            slot.SetBypass(self.parent.IsLoudOn() is False)
-
-    # the effects of a deck (its id: the player's PLAYER_DECK) or a bus (MASTER_BUS) for a
-    # screen to come: put on at once and kept (audio_graph)
-
-    def GetChain(self, target=PLAYER_DECK):
-        graph = self.GetGraph()
-        if target in graph.decks:
-            return graph.GetChain(deck_id=target)
-        return graph.GetChain(bus_id=target)
-
-    def AddFx(self, target, path, index=None, name=''):
-        chain = self.GetChain(target)
-        slot = audiograph.FxSlot(path, name=name)
-        chain.Insert(len(chain.slots) if index is None else index, slot)
-        self.SaveGraph()
-        return slot
-
-    def RemoveFx(self, target, index):
-        slot = self.GetChain(target).Pop(index)
-        self.SaveGraph()
-        return slot
-
-    def MoveFx(self, target, index, to):
-        self.GetChain(target).Move(index, to)
-        self.SaveGraph()
-
-    def SetFxBypass(self, target, index, bypass):
-        self.GetChain(target).slots[index].SetBypass(bypass)
-        self.SaveGraph()
-
-    def SetFxParam(self, target, index, param, value):
-        self.GetChain(target).slots[index].SetParam(param, value)
-        self.SaveGraph()
-
-    # MIXER's inserts: bass_fx's effects (effects.py) on a channel (the deck's, the master's
-    # after Auto Master), kept with the graph
-
-    INSERTS_MOST = 3
-
-    def GetInsertChain(self, channel_id):
-        if not self.mixed:
-            return None
-        graph = self.GetGraph()
-        if channel_id in graph.buses:
-            return graph.GetChain(bus_id=channel_id)
-        return graph.GetChain(deck_id=channel_id) if channel_id in graph.decks else None
-
-    def GetInserts(self, channel_id):
-        # [(its index in the chain, its slot)]: Auto Master not among them
-        chain = self.GetInsertChain(channel_id)
-        if chain is None:
-            return []
-        return [(k, slot) for k, slot in enumerate(chain.slots) if slot.GetEffect()]
-
-    def AddInsert(self, channel_id, name):
-        chain = self.GetInsertChain(channel_id)
-        if chain is None or name not in effects.EFFECTS\
-                or len(self.GetInserts(channel_id)) >= self.INSERTS_MOST:
-            return None
-        slot = audiograph.FxSlot('bfx:' + name, effects.first_values(name), name=name)
-        chain.Insert(len(chain.slots), slot)
-        self.KeepInserts(channel_id)
-        return slot
-
-    def SetInsertEffect(self, channel_id, index, name):
-        # an insert's effect another (its place kept)
-        chain = self.GetInsertChain(channel_id)
-        if chain is None or name not in effects.EFFECTS:
-            return
-        chain.Pop(index)
-        chain.Insert(index, audiograph.FxSlot('bfx:' + name, effects.first_values(name),
-                                              name=name))
-        self.KeepInserts(channel_id)
-
-    def RemoveInsert(self, channel_id, index):
-        chain = self.GetInsertChain(channel_id)
-        if chain is not None and index < len(chain.slots):
-            chain.Pop(index)
-            self.KeepInserts(channel_id)
-
-    def GetSend(self, channel_id, bus_id):
-        deck = self.graph.decks.get(channel_id) if self.graph is not None else None
-        return deck.sends.get(bus_id, 0.0) if deck is not None else 0.0
-
-    def SetSend(self, channel_id, bus_id, level):
-        # (after its fader)
-        if not self.mixed:
-            return
-        self.GetGraph().SetSend(channel_id, bus_id, level)
-
-    def KeepInserts(self, channel_id):
-        self.SaveGraph()
-
-    def GetTempoState(self):
-        # (in the preference the instruments' version kept them in: its other keys kept)
-        if self.tempo_state is None:
-            kept = GetPreference('instruments_state')
-            self.tempo_state = kept if isinstance(kept, dict) else {}
-        return self.tempo_state
-
-    def KeepTempo(self):
-        # (after an edit, not at every step of a drag)
-        SetPreference('instruments_state', self.GetTempoState())
-
-    # the global tempo (MIXER's MASTER: what a synced deck plays at) and DECK SYNC (the
-    # deck's tempo set to it, each song's; the deck's own slider moved while synced moves
-    # it too)
-
-    TEMPO_LEAST = 40.0
-    TEMPO_MOST = 240.0
-    # the global tempo DECK SYNC starts from with no song in time
-    FREE_BPM = 120.0
-    SYNC_TICK = 0.02
-
-    def GetGlobalTempo(self):
-        return self.GetTempoState().get('tempo')
-
-    def SetGlobalTempo(self, bpm, keep=True):
-        tempo = None if bpm is None else round(
-            min(max(bpm, self.TEMPO_LEAST), self.TEMPO_MOST), 2)
-        self.GetTempoState()['tempo'] = tempo
-        if keep:
-            self.KeepTempo()
-
-    def GetDeckTempo(self):
-        # the deck's tempo heard (its grid's times its rate), None without a grid
-        grid = self.parent.GetGrid() if self.parent.IsStreamTrack() is False else None
-        if grid is None or not grid.bpm:
-            return None
-        return grid.bpm * self.parent.GetTempoRate()
-
-    def IsDeckSync(self):
-        return bool(self.GetTempoState().get('sync'))
-
-    def SetDeckSync(self, on):
-        if on and self.GetGlobalTempo() is None:
-            # (no global tempo yet: the deck's own, nothing jumps)
-            self.SetGlobalTempo(self.GetDeckTempo() or self.FREE_BPM, keep=False)
-        self.GetTempoState()['sync'] = bool(on)
-        self.sync_rate = None
-        self.sync_asked = False
-        self.KeepTempo()
-
-    def TickSync(self):
-        # (the audio thread's: the rate set on the GUI's)
-        if not self.IsDeckSync() or getattr(self, 'sync_asked', False):
-            return
-        playbox = self.parent
-        grid = playbox.GetGrid() if playbox.IsStreamTrack() is False else None
-        tempo = self.GetGlobalTempo()
-        if grid is None or not grid.bpm or tempo is None:
-            return
-        rate = playbox.GetTempoRate()
-        known = getattr(self, 'sync_rate', None)
-        if known is not None and abs(rate - known) > 1e-6:
-            # the deck's slider moved by hand: the global tempo with it
-            self.SetGlobalTempo(grid.bpm * rate, keep=False)
-            self.sync_rate = rate
-            return
-        target = tempo / grid.bpm
-        if abs(rate - target) > 1e-6:
-            self.sync_asked = True
-            wx.CallAfter(self.ApplySync, target)
-        else:
-            self.sync_rate = rate
-
-    def ApplySync(self, target):
-        COUNTS['apply_sync'] += 1
-        self.parent.SetTempoRateExact(target)
-        self.sync_rate = self.parent.GetTempoRate()
-        self.sync_asked = False
-
-    # MIXER's: a channel each (the song's deck PLAYER_DECK, the master MASTER_BUS): its
-    # gain, pan, mute, solo; as it is now, set, kept
-
-    def GetChannel(self, channel_id):
-        graph = self.graph
-        if channel_id == MASTER_BUS or channel_id in audiograph.SENDS:
-            # (a bus's: the master's, a send's return)
-            bus = graph.buses.get(channel_id) if graph is not None else None
-            return bus.channel.GetSpec() if bus is not None else audiograph.Channel().GetSpec()
-        if graph is not None and channel_id in graph.decks:
-            return graph.decks[channel_id].channel.GetSpec()
-        return audiograph.Channel().GetSpec()
-
-    def SetChannel(self, channel_id, **values):
-        # at once (KeepChannels writes it: not at every step of a fader's drag)
-        graph = self.GetGraph() if self.mixed else self.graph
-        if graph is None:
-            return
-        if channel_id == MASTER_BUS:
-            graph.SetChannel(bus_id=MASTER_BUS, **values)
-        elif channel_id in graph.buses:
-            graph.SetChannel(bus_id=channel_id, **values)
-        elif channel_id in graph.decks:
-            graph.SetChannel(channel_id, **values)
-
-    def KeepChannels(self):
-        self.SaveGraph()
-
-    def GetPeak(self, channel_id):
-        # (left, right) as heard, 0 to 1
-        if self.graph is None:
-            return 0.0, 0.0
-        if channel_id in self.graph.buses:
-            return self.graph.GetPeak(bus_id=channel_id)
-        return self.graph.GetPeak(deck_id=channel_id)
-
-    def GetOutputHandle(self):
-        '''what the meters and ANALYZER read: the master mixer while another deck plays
-        beside the song (the whole of it), else the song's stream (as before: before the
-        volume)'''
-        if self.graph is not None and any(
-                deck_id != PLAYER_DECK and deck.handle
-                for deck_id, deck in self.graph.decks.items()):
-            return self.graph.buses[MASTER_BUS].handle
-        return self.parent.cue.hStream
-
-    def TickTempo(self):
-        # DECK SYNC followed (every SYNC_TICK)
-        if self.graph is None or self.mixed is False\
-                or time.time() - getattr(self, 'sync_lap', 0.0) < self.SYNC_TICK:
-            return
-        self.sync_lap = time.time()
-        self.TickSync()
-
-    def SaveGraph(self):
-        # (only the player's deck and those of a kind kept)
-        if self.graph is not None:
-            data = self.graph.GetData()
-            data['decks'] = [deck for deck in data['decks'] if deck['id'] == PLAYER_DECK
-                             or (deck.get('source') or {}).get('kind') in audiograph.SOURCES]
-            SetPreference('audio_graph', data)
-
-    def SetMixed(self, on):
-        # through the mixer or not: the stream opened again where it is, the other way
-        if bool(on) == self.mixed:
-            return
-        self.mixed = bool(on)
-        SetPreference('audio_mixer', self.mixed)
-        self.reopen = True
-
     def FreeAudio(self):
         # every stream, played out or not: only playing ones were freed, and one
         # that had reached its end kept its file and its plugin
         if self.hStream == 0:
             return
-        if self.graph is not None and self.graph.decks[PLAYER_DECK].handle == self.hStream:
-            # out of the mixer first (its deck empty till the next stream), its chain's
-            # effects with it (Auto Master stays: on the master)
-            self.graph.SetSource(PLAYER_DECK, None)
-        elif self.vstHandle and self.mixed is False:
+        if self.vstHandle:
             pybass.BASS_VST_ChannelRemoveDSP(self.hStream, self.vstHandle)
             self.vstHandle = None
         pybass.BASS_StreamFree(self.hStream)
@@ -824,15 +516,13 @@ class AudioControl(threading.Thread):
             # the connection's start told while it lasts (IsStreamConnecting)
             self.connecting = time.time()
             try:
-                self.hStream, self.stream_error = radio.open_stream(self.path,
-                                                                    decode=self.mixed)
+                self.hStream, self.stream_error = radio.open_stream(self.path)
             finally:
                 self.connecting = None
             self.reversible = False
         else:
             self.hStream, self.reversible = audio.create_play_stream(
-                self.path, flags, keylock=self.parent.IsTempoKeyLockWanted(),
-                decode=self.mixed)
+                self.path, flags, keylock=self.parent.IsTempoKeyLockWanted())
         self.scratch.active = False
         self.scratch.speed = 1.0
         self.scratch.direction = audio.BASS_FX_RVS_FORWARD
@@ -859,9 +549,8 @@ class AudioControl(threading.Thread):
         # from pybass import pybass_vst
         # LOUD: Auto Master (audio.set_automaster), in LoudMax's place (not allowed to be
         # shipped)
-        if self.mixed is False:
-            self.vstHandle = audio.set_automaster(self.hStream, self.parent.IsLoudOn(),
-                                                  master.get_values())
+        self.vstHandle = audio.set_automaster(self.hStream, self.parent.IsLoudOn(),
+                                              master.get_values())
         self.SetVSTBypass()
         # print(os.path.join(os.path.dirname(__file__), 'packages', 'LoudMax64.dll'))
         # self.parent.Show()
@@ -886,12 +575,6 @@ class AudioControl(threading.Thread):
         # print(param)
         ######
 
-        if self.mixed:
-            # the graph's deck: in the master mixer from here (its position, a seek, its
-            # data asked of the mixer: audio.is_mixed), its chain on it (Auto Master first)
-            self.GetGraph()
-            self.graph.SetSource(PLAYER_DECK, audiograph.HandleSource(
-                self.hStream, live=audio.is_stream_path(self.path)))
         self.parent.cue.hStream = self.hStream
         audio.set_volume(self.hStream, 0.0)
         if self.resume == 0.0 and is_position_set is False:
@@ -931,10 +614,6 @@ class AudioControl(threading.Thread):
     #     pybass.BASS_VST_SetParam(self.vstHandle, 1, 0.0)
 
     def SetVSTBypass(self):
-        # (the master's slot: at once)
-        slot = self.GetAutomasterSlot()
-        if slot is not None:
-            slot.SetBypass(self.parent.IsLoudOn() is False)
         if not self.vstHandle:
             return
         pybass.BASS_VST_SetBypass(self.vstHandle, self.parent.IsLoudOn() is False)
@@ -1080,6 +759,7 @@ class PlayBoxControl():
         self.last_control_time = ctime
         if self.cue.path is None:
             return
+        self.PrefetchAnalysis()
         if self.AudioControl.pending:
             self.parent.ListBox.List.pending.SkipStopIcon = True
             return
@@ -1214,14 +894,48 @@ class PlayBoxControl():
         self.AddMFEATSTask(self.cue.path, urgent=True)
         self.reInitWave = True
 
+    def PrefetchAnalysis(self):
+        # the song's analysis read, and its whole waveform painted (PlayBoxWave.PaintAhead),
+        # on a thread while the stream opens: read and painted after it, a long mix's
+        # waveform came a second after its sound (the user)
+        if self.pending.dbresp is False or self.IsStreamTrack():
+            return
+        prefetch = getattr(self, 'prefetch', None)
+        if prefetch is not None and prefetch.path == self.cue.path:
+            return
+        prefetch = self.prefetch = Struct(path=self.cue.path, mdx=None, resp=None, done=False,
+                                          used=False)
+
+        def load():
+            try:
+                prefetch.mdx = audio.makemdx(prefetch.path)
+                prefetch.resp = mfeats.getby_key_value('mdx', prefetch.mdx)
+            except Exception:
+                prefetch.resp = None
+            prefetch.done = True
+            if prefetch.resp is not None and self.prefetch is prefetch:
+                self.Wave.PaintAhead(prefetch.resp.waveform)
+
+        threading.Thread(target=load, name='prefetch', daemon=True).start()
+
     def SetAudioEventWithDBRESP(self):
         # if self.parent.MFEATS.IsPathTasking(self.cue.path):
         #   return
-        # once a second while the file is being analyzed, not every event
-        if time.time() - self.pending.dbresp_lap < 1.0:
-            return
-        self.pending.dbresp_lap = time.time()
-        resp = mfeats.getby_key_value('mdx', self.cue.mdx)
+        # the prefetched (PrefetchAnalysis) the first time, waited for while it is read
+        prefetch = getattr(self, 'prefetch', None)
+        if prefetch is not None and prefetch.path == self.cue.path\
+                and prefetch.mdx in (None, self.cue.mdx) and not prefetch.used:
+            if prefetch.done is False:
+                return
+            prefetch.used = True
+            self.pending.dbresp_lap = time.time()
+            resp = prefetch.resp
+        else:
+            # once a second while the file is being analyzed, not every event
+            if time.time() - self.pending.dbresp_lap < 1.0:
+                return
+            self.pending.dbresp_lap = time.time()
+            resp = mfeats.getby_key_value('mdx', self.cue.mdx)
         if resp is None:
             self.SetEarlyAnalysis(highlight=True)
             return
@@ -1377,6 +1091,7 @@ class PlayBoxControl():
         self.tempo_rate = rate
         self.AudioControl.SetTempo()
         self.Info.reInitBuffer = True
+        self.OnTempoMoved('tempo')
 
     def SetTempoRateExact(self, rate):
         '''a rate as it is (DECK SYNC's: off the range's steps, a tempo to the hundredth),
@@ -1393,6 +1108,7 @@ class PlayBoxControl():
         self.tempo_rate = rate
         self.AudioControl.SetTempo()
         self.Info.reInitBuffer = True
+        self.OnTempoMoved('tempo')
 
     def IsTempoKeyLockOn(self):
         return self.tempo_keylock
@@ -1420,6 +1136,7 @@ class PlayBoxControl():
         self.tempo_semitones = semitones
         self.AudioControl.SetTempo()
         self.Info.reInitBuffer = True
+        self.OnTempoMoved('key')
 
     def GetPlayingKey(self):
         # the key heard: moved by the semitones, and with the rate when the pitch goes with it
@@ -1840,14 +1557,33 @@ class PlayBoxControl():
             path = self.cue.path
         self.cue.mdx = audio.makemdx(path)
 
+    # LOOP's modes, a press the next (a player's repeat: off, the list, the song): the song
+    # again at its end (IsLoopOn, the one it was), or the list's first after its last
+    LOOP_MODES = ('off', 'list', 'one')
+
     def IsLoopOn(self):
         return self.cue.loop_on
 
     def SetLoopOn(self):
-        self.cue.loop_on = True
+        self.SetLoopMode('one')
 
     def SetLoopOff(self):
-        self.cue.loop_on = False
+        self.SetLoopMode('off')
+
+    def IsLoopListOn(self):
+        # (a cue kept from before the list's mode: none)
+        return getattr(self.cue, 'loop_list', False) and not self.cue.loop_on
+
+    def GetLoopMode(self):
+        return 'one' if self.cue.loop_on else 'list' if self.IsLoopListOn() else 'off'
+
+    def SetLoopMode(self, mode):
+        self.cue.loop_on = mode == 'one'
+        self.cue.loop_list = mode == 'list'
+
+    def CycleLoop(self):
+        modes = self.LOOP_MODES
+        self.SetLoopMode(modes[(modes.index(self.GetLoopMode()) + 1) % len(modes)])
 
     def IsLoudOn(self):
         return getattr(self.cue, 'loud_on', True)
@@ -1861,6 +1597,11 @@ class PlayBoxControl():
         self.UpdateVSTBypass()
 
     def UpdateVSTBypass(self):
+        # (MASTER's header told at once, its power key and its state: stopped, nothing
+        # draws it at the next frame)
+        master = getattr(self, 'Master', None)
+        if master is not None:
+            master.reInitBuffer = True
         if hasattr(self, 'AudioControl') is False:
             return
         self.AudioControl.SetVSTBypass()
@@ -1880,7 +1621,8 @@ class PlayBoxControl():
         self.ApplyRadioEdit(goto=True)
 
     # SHORT's lengths (radio_edit_length): the edit as found (0), or about so many seconds
-    # (its main part's repeats cut too: mfeats.shorten_edit)
+    # (the edit's own jumps, its start and end brought in to a part's, the highlight held:
+    # mfeats.window_edit)
     RADIO_EDIT_LENGTHS = ((0, 'Edit (intro, outro, breakdowns)'), (180, 'About 3 min'),
                           (120, 'About 2 min'))
 
@@ -1896,6 +1638,10 @@ class PlayBoxControl():
     def SetRadioEditLength(self, length):
         self.radio_edit_length = length
         SetPreference('radio_edit_length', length)
+        # Option > Short Length's check with it (set from the mode key's menu too)
+        for item, value in getattr(getattr(self.parent.parent, 'MenuBar', None),
+                                   'shortLengthItems', ()):
+            item.Check(value == length)
         self.cue.edit_skip = False
         # (now in a part it cuts: on to the next it plays, as when it is turned on)
         self.ApplyRadioEdit(goto=True)
@@ -1908,13 +1654,16 @@ class PlayBoxControl():
         if grid is None or waveform is None or self.IsStreamTrack():
             return None
         duration = self.GetDurationTime()
+        # the highlight played whole in it (it was left out of most: the user)
+        offset, length = self.GetHighlightTime()
+        keep = (offset, offset + length) if offset is not None and length else None
         key = (self.cue.mdx, grid.bpm, self.GetGridPhraseStart(), len(waveform), duration,
-               self.GetRadioEditLength())
+               self.GetRadioEditLength(), keep)
         if self.radio_edit_cache is None or self.radio_edit_cache[0] != key:
             COUNTS['radio_edit'] += 1
             COUNTS['radio_edit_key'] = hash(key) % 1000
             plan = mfeats.choose_radio_edit(waveform, duration, grid.bpm, key[2],
-                                            target=key[5] or None)
+                                            target=key[5] or None, keep=keep)
             self.radio_edit_cache = (key, plan)
         return self.radio_edit_cache[1]
 
@@ -2238,11 +1987,7 @@ class PlayBoxControl():
 
     def GetVisualStream(self):
         # (stream, channels, autogain) the spectrum, the vectorscope, ANALYZER and OUT
-        # read: the whole mix while another deck plays (AudioControl.GetOutputHandle)
-        control = getattr(self, 'AudioControl', None)
-        handle = control.GetOutputHandle() if control is not None else self.cue.hStream
-        if handle != self.cue.hStream:
-            return handle, 2, self.cue.autogain
+        # read
         return self.cue.hStream, self.cue.channel, self.cue.autogain
 
     def GetStreamFailure(self):
@@ -2329,14 +2074,9 @@ class PlayBoxControl():
 
     def GetOutputVolume(self, value=None):
         # the stream's volume for a volume: with the auto gain and its
-        # headroom, the fades' end and start too. through the mixer: the volume on the
-        # master (after Auto Master), the stream's the auto gain's alone
+        # headroom, the fades' end and start too
         if value is None:
             value = self.GetVolume()
-        control = getattr(self, 'AudioControl', None)
-        if control is not None and control.mixed and control.graph is not None:
-            control.graph.SetOutput(value)
-            value = 1.0
         if self.IsAutoGainOn():
             value = min(value * self.cue.autogain * self.cue.agc_headroom, 1.0)
         return value
@@ -2358,6 +2098,8 @@ class PlayBoxControl():
         self.pending.mdx = True
         self.pending.mfeats = True
         self.pending.wave = False
+        # (the same song again read again)
+        self.prefetch = None
         self.SetHighlightSkipOff()
         self.SetTrackOffsetTime(0.0)
         if self.IsStreamTrack():
@@ -2511,9 +2253,13 @@ class PlayBoxControl():
             return None
         listIdx, itemIdx = listItemIdx
         targetItemIdx = itemIdx + direction
+        count = len(self.parent.ListBox.innerList[listIdx].items)
+        if self.IsLoopListOn() and count:
+            # the list looped: its first after its last, its last before its first
+            targetItemIdx %= count
         if targetItemIdx == -1:
             return None
-        if targetItemIdx >= len(self.parent.ListBox.innerList[listIdx].items):
+        if targetItemIdx >= count:
             return None
         targetPath = self.parent.ListBox\
             .GetItemValueByColumnKey(targetItemIdx, 'path', listIdx)

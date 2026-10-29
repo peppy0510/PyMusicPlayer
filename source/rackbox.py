@@ -19,11 +19,20 @@ from macroboxlib import SetPreference
 
 
 # the rack: the player's zone over the deck (its header and waveforms), its modules
-# one under another as a plug-in's plates (MASTER, ANALYZER
-# and MIXER). a module: a header (its LED, its name, its state, its own chips and its parts')
+# one under another as a plug-in's plates (MASTER and
+# ANALYZER). a module: a header (its LED, its name, its state, its own chips and its parts')
 # over its parts, each part folded on its own, the whole module from the control row; what
 # is shown kept (each module's PREFERENCE)
-HEADER = 24
+# a module's header: its chips CHIP high, as far from the line over it as from its parts
+# under it (24 held them 4 px under the line, the parts' names 6 and more under theirs: the
+# header read tighter than what it heads)
+HEADER = 32
+# a header's keys as tall as the mute key beside them on MASTER's header (19; 16 before,
+# flat beside it, "the buttons' size looks odd", the user)
+CHIP = 19
+# a header's chips' names when the header is too narrow for them (GetChipLayout)
+SHORT_LABELS = {'CONTROLS': 'CTRL', 'SPECTRUM': 'SPEC', 'SPECTROGRAM': 'GRAM',
+                'LIMITER': 'LIMIT', 'METERS': 'METER'}
 
 
 def colour(value):
@@ -57,10 +66,20 @@ def draw_well(gc, st, rect, edge=None, width=1, radius=None):
     gc.StrokeLine(x + 2, y + h + 0.5, x + w - 2, y + h + 0.5)
 
 
+def draw_rule(gc, st, x, y, width):
+    # a line between the rack's parts, a whole row in the edge's colour
+    gc.SetPen(wx.NullGraphicsPen)
+    gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.RACK_EDGE_COLOR))))
+    gc.DrawRectangle(x, y, width, 1)
+
+
 class Rack():
 
     '''the rack's modules (made by the player box, its parent) placed at its top, over
-    the header, the first at the top; the zone's height the shown modules' together'''
+    the header, the first at the top; the zone's height the shown modules' together. a bar
+    over them before (the modules' keys, the output's meter, the volume): MASTER's header
+    has the meter and the volume since, MASTER first and always there ("merge them", the
+    user)'''
 
     def __init__(self, parent, modules):
         self.parent = parent
@@ -70,8 +89,7 @@ class Rack():
         return sum(module.GetHeight() for module in self.modules)
 
     def GetTop(self):
-        # under its bar
-        return RackBar.HEIGHT
+        return 0
 
     def OnSize(self):
         y = self.GetTop()
@@ -136,6 +154,8 @@ class RackModule(RectBox):
         self.buffer.fps = 30
         kept = GetPreference(self.PREFERENCE) or {}
         self.shown = kept.get('shown', False)
+        # folded: its header alone (its chevron, as PyWinAudio's rack folds a unit)
+        self.folded = bool(kept.get('folded', False))
         self.parts = dict((part[0], kept.get(part[0], True)) for part in self.PARTS)
         self.hits = []
         self.hovered = None
@@ -153,11 +173,42 @@ class RackModule(RectBox):
         return None
 
     def GetChips(self):
-        # its own chips at the header's right, right to left: [(key, label, on, warned)]
+        # its own chips at the header's right, right to left: [(key, label, on, warned)],
+        # an action's; [(..., 'switch')] a stage's switch (DrawHeader)
         return []
 
     def OnChip(self, key):
         pass
+
+    # a power key in its header (MASTER on or off), else an icon of what it is (ANALYZER's
+    # meter): PyWinAudio's rack's units and its meter view
+    POWER = False
+
+    def IsPowered(self):
+        return self.IsActive()
+
+    def OnPower(self):
+        pass
+
+    def DrawIcon(self, gc, cx, cy):
+        pass
+
+    # what it shows after its state on its header (MASTER folded: its meters, small)
+    def GetSummaryWidth(self, dc):
+        return 0
+
+    def DrawSummary(self, gc, x, cy):
+        pass
+
+    def GetSmallTextRows(self, font, bar):
+        '''(where a small text is drawn from, a bar's top): every small text on the header
+        (the state, MASTER's meters' names and OUT) its letters on the header's middle, as the
+        title's, the bars there too (the state on the title's foot and the meters' names in
+        the middle, two rows apart, the user; all on the foot, the meters sank to the
+        bottom: "they belong in the middle", the user)'''
+        offset, ink = uikit.get_caps_ink(font)
+        middle = HEADER / 2.0
+        return int(round(middle - offset - ink / 2.0)), int(middle - bar / 2.0 + 0.5)
 
     def DrawPart(self, gc, key, x, y, width):
         pass
@@ -241,6 +292,8 @@ class RackModule(RectBox):
     def GetHeight(self):
         if self.shown is False:
             return 0
+        if self.folded:
+            return HEADER
         heights = [self.GetPartHeight(part[0], part[2]) for part in self.PARTS
                    if self.parts[part[0]]]
         if self.ROW:
@@ -294,7 +347,13 @@ class RackModule(RectBox):
     def Keep(self):
         kept = dict(self.parts)
         kept['shown'] = self.shown
+        kept['folded'] = self.folded
         SetPreference(self.PREFERENCE, kept)
+
+    def ToggleFold(self):
+        self.folded = not self.folded
+        self.Keep()
+        self.parent.Rack.Relayout()
 
     def Toggle(self):
         # shown or folded away, its parts as they were
@@ -328,75 +387,223 @@ class RackModule(RectBox):
         gc = wx.GraphicsContext.Create(dc)
         if gc is None:
             return
-        gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
-        gc.StrokeLine(0, 0.5, w, 0.5)
-        gc.StrokeLine(0, h - 0.5, w, h - 0.5)
         self.DrawHeader(dc, gc, w)
+        if not self.folded:
+            self.DrawParts(gc, w)
+        # its line at its bottom only, the one over it the module's above (a line at both
+        # ends drew two between modules); drawn last (first, MASTER's controls' picture laid
+        # over it: none between MASTER and ANALYZER under it, the user); a rectangle a row
+        # tall (a line on the half row drawn at half its colour, fainter than the others)
+        draw_rule(gc, st, 0, h - 1, w)
+
+    def DrawParts(self, gc, w):
+        st = self.parent.st
         shown = [part for part in self.PARTS if self.parts[part[0]]]
+        # the lines between its parts drawn after them (a part's picture laid over its line
+        # hid it: MASTER's METERS and CONTROLS showed none)
+        lines = []
         if self.ROW:
             # side by side, a line between them; rows (GetRowLayout) a line apart
             y = HEADER
             for r, row in enumerate(self.GetRowLayout(w)):
                 height = max(self.GetPartHeight(part[0], part[2]) for part, _, _ in row)
-                gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
                 if r and self.ROW_LINES:
-                    gc.StrokeLine(8, y + 0.5, w - 8, y + 0.5)
+                    lines.append((8, y + 0.5, w - 8, y + 0.5))
                 for k, (part, x, width) in enumerate(row):
                     if k and self.ROW_LINES:
-                        gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
-                        gc.StrokeLine(x - self.ROW_GAP / 2.0, y + 6,
-                                      x - self.ROW_GAP / 2.0, y + height - 8)
+                        lines.append((x - self.ROW_GAP / 2.0, y + 6,
+                                      x - self.ROW_GAP / 2.0, y + height - 8))
                     self.DrawPart(gc, part[0], int(x), y, int(width))
                 y += height
+        else:
+            y = HEADER
+            for k, part in enumerate(shown):
+                if k:
+                    lines.append((8, y + 0.5, w - 8, y + 0.5))
+                self.DrawPart(gc, part[0], 8, y, w - 16)
+                y += self.GetPartHeight(part[0], part[2])
+        gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
+        for line in lines:
+            gc.StrokeLine(*line)
+
+    # the header's left as PyWinAudio's rack's (an LED alone before, "make it as
+    # PyWinAudio's", the user): its fold chevron, its power key or its icon, its name
+    FOLD_X = 14
+    ICON_X = 33
+    TITLE_X = 46
+    HEAD_KEY = 18
+
+    def DrawHeadKeys(self, gc):
+        # the chevron (down: open, right: folded), the power key (its glyph in the accent
+        # while it works) or the icon; a key's face under the mouse; hit as 'fold', 'power'
+        st = self.parent.st
+        tokens = uikit.ui()
+        cy = HEADER / 2.0
+        size = self.HEAD_KEY
+        for kind, cx in (('fold', self.FOLD_X), ('power', self.ICON_X)):
+            if kind == 'power' and not self.POWER:
+                continue
+            rect = wx.Rect(int(cx - size / 2), int(cy - size / 2), size, size)
+            pressed = getattr(self, 'key_down', None) == (kind, None)
+            if self.hovered == (kind, None) or pressed:
+                gc.SetPen(wx.NullGraphicsPen)
+                gc.SetBrush(gc.CreateBrush(wx.Brush(colour(tokens.CONTROL_DOWN if pressed
+                                                           else tokens.CONTROL_HOVER))))
+                gc.DrawRoundedRectangle(rect.x, rect.y, rect.width, rect.height, uikit.RADIUS)
+            self.hits.append((rect, kind, None))
+        hovered = self.hovered == ('fold', None)
+        ink = colour(st.RACK_TEXT_COLOR if hovered else st.RACK_LABEL_COLOR)
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.5).Cap(wx.CAP_ROUND)
+                               .Join(wx.JOIN_ROUND)))
+        gc.SetBrush(wx.NullGraphicsBrush)
+        cx, half = self.FOLD_X, 5.0
+        if self.folded:
+            points = [(cx - half * 0.35, cy - half * 0.7), (cx + half * 0.35, cy),
+                      (cx - half * 0.35, cy + half * 0.7)]
+        else:
+            points = [(cx - half * 0.7, cy - half * 0.35), (cx, cy + half * 0.35),
+                      (cx + half * 0.7, cy - half * 0.35)]
+        gc.StrokeLines(points)
+        if not self.POWER:
+            self.DrawIcon(gc, self.ICON_X, cy)
             return
-        y = HEADER
-        for k, part in enumerate(shown):
-            if k:
-                # a line between its parts
-                gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
-                gc.StrokeLine(8, y + 0.5, w - 8, y + 0.5)
-            self.DrawPart(gc, part[0], 8, y, w - 16)
-            y += self.GetPartHeight(part[0], part[2])
+        # the power glyph: a ring open at its top, a line down into it
+        on = self.IsPowered()
+        ink = colour(tokens.ACCENT if on else st.RACK_TEXT_COLOR if
+                     self.hovered == ('power', None) else st.RACK_LABEL_COLOR)
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.6).Cap(wx.CAP_ROUND)))
+        gc.SetBrush(wx.NullGraphicsBrush)
+        r, cx = 5.5, self.ICON_X
+        arc = gc.CreatePath()
+        arc.AddArc(cx, cy + 0.5, r, math.radians(-60), math.radians(240), True)
+        gc.StrokePath(arc)
+        gc.StrokeLine(cx, cy - r - 0.5, cx, cy - 1)
 
     def DrawHeader(self, dc, gc, w):
         st = self.parent.st
         tokens = uikit.ui()
-        # the LED: lit (the accent) while it works, a ring while it does not
-        # (8 px from the window's edges, as everything along them)
-        cx, cy = 14, HEADER / 2.0
-        if self.IsActive():
+        self.DrawHeadKeys(gc)
+        left = self.TITLE_X
+        # the chips at the right, three kinds told apart (all keys alike, a part shown and a
+        # stage turned on read the same): its own actions at the right (RESET, A/B); its own
+        # switches, a stage of what it does on or off, an LED and a name as the controls'
+        # switches (DrawSwitchChip); its parts' at the left, shown or folded, one group of
+        # joined keys as tabs
+        chips = [chip if len(chip) == 5 else tuple(chip) + ('action',)
+                 for chip in self.GetChips()]
+        # (a module of one part: none, nothing to fold)
+        if len(self.PARTS) > 1:
+            chips += [(part[0], part[1], self.parts[part[0]], False, 'view')
+                      for part in reversed(self.PARTS)]
+        font = get_font(10, bold=True)
+        title_font = get_font(uikit.BODY, bold=True)
+        # the state a step smaller than the title, dimmed, on the title's line (its letters'
+        # foot on the title's: each in the middle of the header, the smaller sat a pixel
+        # high; as large as the title it read as a second title, the user)
+        state_font = get_font(uikit.LABEL)
+        dc.SetFont(title_font)
+        tw = dc.GetTextExtent(self.TITLE)[0]
+        state = self.GetState()
+        dc.SetFont(state_font)
+        sw = dc.GetTextExtent(state[0])[0] + 10 if state is not None else 0
+        # its summary (MASTER's meters) kept at every width ("seen always, even on a small
+        # screen", the user): the room it takes held before what is at the right
+        summary = self.GetSummaryWidth(dc)
+        kept = summary + 10 if summary else 0
+        # what it keeps at the header's right (MASTER's meter and volume: its meter shorter
+        # first), its chips left of that (their room counted: without it the right took it
+        # and the title was cut)
+        # (the chips' own width, the 10 kept before them, the 16 of the line after them)
+        span = 0
+        if chips:
+            first = self.GetChipLayout(dc, chips, w, font, 0)
+            span = w - 8 - first[-1][0][0] + 10 + 16
+        right = self.DrawHeaderRight(gc, w, left + tw + kept + span)
+        # narrow, so they never lie over the title (they did): the state left out, then the
+        # keys tighter, then their names short (SHORT_LABELS), then the title cut
+        for level in range(4):
+            layout = self.GetChipLayout(dc, chips, right + 8, font, level)
+            room = layout[-1][0][0] if layout else right
+            if room - 10 >= left + tw + kept + (sw if level == 0 else 0):
+                break
+        title = self.TITLE
+        dc.SetFont(title_font)
+        while len(title) > 1 and left + dc.GetTextExtent(title)[0] + kept > room - 10:
+            title = title[:-2] + '\u2026'
+        uikit.set_font(gc, title_font, colour(st.RACK_TEXT_COLOR))
+        tw, th = gc.GetTextExtent(title)[:2]
+        gc.DrawText(title, left, (HEADER - th) / 2.0)
+        if state is not None and level == 0:
+            text, warned = state
+            uikit.set_font(gc, state_font, colour(tokens.WARN if warned else st.RACK_LABEL_COLOR))
+            gc.DrawText(text, left + tw + 10, self.GetSmallTextRows(state_font, 0)[0])
+        if summary:
+            x = left + tw + 10
+            if state is not None and level == 0:
+                x += gc.GetTextExtent(state[0])[0] + 10
+            self.DrawSummary(gc, x, HEADER / 2.0)
+        compact = level >= 2
+        for rect, (key, label, on, warned, kind), corners in layout:
+            hover = self.hovered == key
+            if compact and level >= 3:
+                label = SHORT_LABELS.get(label, label)
+            if kind == 'switch':
+                self.DrawSwitchChip(dc, rect, label, on, hover, font, compact)
+            else:
+                uikit.draw_button(dc, rect, label=label, on=on and not warned,
+                                  warn=on and warned, hover=hover, font=font, corners=corners,
+                                  down=getattr(self, 'key_down', None) == key)
+            self.hits.append((wx.Rect(*rect), 'chip', key))
+
+    def DrawHeaderRight(self, gc, w, least):
+        # (a module's own at its header's right end, from no further left than least: the
+        # chips' right edge left of it)
+        return w - 8
+
+    def GetChipLayout(self, dc, chips, w, font, level):
+        '''[(rect, chip, corners)] right to left from the header's right: level 2 and over
+        tighter (CHIP_PAD and the gaps), 3 their names short; 6 px between keys, 14 between
+        the kinds, a group's keys joined (their edge shared)'''
+        compact = level >= 2
+        pad, gap, apart = (10, 3, 8) if compact else (16, 6, 14)
+        dc.SetFont(font)
+        layout = []
+        x = w - 8
+        for k, chip in enumerate(chips):
+            key, label, on, warned, kind = chip
+            if level >= 3:
+                label = SHORT_LABELS.get(label, label)
+            cw = dc.GetTextExtent(label)[0] + pad + (11 if kind == 'switch' else 0)
+            x -= cw
+            before = chips[k - 1][4] if k else None
+            after = chips[k + 1][4] if k + 1 < len(chips) else None
+            corners = 'all'
+            if kind == 'view' and 'view' in (before, after):
+                # (drawn right to left: the group's rightmost first)
+                corners = 'none' if before == after == 'view' else\
+                    'right' if before != 'view' else 'left'
+            layout.append(((x, (HEADER - CHIP) // 2, cw, CHIP), chip, corners))
+            x += 1 if kind == after == 'view' else -gap if kind == after else -apart
+        return layout
+
+    def DrawSwitchChip(self, dc, rect, label, on, hover, font, compact=False):
+        # a stage's switch in the header, as the controls' are (masterbox): an LED (lit, or
+        # a ring) and its name on a key
+        st = self.parent.st
+        gc = wx.GraphicsContext.Create(dc)
+        x, y, w, h = rect
+        uikit.draw_face(gc, rect, colour(st.KNOB_RING_COLOR if hover else st.KNOB_FACE_COLOR))
+        if on:
             gc.SetPen(wx.NullGraphicsPen)
-            gc.SetBrush(gc.CreateBrush(wx.Brush(colour(tokens.ACCENT))))
+            gc.SetBrush(gc.CreateBrush(wx.Brush(colour(uikit.ui().ACCENT))))
         else:
             gc.SetPen(wx.Pen(colour(st.RACK_LABEL_COLOR), 1))
             gc.SetBrush(wx.NullGraphicsBrush)
-        gc.DrawEllipse(cx - 4, cy - 4, 8, 8)
-        gc.SetFont(get_font(uikit.BODY, bold=True), colour(st.RACK_TEXT_COLOR))
-        tw, th = gc.GetTextExtent(self.TITLE)[:2]
-        gc.DrawText(self.TITLE, 26, (HEADER - th) / 2.0)
-        state = self.GetState()
-        if state is not None:
-            text, warned = state
-            gc.SetFont(get_font(10), colour(tokens.WARN if warned else st.RACK_LABEL_COLOR))
-            sh = gc.GetTextExtent(text)[1]
-            gc.DrawText(text, 26 + tw + 10, (HEADER - sh) / 2.0)
-        # the chips at the right: its own, then its parts' (shown or folded)
-        chips = list(self.GetChips())
-        # (a module of one part: none, nothing to fold)
-        if len(self.PARTS) > 1:
-            chips += [(part[0], part[1], self.parts[part[0]], False)
-                      for part in reversed(self.PARTS)]
-        x = w - 8
-        font = get_font(10, bold=True)
-        for key, label, on, warned in chips:
-            dc.SetFont(font)
-            cw = dc.GetTextExtent(label)[0] + 16
-            x -= cw
-            rect = (x, 4, cw, HEADER - 8)
-            uikit.draw_button(dc, rect, label=label, on=on and not warned, warn=on and warned,
-                              hover=self.hovered == key, font=font)
-            self.hits.append((wx.Rect(*rect), 'chip', key))
-            x -= 6
+        # (from a whole row, as the controls' LEDs)
+        left = 5 if compact else 7
+        gc.DrawEllipse(x + left, y + (h - 6) // 2, 6, 6)
+        uikit.set_font(gc, font, colour(st.RACK_TEXT_COLOR if on else st.RACK_LABEL_COLOR))
+        gc.DrawText(label, x + left + 12, uikit.get_caps_top(font, y, h))
 
     # handled
 
@@ -423,222 +630,36 @@ class RackModule(RectBox):
                 self.hover_only = False
             else:
                 self.reInitBuffer = True
+        # a header's key pressed: its face down while it is held, done when it is let go
+        # over it (done on the press before: the module grew or folded under the hand, the
+        # key let go of not the one pressed, no face pressed at all, "odd as it is pressed
+        # and let go", the user)
+        header = hit is not None and hit[0] in ('fold', 'power', 'chip')
+        down = getattr(self, 'key_down', None)
+        if down is not None:
+            if event.LeftIsDown is False:
+                self.key_down = None
+                self.reInitBuffer = True
+                if header and self.onClient and hovered == down:
+                    self.OnHeaderKey(hit)
+            return
+        if header and self.onClient and (event.LeftDown or event.LeftDClick):
+            self.key_down = hovered
+            self.reInitBuffer = True
+            return
         if self.HandleDrag(event):
             return
-        if self.onClient is False or hit is None:
-            return
-        if hit[0] == 'chip':
-            if event.LeftDown or event.LeftDClick:
-                if hit[1] in self.parts:
-                    self.TogglePart(hit[1])
-                else:
-                    self.OnChip(hit[1])
+        if self.onClient is False or hit is None or header:
             return
         self.HandleHit(event, hit)
 
-
-class RackBar(RectBox):
-
-    '''the rack's bar at the player's top, always there: a key for each module, its name (a
-    LED before it lit while the module works) and its arrow (shown or folded under the bar).
-    MASTER's name turns it on or off (its plugin on the sound), ANALYZER's shows it as its
-    arrow does'''
-
-    HEIGHT = 30
-    KEY_HEIGHT = 19
-    ARROW = 20
-    LED = 6
-    # the output at the bar's right, as a rack's meter: L and R in segments (blue, orange
-    # over -12 dB), the short-term loudness on a display
-    # (120 at most, 60 at least as the room is: 150 fixed before)
-    METER_WIDTH = 120
-    METER_LEAST = 60
-    # between the bars and the loudness's display (10 before)
-    METER_GAP = 14
-    METER_LOW = -48.0
-    METER_WARN = -12.0
-
-    def __init__(self, parent):
-        RectBox.__init__(self, parent)
-        self.parent = parent
-        self.buffer.fps = 30
-        self.hits = []
-        self.hovered = None
-        self.downed = None
-        self.state = None
-        self.SetBackgroundColour(self.parent.st.RACK_BG_COLOR)
-        self.InitBuffer()
-
-    def GetKeys(self):
-        # (module, its name, lit, whether its name powers it)
-        parent = self.parent
-        # (in the rack's order: the signal's from the top down, what reads the output, the
-        # output, the mixer, its sources)
-        keys = []
-        analyzer = getattr(parent, 'Analyzer', None)
-        if analyzer is not None:
-            keys.append((analyzer, 'ANALYZER', analyzer.shown and analyzer.IsActive(), False))
-        master = getattr(parent, 'Master', None)
-        if master is not None:
-            lit = hasattr(parent, 'cue') and parent.IsLoudOn()
-            keys.append((master, 'MASTER', lit, True))
-        # MIXER: lit while something sounds through it, its name shows or folds it (as
-        # ANALYZER's)
-        mixer = getattr(parent, 'Mixer', None)
-        if mixer is not None:
-            keys.append((mixer, 'MIXER', mixer.shown and mixer.IsActive(), False))
-        return keys
-
-    def GetState(self):
-        return tuple((label, lit, module.shown) for module, label, lit, _ in self.GetKeys())
-
-    def OnSize(self, event=None):
-        self.SetRect((0, 0, self.parent.GetClientSize().width, self.HEIGHT))
-        self.DirectDraw()
-
-    def SetRectDraw(self, dc):
-        st = self.parent.st
-        tokens = uikit.ui()
-        w, h = self.GetSize()
-        self.hits = []
-        dc.SetPen(wx.Pen(st.RACK_EDGE_COLOR, 1))
-        dc.DrawLine(0, h - 1, w, h - 1)
-        gc = wx.GraphicsContext.Create(dc)
-        if gc is None:
-            return
-        font = uikit.get_font(10, bold=True)
-        x, y = 8, (h - 1 - self.KEY_HEIGHT) // 2
-        for module, label, lit, power in self.GetKeys():
-            # the name's key: its LED and its name, as MASTER's switches
-            gc.SetFont(font, colour(st.RACK_TEXT_COLOR))
-            tw = int(math.ceil(gc.GetTextExtent(label)[0]))
-            kw = 7 + self.LED + 6 + tw + 9
-            hovered = self.hovered == (module, 'name')
-            downed = self.downed == (module, 'name')
-            face = colour(tokens.CONTROL_DOWN if downed else tokens.CONTROL_HOVER
-                          if hovered else tokens.CONTROL_BG)
-            # joined to its arrow, their edge shared (an input group's)
-            uikit.draw_face(gc, (x, y, kw, self.KEY_HEIGHT), face, pressed=downed,
-                            corners='left')
-            ly = y + (self.KEY_HEIGHT - self.LED) // 2
-            if lit:
-                gc.SetPen(wx.NullGraphicsPen)
-                gc.SetBrush(gc.CreateBrush(wx.Brush(colour(tokens.ACCENT))))
-            else:
-                gc.SetPen(wx.Pen(colour(st.RACK_LABEL_COLOR), 1))
-                gc.SetBrush(wx.NullGraphicsBrush)
-            gc.DrawEllipse(x + 7, ly, self.LED, self.LED)
-            gc.SetFont(font, colour(tokens.BAR_TEXT if lit else tokens.CONTROL_FG))
-            gc.DrawText(label, x + 7 + self.LED + 6,
-                        uikit.get_caps_top(font, y, self.KEY_HEIGHT))
-            self.hits.append((wx.Rect(x, y, kw, self.KEY_HEIGHT), (module, 'name'), power))
-            x += kw - 1
-            # its arrow: the module under the bar (up while it is shown)
-            uikit.draw_button(dc, (x, y, self.ARROW, self.KEY_HEIGHT),
-                              icon='up' if module.shown else 'down',
-                              on=module.shown, hover=self.hovered == (module, 'arrow'),
-                              down=self.downed == (module, 'arrow'), corners='right')
-            self.hits.append((wx.Rect(x + 1, y, self.ARROW - 1, self.KEY_HEIGHT),
-                              (module, 'arrow'), power))
-            # 8 px to the next module's key (13 before), the window's gap
-            x += self.ARROW + 8
-        self.DrawMeter(gc, x, w, h)
-
-    def DrawMeter(self, gc, left, w, h):
-        # read here while ANALYZER is folded (its readings are the same: drawn, it reads)
-        analyzer = getattr(self.parent, 'Analyzer', None)
-        if analyzer is None:
-            return
-        if analyzer.IsShown() is False:
-            analyzer.Read()
-        a = analyzer.analyzer
-        st = self.parent.st
-        tokens = uikit.ui()
-        short = a.loudness[1]
-        text = '%5.1f LUFS' % short if short > -70.0 else '  --  LUFS'
-        font = get_font(uikit.READOUT, mono=True)
-        gc.SetFont(font, colour(st.LCD_TEXT_COLOR))
-        tw, th = gc.GetTextExtent('-00.0 LUFS')[:2]
-        cw, ch = tw + 12, self.KEY_HEIGHT
-        cx, cy = w - 8 - cw, (h - 1 - ch) // 2
-        # the loudness's display left out in a very small window (the bars kept): the room
-        # OUT and its bars at their least need
-        least = 34 + self.METER_LEAST
-        lufs = cx - self.METER_GAP - left >= least
-        if lufs is False:
-            cx = w - 8 + self.METER_GAP
-        # its bars as wide as the room is (METER_WIDTH at most, METER_LEAST at least: a fixed
-        # 150 left OUT out of a small window)
-        room = cx - self.METER_GAP - 34 - 13 - left
-        width = int(max(self.METER_LEAST, min(self.METER_WIDTH, room)))
-        bx = cx - self.METER_GAP - width
-        if bx - 34 < left:
-            return
-        if lufs:
-            gc.SetPen(wx.Pen(colour(st.RACK_EDGE_COLOR), 1))
-            gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.LCD_BG_COLOR))))
-            gc.DrawRoundedRectangle(cx + 0.5, cy + 0.5, cw - 1, ch - 1, uikit.RADIUS)
-            gc.DrawText(text, cx + 6, cy + (ch - th) / 2.0)
-        # OUT, then the channels' bars one over the other
-        label = get_font(uikit.LABEL, bold=True)
-        gc.SetFont(label, colour(st.RACK_LABEL_COLOR))
-        lw = gc.GetTextExtent('OUT')[0]
-        gc.DrawText('OUT', bx - 8 - lw, uikit.get_caps_top(label, cy, ch))
-        segment, spacing, bar = uikit.METER_SEGMENT, uikit.METER_GAP, uikit.METER_BAR
-        count = int((width + spacing) / (segment + spacing))
-        # on whole pixels (the cell's width is a text's: a segment fell between two)
-        bx = int(bx)
-        warn_from = int(round((self.METER_WARN - self.METER_LOW) / -self.METER_LOW * count))
-        top = cy + (ch - bar * 2 - 3) // 2
-        gc.SetPen(wx.NullGraphicsPen)
-        for c in (0, 1):
-            share = max(min((a.peak[c] - self.METER_LOW) / -self.METER_LOW, 1.0), 0.0)
-            lit = int(round(share * count))
-            by = top + c * (bar + 3)
-            for k in range(count):
-                if k < lit:
-                    fill = tokens.WARN if k >= warn_from else tokens.ACCENT
-                else:
-                    fill = st.METER_OFF_COLOR
-                gc.SetBrush(gc.CreateBrush(wx.Brush(colour(fill))))
-                gc.DrawRectangle(bx + k * (segment + spacing), by, segment, bar)
-
-    def GetHit(self, point):
-        for rect, key, power in self.hits:
-            if rect.Contains(point):
-                return key, power
-        return None, None
-
-    def CATCH_EVT_GLOBAL(self, event):
-        state = self.GetState()
-        if state != self.state:
-            self.state = state
+    def OnHeaderKey(self, hit):
+        if hit[0] == 'fold':
+            self.ToggleFold()
+        elif hit[0] == 'power':
+            self.OnPower()
             self.reInitBuffer = True
-        key, power = self.GetHit(wx.Point(int(event.X), int(event.Y))) if self.onClient\
-            else (None, None)
-        if key != self.hovered:
-            self.hovered = key
-            self.reInitBuffer = True
-        if (event.LeftDown or event.LeftDClick) and key is not None:
-            self.downed = key
-            self.reInitBuffer = True
-            module, part = key
-            if part == 'arrow' or power is False:
-                self.ToggleModule(module)
-            else:
-                # MASTER on or off
-                if self.parent.IsLoudOn():
-                    self.parent.SetLoudOff()
-                else:
-                    self.parent.SetLoudOn()
-        elif event.LeftIsDown is False and self.downed is not None:
-            self.downed = None
-            self.reInitBuffer = True
-
-    def ToggleModule(self, module):
-        frame = self.parent.parent.parent
-        if module is getattr(self.parent, 'Analyzer', None):
-            # with the View menu's check
-            frame.SetAnalyzerShow(not module.shown)
+        elif hit[1] in self.parts:
+            self.TogglePart(hit[1])
         else:
-            module.Toggle()
+            self.OnChip(hit[1])

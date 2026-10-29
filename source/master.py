@@ -9,7 +9,6 @@ email: peppy0510@hotmail.com
 
 import audio
 import ctypes
-import math
 import pybass
 
 from ctypes import wintypes
@@ -43,17 +42,27 @@ GetParam = pybass_vst.func_type(ctypes.c_float, ctypes.c_ulong, ctypes.c_int)(
     ('BASS_VST_GetParam', pybass_vst.bass_vst_module))
 
 
+# read once and kept here (set_value the only one to write them): GetPreference opens
+# the settings at every call, and MASTER's drawing asked 170 times a second (120 ms)
+values_kept = None
+
+
 def get_values():
-    values = GetPreference('automaster_values')
-    if not isinstance(values, (list, tuple)) or len(values) != len(DEFAULTS):
-        return list(DEFAULTS)
-    return list(values)
+    global values_kept
+    if values_kept is None:
+        values = GetPreference('automaster_values')
+        if not isinstance(values, (list, tuple)) or len(values) != len(DEFAULTS):
+            values = DEFAULTS
+        values_kept = list(values)
+    return list(values_kept)
 
 
 def set_value(index, value, handles=()):
     # kept, and put on the streams it is on now
+    global values_kept
     values = get_values()
     values[index] = min(max(float(value), 0.0), 1.0)
+    values_kept = list(values)
     SetPreference('automaster_values', values)
     for handle in handles:
         if handle:
@@ -63,6 +72,36 @@ def set_value(index, value, handles=()):
 
 def is_on(value):
     return value >= 0.5
+
+
+# a stage's switches, turned off and on as one from MASTER's header (STEREO: its five)
+STAGE_SWITCHES = dict(agc=(0,), stereo=(4, 5, 6, 8, 9), limiter=(12,))
+
+
+def is_stage_on(stage, values=None):
+    values = get_values() if values is None else values
+    return any(is_on(values[index]) for index in STAGE_SWITCHES[stage])
+
+
+def toggle_stage(stage, handles=()):
+    '''a stage off (its switches as they were kept: automaster_stages) or on again as
+    they were (all on when none were kept)'''
+    values = get_values()
+    switches = STAGE_SWITCHES[stage]
+    kept = GetPreference('automaster_stages')
+    kept = kept if isinstance(kept, dict) else {}
+    if is_stage_on(stage, values):
+        kept[stage] = [values[index] for index in switches]
+        SetPreference('automaster_stages', kept)
+        turned = [0.0] * len(switches)
+    else:
+        turned = kept.get(stage)
+        if not isinstance(turned, list) or len(turned) != len(switches)\
+                or not any(is_on(value) for value in turned):
+            turned = [1.0] * len(switches)
+    for index, value in zip(switches, turned):
+        values = set_value(index, value, handles)
+    return values
 
 
 class Probe():
@@ -151,17 +190,23 @@ class Meters():
                 return True
         return False
 
-    def Read(self):
-        '''{agc, limiter, side, balance, loudness} of the slot that sounded last, None when
-        none did lately (the plugin not on, or silent)'''
+    def Read(self, vst=0):
+        '''{agc, limiter, side, balance, loudness} of the plugin on this handle (its slot:
+        its instance the slot's owner), else of the slot that sounded last; None when none
+        did lately (the plugin not on, or silent). the memory is every instance's of this
+        name: another player's (PyMusicStudio's, a test's) read in turn with this one's,
+        WIDTH went between -5.5 and 0 dB'''
         if self.block is None and not self.Open():
             return None
         if self.block.magic != MAGIC:
             return None
         now = kernel32.GetTickCount64()
+        owner = get_owner(vst)
         best = None
         for slot in self.block.slots:
             if not slot.owner or not slot.tick or now - slot.tick > STALE_MS:
+                continue
+            if owner and slot.owner != owner:
                 continue
             key = (slot.sounding, slot.tick)
             if best is None or key > best[0]:
@@ -169,8 +214,13 @@ class Meters():
         if best is None:
             return None
         slot = best[1]
+        # (and the stereo's detail, as PyWinAudio's rack shows it: the delay set between
+        # the channels, and each band's width as it came, as filled and its target)
         return dict(agc=slot.agc_db, limiter=slot.limiter_db, side=slot.side_db,
                     balance=slot.balance_db, loudness=slot.loudness,
+                    phase=slot.phase_delay_ms, phase_flip=bool(slot.phase_flip),
+                    bands=[dict(width=slot.band_width_db[k], fill=slot.fill_band_db[k],
+                                target=slot.band_target_db[k]) for k in range(3)],
                     sounding=bool(slot.sounding))
 
     def IsCompared(self):
@@ -187,12 +237,14 @@ class Meters():
 METERS = Meters()
 
 
-def get_output_db(handle):
-    # the stream's peak as it plays (after the plugin), dBFS; None when it does not play
-    if not handle:
-        return None
-    level = audio.get_channel_level(handle)
-    if level in (-1, 0xFFFFFFFF):
-        return None
-    peak = max(level & 0xFFFF, (level >> 16) & 0xFFFF) / 32768.0
-    return 20 * math.log10(max(peak, 1e-5))
+def get_owner(vst, kept={}):
+    # the plugin's instance on a BASS_VST handle (BASS_VST_INFO's aeffect: the plugin's
+    # own struct begins with it), 0 when not known
+    if not vst:
+        return 0
+    if vst not in kept:
+        info = pybass_vst.BASS_VST_INFO()
+        found = pybass_vst.BASS_VST_GetInfo(vst, ctypes.byref(info))
+        kept.clear()
+        kept[vst] = (info.aeffect or 0) if found else 0
+    return kept[vst]

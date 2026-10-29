@@ -727,8 +727,9 @@ class MFEATS_Scheduler(ThreadTimer):
             done = None
         wx.CallAfter(self.QueueOutdated, done)
 
-    def QueueOutdated(self, done):
-        if not self.parent or self.IsAutoAnalyzerOn() is False:
+    def QueueOutdated(self, done, asked=False):
+        # asked: by Check Analyzer Versions, the auto analyzer on or not
+        if not self.parent or (self.IsAutoAnalyzerOn() is False and asked is False):
             return
         lists = self.parent.ListBox.innerList
         if done is not None:
@@ -1871,7 +1872,11 @@ class RectRect():
         self.SetRectPre()
         width, height = self.GetSize()
         if width > 0 and height > 0:
-            self.buffer.bmp = wx.Bitmap(width, height)
+            # (the last frame's picture drawn over when it is the size: one made a frame
+            # was half of a frame's setting up)
+            bmp = self.buffer.bmp
+            if bmp is None or bmp.GetSize() != (width, height):
+                self.buffer.bmp = wx.Bitmap(width, height)
             dc = wx.BufferedDC(None, self.buffer.bmp)
             dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
             dc.SetBackgroundMode(wx.TRANSPARENT)
@@ -2186,7 +2191,47 @@ class TabTextEdit(wx.TextCtrl):
         self.destroy = True
 
 
+# the dialogs' spacing, one ladder for all of them (the tag editor's, Look Up's and the
+# rest each had their own: the user): PAD round a dialog, between its groups (columns,
+# sections) and round its footer's line and buttons; GAP between rows, a name and its
+# field, and buttons side by side; CHECK_GAP from a check box to its name; ROW a field's
+# height, BUTTON_HEIGHT a button's
+DIALOG_PAD = 16
+DIALOG_GAP = 8
+DIALOG_CHECK_GAP = 6
+DIALOG_ROW = 22
+DIALOG_BUTTON_HEIGHT = 26
+
+
 class DialogBox(wx.Dialog):
+
+    # the footer: its line PAD over the buttons, the buttons PAD from the bottom and the
+    # sides (OnDialogPaint, PlaceButtons)
+    footer_gap = DIALOG_PAD + 1
+
+    @staticmethod
+    def GetFooterHeight():
+        return 1 + DIALOG_PAD * 2 + DIALOG_BUTTON_HEIGHT
+
+    def GetContentBottom(self):
+        # where a dialog's content ends: PAD over its footer's line
+        return self.GetClientSize().height - self.GetFooterHeight() - DIALOG_PAD
+
+    def PlaceButtons(self, right=(), left=()):
+        '''the footer's buttons: right, their order kept, at its right end; left at its
+        left; GAP between them, PAD from the sides and the bottom; their row's top'''
+        width, height = self.GetClientSize()
+        top = height - DIALOG_PAD - DIALOG_BUTTON_HEIGHT
+        x = width - DIALOG_PAD
+        for button in reversed(right):
+            x -= button.GetSize().width
+            button.SetPosition((x, top))
+            x -= DIALOG_GAP
+        x = DIALOG_PAD
+        for button in left:
+            button.SetPosition((x, top))
+            x += button.GetSize().width + DIALOG_GAP
+        return top
 
     def __init__(self, parent, id=-1, size=(-1, -1), pos=(-1, -1), style=0):
         style = style | wx.CLIP_CHILDREN | wx.CAPTION | wx.TAB_TRAVERSAL |\
@@ -2219,7 +2264,7 @@ class DialogBox(wx.Dialog):
         if line is None:
             line = self.footer_line = wx.Window(self, style=wx.BORDER_NONE)
             line.SetBackgroundColour(macroboxstyle.current().UI.BAR_LINE)
-        rect = wx.Rect(0, min(tops) - 11, w, 1)
+        rect = wx.Rect(0, min(tops) - self.footer_gap, w, 1)
         if line.GetRect() != rect:
             line.SetRect(rect)
         line.Show()
@@ -2333,9 +2378,8 @@ class UserInputDialogPanel(DialogPanel):
         self.OnSize(None)
 
     def OnSize(self, event):
-        margin = 10
         width, height = self.parent.GetClientSize()
-        self.UserInput.SetRect((margin, margin, width - margin * 2, 22))
+        self.UserInput.SetRect((DIALOG_PAD, DIALOG_PAD, width - DIALOG_PAD * 2, DIALOG_ROW))
 
     def GetValue(self):
         return self.UserInput.GetValue()
@@ -2347,11 +2391,18 @@ class UserInputDialogPanel(DialogPanel):
         self.Destroy()
 
 
+# the small dialogs' width: their two buttons and the footer's sides
+SMALL_DIALOG_WIDTH = DIALOG_PAD * 2 + 75 * 2 + DIALOG_GAP
+
+
 class UserInputDialogBox(DialogBox):
 
     def __init__(self, parent):
         DialogBox.__init__(self, parent, size=(190, 115))
         self.parent = parent
+        # a field, the footer under it
+        self.SetClientSize((max(SMALL_DIALOG_WIDTH, 190), DIALOG_PAD * 2 + DIALOG_ROW
+                            + self.GetFooterHeight()))
         self.UserInput = UserInputDialogPanel(self)
         self.ApplyButton = Button(self, label='', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
@@ -2363,12 +2414,13 @@ class UserInputDialogBox(DialogBox):
         return DialogBox.ShowModal(self)
 
     def OnSize(self, event):
-        margin = 10
+        # (a size set before its children are made: none to place yet)
+        if getattr(self, 'CloseButton', None) is None:
+            return
         width, height = self.GetClientSize()
-        self.UserInput.SetRect((0, 0, width, 40))
+        self.UserInput.SetRect((0, 0, width, DIALOG_PAD * 2 + DIALOG_ROW))
         self.UserInput.OnSize(None)
-        self.ApplyButton.SetRect((int(width / 2 - 75 - 3), height - margin - 24, 75, 24))
-        self.CloseButton.SetRect((int(width / 2 + 3), height - margin - 24, 75, 24))
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
 
     def OnApply(self, event):
         self.OnClose(event)
@@ -2388,10 +2440,9 @@ class ConfirmDialogPanel(DialogPanel):
         self.OnSize(None)
 
     def OnSize(self, event):
-        margin = 10
         width, height = self.GetClientSize()
-        self.Message.SetPosition((margin, margin + 3))
-        self.Message.SetInitialSize((width - margin * 2, 22))
+        self.Message.SetPosition((DIALOG_PAD, DIALOG_PAD))
+        self.Message.SetInitialSize((width - DIALOG_PAD * 2, DIALOG_ROW))
 
     def SetLabelText(self, value):
         self.Message.SetLabelText(value)
@@ -2406,6 +2457,9 @@ class ConfirmDialogBox(DialogBox):
     def __init__(self, parent):
         DialogBox.__init__(self, parent, size=(180, 105))
         self.parent = parent
+        # a line of words, the footer under it
+        self.SetClientSize((SMALL_DIALOG_WIDTH, DIALOG_PAD * 2 + DIALOG_ROW
+                            + self.GetFooterHeight()))
         self.Message = ConfirmDialogPanel(self)
         self.ApplyButton = Button(self, label='', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
@@ -2414,14 +2468,12 @@ class ConfirmDialogBox(DialogBox):
         self.OnSize(None)
 
     def OnSize(self, event):
-        margin = 10
+        if getattr(self, 'CloseButton', None) is None:
+            return
         width, height = self.GetClientSize()
-        self.Message.SetRect((0, 0, width, 40))
+        self.Message.SetRect((0, 0, width, DIALOG_PAD * 2 + DIALOG_ROW))
         self.Message.OnSize(None)
-        self.ApplyButton.SetRect((int(width / 2 - 75 - 2), height - margin - 24, 75, 24))
-        self.CloseButton.SetRect((int(width / 2 + 3), height - margin - 24, 75, 24))
-        # self.ApplyButton.SetRect((margin, height-margin-24, 75, 24))
-        # self.CloseButton.SetRect((width-75-margin, height-margin-24, 75, 24))
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
 
     def OnApply(self, event):
         self.OnClose(event)
@@ -2430,6 +2482,47 @@ class ConfirmDialogBox(DialogBox):
         if self.IsModal():
             self.EndModal(0)
         self.Destroy()
+
+
+def fit_name_column(parent, x, width):
+    '''names right-aligned in a column width wide at x, their fields past it: the column
+    made as wide as its widest name (that one PAD from the edge, not 30 and more: a fixed
+    column wider than its names, the user), everything past it moved as much; the px saved'''
+    children = list(parent.GetChildren())
+    names = [c for c in children if isinstance(c, wx.StaticText)
+             and c.GetPosition().x == x and c.GetSize().width == width]
+    if not names:
+        return 0
+    widest = max(c.GetBestSize().width for c in names)
+    shift = width - widest
+    if shift <= 0:
+        return 0
+    for c in children:
+        cx, cy = c.GetPosition()
+        if c in names:
+            c.SetSize((widest, c.GetSize().height))
+        elif cx >= x + width:
+            c.SetPosition((cx - shift, cy))
+    return shift
+
+
+def make_check(parent, label, pos, value, handler):
+    '''a check box and its name, a text of its own CHECK_GAP past the box (the box's own
+    name sat against it: the user), a click on the name checking it too; (box, width).
+    pos: the name's top left as a row's names (the box a pixel lower, on its middle)'''
+    box = CheckBox(parent, label='', pos=(pos[0], pos[1] + 1))
+    box.SetSize(box.GetBestSize())
+    box.SetValue(value)
+    box.Bind(wx.EVT_CHECKBOX, lambda e: handler(box.GetValue()))
+    x = pos[0] + box.GetSize().width + DIALOG_CHECK_GAP
+    name = StaticText(parent, label=label, pos=(x, pos[1]))
+    name.SetSize(name.GetBestSize())
+
+    def flip(event):
+        box.SetValue(not box.GetValue())
+        handler(box.GetValue())
+    name.Bind(wx.EVT_LEFT_DOWN, flip)
+    return box, x + name.GetSize().width - pos[0]
 
 
 def draw_field(gc, w, h, focused):
@@ -2698,7 +2791,7 @@ class Dropdown(wx.Control):
         ui = macroboxstyle.current().UI
         font = wx.Font(wx.Size(0, 12), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
                        wx.FONTWEIGHT_NORMAL, faceName=FONT_ITEM)
-        gc.SetFont(font, uikit.colour(ui.EDIT_FG))
+        uikit.set_font(gc, font, uikit.colour(ui.EDIT_FG))
         tw, th = gc.GetTextExtent(self.value)[:2]
         gc.Clip(1, 1, w - 22, h - 2)
         gc.DrawText(self.value, 8, (h - th) / 2.0)
@@ -2738,30 +2831,57 @@ class FieldFrame(wx.Window):
     '''a TextCtrl's frame (the field the dialog places): a rounded ground of its own,
     the edge in the accent while it is typed in, the text control borderless inside it with
     its text on the field's middle (a borderless control alone kept its text at the top);
-    read only, no ground: the value as text on the dialog's'''
+    read only, its edge alone, the dialog's ground in it (no field at all, the value as text
+    on the dialog's, before: numbers floating in the air, the user)'''
 
     # the text control at PAD in from the field's edge: its own margin (4 px) adds to it, the
     # text's ink 8 px in (it was 11 at 7); one row under the middle, so the capitals sit on
     # the field's middle and Hangul's taller glyphs too (measured: Latin 6 to 14 of 22,
     # Hangul 5 to 17)
     PAD = 4
+    # its menu's mark at its right (SetMark: a ▾ when it has values to choose from), the
+    # text short of it
+    MARK = 16
 
     def __init__(self, parent, pos, size):
         wx.Window.__init__(self, parent, pos=pos, size=size, style=wx.BORDER_NONE)
         self.text = None
+        # changed (SetChanged: a bar in the accent at its left, not saved yet), its mark's
+        # action (SetMark)
+        self.changed = False
+        self.mark = None
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Bind(wx.EVT_SIZE, lambda e: self.Layout())
-        self.Bind(wx.EVT_LEFT_DOWN, lambda e: self.text and self.text.SetFocus())
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
+
+    def OnLeftDown(self, event):
+        if self.mark is not None and event.GetX() >= self.GetClientSize().width - self.MARK - 2:
+            self.mark()
+            return
+        if self.text:
+            self.text.SetFocus()
+
+    def SetChanged(self, changed):
+        if changed != self.changed:
+            self.changed = changed
+            self.Refresh()
+
+    def SetMark(self, action):
+        if (action is None) != (self.mark is None):
+            self.mark = action
+            self.SetCursor(wx.Cursor(wx.CURSOR_HAND if action else wx.CURSOR_DEFAULT))
+            self.Layout()
+        self.mark = action
 
     def Layout(self):
         if self.text is None:
             return
         w, h = self.GetClientSize()
         th = min(self.text.GetCharHeight() + 2, h)
-        pad = 0 if self.text.read_only else self.PAD
         y = min((h - th) // 2 + 1, h - th)
-        wx.TextCtrl.SetSize(self.text, pad, y, max(w - pad * 2, 1), th)
+        room = w - self.PAD * 2 - (self.MARK if self.mark is not None else 0)
+        wx.TextCtrl.SetSize(self.text, self.PAD, y, max(room, 1), th)
         self.Refresh()
 
     def OnPaint(self, event):
@@ -2769,21 +2889,32 @@ class FieldFrame(wx.Window):
         ui = macroboxstyle.current().UI
         dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
         dc.Clear()
-        if self.text is None or self.text.read_only:
+        if self.text is None:
             return
         w, h = self.GetClientSize()
         gc = wx.GraphicsContext.Create(dc)
-        edge = ui.FIELD_FOCUS if self.text.HasFocus() else ui.FIELD_EDGE
+        read_only = self.text.read_only
+        edge = ui.FIELD_FOCUS if self.text.HasFocus() and not read_only else ui.FIELD_EDGE
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
-        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
+        gc.SetBrush(wx.NullGraphicsBrush if read_only else
+                    gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
         # (from (0, 0), w - 1: the renderer puts the edge on the outer rows, uikit.draw_face)
         gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
+        if self.changed:
+            gc.SetPen(wx.NullGraphicsPen)
+            gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.ACCENT))))
+            gc.DrawRectangle(1, 3, 2, h - 6)
+        if self.mark is not None:
+            # a small chevron, as the dropdowns'
+            cx, cy = w - self.PAD - self.MARK / 2.0, h / 2.0
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.BAR_TEXT_DIM)).Width(1.4)))
+            gc.StrokeLines([(cx - 3.5, cy - 1.5), (cx, cy + 2), (cx + 3.5, cy - 1.5)])
 
 
 class TextCtrl(wx.TextCtrl):
 
     '''a dialog's text field: a borderless text control in a FieldFrame (placed, sized,
-    shown and destroyed with it); SetReadOnly: a value shown, not a field'''
+    shown and destroyed with it); SetReadOnly: a value shown in a field of its edge alone'''
 
     def __init__(self, parent, id=-1, value='',
                  pos=(-1, -1), size=(75, 24), style=0):

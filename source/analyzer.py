@@ -54,6 +54,9 @@ SPECTRUM_BANDS = 160
 SPECTRUM_FLOOR = -90.0
 SPECTRUM_TILT = 3.0
 SPECTRUM_FALL = 40.0
+# a band's level the mean of its bins' power, followed this share a frame (PyWinAudio's: the
+# bins' peak followed at once, before, drew the curve 20 dB higher than it)
+SPECTRUM_SMOOTH = 0.35
 PEAK_LINE_HOLD = 1.0
 PEAK_LINE_FALL = 12.0
 
@@ -71,6 +74,55 @@ GRAM_STOPS = ((0.0, '#111215'), (0.125, '#1f0c48'), (0.25, '#57106e'), (0.375, '
 SCOPE_SIDE = 96
 SCOPE_PERSIST = 0.55
 SCOPE_SAMPLES = 2048
+
+
+# the spectrum's bars, PyWinAudio's (meterview: a bar a semitone, its FFT 0.1 s long at
+# 10 Hz a bin, read from the last 75 ms; an autogain following the sound above 5 kHz)
+BAR_LOW_PAD = (2, 3, 4, 5, 6, 7)
+BAR_NOTES = [8.0, 8.41536811017449] + [8.91577193817796 * 2 ** (step / 12)
+                                       for step in range(127)]
+BAR_REACH = 3
+BAR_SET = 103
+BAR_PITCH = 3
+AUTOGAIN_DEFAULT = 0.4
+AUTOGAIN_RANGE = (0.05, 4.0)
+AUTOGAIN_FOLLOW = 2.0
+# the oscilloscope's columns kept (a frame each: its highest, lowest and RMS)
+WAVE_COLUMNS = 2560
+
+
+def get_bar_points(rate):
+    # (the frame read, the FFT's length) at this rate
+    return int(rate * 0.075 / 4), int(rate * 0.1)
+
+
+def get_firwin(taps, cutoff, highpass):
+    # scipy.signal.firwin (Hamming) without scipy
+    middle = numpy.arange(taps) - (taps - 1) / 2
+    if highpass:
+        response = numpy.sinc(middle) - cutoff * numpy.sinc(cutoff * middle)
+    else:
+        response = cutoff * numpy.sinc(cutoff * middle)
+    response *= numpy.hamming(taps)
+    return response / (response * numpy.cos(numpy.pi * middle * (1.0 if highpass else 0.0))).sum()
+
+
+def get_autogain_weights(rate):
+    _, points = get_bar_points(rate)
+    nyquist = rate / 2
+    freqs = numpy.arange(1, points // 2) * (rate / points)
+
+    def respond(taps, cutoff, highpass):
+        coefficients = get_firwin(taps, cutoff / nyquist, highpass)
+        phase = numpy.exp(-2j * numpy.pi * numpy.outer(freqs / rate, numpy.arange(taps)))
+        return phase @ coefficients
+
+    chain = (respond(15, 500, True) * respond(7, 1000, True) * respond(5, 1000, True) *
+             respond(5, 5000, True))
+    if nyquist > 21000:
+        chain = chain * respond(45, 20000, False)
+        chain = chain + chain * respond(5, 15000, True) * 0.5
+    return numpy.abs(chain) ** 2
 
 
 def to_db(value, floor=-120.0):
@@ -154,9 +206,17 @@ class Analyzer():
         self.gram = numpy.zeros((GRAM_ROWS, GRAM_COLUMNS), dtype=numpy.uint8)
         self.gram_index = 0
         self.scope = numpy.zeros((SCOPE_SIDE, SCOPE_SIDE), dtype=numpy.float32)
+        self.bars = None
+        self.autogain = AUTOGAIN_DEFAULT
+        self.wave = numpy.zeros((3, WAVE_COLUMNS))
+        self.wave_index = 0
         self.rate = 0
         self.k_weights = {}
         self.bins = {}
+        self.bar_cache = {}
+        # the bars' strip's width (the GUI's: a bar every BAR_PITCH px, its notes split as
+        # many times as it is wider than BAR_SET bars)
+        self.bar_scale = getattr(self, 'bar_scale', 1)
 
     def GetKWeights(self, size, rate):
         key = (size, rate)
@@ -196,12 +256,16 @@ class Analyzer():
         self.UpdateStereo(part, elapsed)
         self.UpdateSpectrum(samples, rate, elapsed, now)
         self.UpdateScope(samples[:SCOPE_SAMPLES])
+        self.UpdateBars(samples, rate, elapsed)
+        self.UpdateWave(part)
 
     def IsSettled(self):
         # nothing left falling (stopped a while): no frame needed
         return max(self.peak + self.rms + self.hold) <= FLOOR\
             and float(self.spectrum.max()) <= SPECTRUM_FLOOR\
-            and float(self.peak_line.max()) <= SPECTRUM_FLOOR and float(self.scope.max()) < 0.01
+            and float(self.peak_line.max()) <= SPECTRUM_FLOOR and float(self.scope.max()) < 0.01\
+            and (self.bars is None or float(self.bars.max()) < 1e-3)\
+            and abs(self.correlation) < 0.005 and abs(self.balance) < 0.01
 
     def Fall(self, elapsed, now):
         for c in (0, 1):
@@ -213,6 +277,14 @@ class Analyzer():
         self.peak_line = numpy.maximum(self.peak_line - PEAK_LINE_FALL * elapsed,
                                        SPECTRUM_FLOOR)
         self.scope *= SCOPE_PERSIST
+        if self.bars is not None:
+            self.bars = self.bars * max(0.0, 1.0 - elapsed * 8)
+        # the stereo's readings back to their middle and the loudness's gone (they held their
+        # last after a pause, "the meters do not come back", the user); the song's gated
+        # momentaries kept, its integrated loudness going on from them when it plays again
+        self.correlation *= max(0.0, 1.0 - elapsed * 8)
+        self.balance *= max(0.0, 1.0 - elapsed * 8)
+        self.loudness = (LOUDNESS_FLOOR, LOUDNESS_FLOOR, LOUDNESS_FLOOR)
 
     def UpdateLevels(self, part, elapsed, now):
         share = 1.0 - math.exp(-elapsed / RMS_TIME) if elapsed > 0 else 1.0
@@ -276,11 +348,14 @@ class Analyzer():
         # a full scale sine's bin at 0 dB
         magnitude = numpy.abs(numpy.fft.rfft(mono * window)) / (window.sum() / 2.0)
         starts, ends, tilt = self.GetBins(rate, SPECTRUM_BANDS)
-        peaks = numpy.maximum.reduceat(magnitude, starts)
-        levels = 20.0 * numpy.log10(numpy.maximum(peaks, 1e-9)) + tilt
+        power = magnitude ** 2
+        cumulative = numpy.concatenate(([0.0], numpy.cumsum(power)))
+        means = (cumulative[ends] - cumulative[starts]) / numpy.maximum(ends - starts, 1)
+        levels = 10.0 * numpy.log10(numpy.maximum(means, 1e-12)) + tilt
         levels = numpy.maximum(levels, SPECTRUM_FLOOR)
-        fallen = self.spectrum - SPECTRUM_FALL * elapsed
-        self.spectrum = numpy.maximum(levels, fallen)
+        self.spectrum = self.spectrum + (levels - self.spectrum) * SPECTRUM_SMOOTH
+        # the peak line over the curve as drawn (the raw frame's above it by 20 dB)
+        levels = self.spectrum
         rising = levels >= self.peak_line
         self.peak_line_lap[rising] = now
         held = now - self.peak_line_lap <= PEAK_LINE_HOLD
@@ -288,8 +363,8 @@ class Analyzer():
             held, self.peak_line, numpy.maximum(self.peak_line - PEAK_LINE_FALL * elapsed, levels)))
         # the spectrogram's column on its own rows, its colour index
         g_starts, g_ends, g_tilt = self.GetBins(rate, GRAM_ROWS)
-        rows = 20.0 * numpy.log10(numpy.maximum(numpy.maximum.reduceat(magnitude, g_starts),
-                                                1e-9)) + g_tilt
+        g_means = (cumulative[g_ends] - cumulative[g_starts]) / numpy.maximum(g_ends - g_starts, 1)
+        rows = 10.0 * numpy.log10(numpy.maximum(g_means, 1e-12)) + g_tilt
         index = numpy.clip((rows - GRAM_LOW) / (GRAM_HIGH - GRAM_LOW) * 255.0, 0, 255)
         self.gram[:, self.gram_index] = index[::-1].astype(numpy.uint8)
         self.gram_index = (self.gram_index + 1) % GRAM_COLUMNS
@@ -304,6 +379,75 @@ class Analyzer():
         y = numpy.clip((half - mid * half * 0.95).astype(int), 0, SCOPE_SIDE - 1)
         numpy.add.at(self.scope, (y, x), 0.35)
         numpy.minimum(self.scope, 1.0, out=self.scope)
+
+    def GetBarBins(self, rate):
+        # the bars' FFT bins: the notes, split bar_scale times (PyWinAudio's get_bar_bins)
+        key = ('bins', rate, self.bar_scale)
+        if key not in self.bar_cache:
+            _, points = get_bar_points(rate)
+            limit = points // 2 - 1
+            bins = list(BAR_LOW_PAD) + [freq for freq in BAR_NOTES
+                                        if 8 < freq < limit + len(BAR_LOW_PAD) + 1] + [limit]
+            for index in range(len(bins) - 1, 0, -1):
+                step = (bins[index] - bins[index - 1]) / self.bar_scale
+                for part in range(self.bar_scale - 1, 0, -1):
+                    bins.insert(index, bins[index - 1] + step * part)
+            self.bar_cache[key] = bins
+        return self.bar_cache[key]
+
+    def GetBarWeights(self, rate, size):
+        key = ('weights', rate, self.bar_scale, size)
+        if key not in self.bar_cache:
+            bins = self.GetBarBins(rate)
+            lows, highs, logs, roots, powers = [], [], [], [], []
+            for index, value in enumerate(bins[:-1]):
+                low = max(0, int(value) - BAR_REACH)
+                lows.append(low)
+                highs.append(min(size, max(int(bins[index + 1]) + 1, int(value) + BAR_REACH + 1)))
+                logs.append(math.log(1 + value, 2))
+                roots.append(value ** 0.25)
+                powers.append(1.4 * ((2 + index) / (1 + index)))
+            lows, highs = numpy.array(lows), numpy.array(highs)
+            reach = lows[:, None] + numpy.arange((highs - lows).max())[None, :]
+            reach = numpy.minimum(reach, highs[:, None] - 1)
+            self.bar_cache[key] = (reach, numpy.array(logs), numpy.array(roots),
+                                   numpy.array(powers))
+        return self.bar_cache[key]
+
+    def UpdateBars(self, samples, rate, elapsed):
+        # the bars' levels (0 to about 2.5: a bar's half height its share of the strip's)
+        frame, points = get_bar_points(rate)
+        left = samples[:frame, 0].astype(numpy.float64)
+        raw = numpy.abs(numpy.fft.fft(left, points))[1:points // 2]
+        key = ('autogain', rate)
+        if key not in self.bar_cache:
+            self.bar_cache[key] = get_autogain_weights(rate)
+        energy = 2.0 * float((raw ** 2 * self.bar_cache[key]).sum()) / points / frame
+        rms = math.sqrt(energy) * 3
+        if rms >= 1e-4:
+            low, high = AUTOGAIN_RANGE
+            target = min(high, max(low, 0.14 / rms))
+            self.autogain += (target - self.autogain) * min(1.0, elapsed / AUTOGAIN_FOLLOW)
+        amplify = (self.autogain * (1.0 / 0.4) * 2 * (rate / 44100.0) * 1.25 *
+                   math.sqrt(min(self.bar_scale, 3)))
+        spectrum = raw * 32768.0 * amplify / points / 8192
+        reach, logs, roots, powers = self.GetBarWeights(rate, len(spectrum))
+        levels = spectrum[reach].max(axis=1) * logs * roots
+        self.bars = (levels ** powers) * 1.5
+
+    def UpdateWave(self, part):
+        # the oscilloscope's column: the frame's highest, lowest and RMS (mono)
+        mono = part.mean(axis=1)
+        self.wave[:, self.wave_index] = (float(mono.max()), float(mono.min()),
+                                         float(numpy.sqrt((mono ** 2).mean())))
+        self.wave_index = (self.wave_index + 1) % WAVE_COLUMNS
+
+    def GetWave(self, columns):
+        # the last columns, oldest first: (3 x columns) highest, lowest, RMS
+        columns = min(columns, WAVE_COLUMNS)
+        order = (numpy.arange(WAVE_COLUMNS - columns, WAVE_COLUMNS) + self.wave_index)\
+            % WAVE_COLUMNS
+        return self.wave[:, order]
 
     def GetGram(self, columns):
         # the last columns, oldest first (rows: high frequencies at the top)

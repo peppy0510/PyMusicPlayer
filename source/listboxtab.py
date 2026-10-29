@@ -26,6 +26,7 @@ from listboxlib import FileOpenDialog
 from listboxlib import FileSaveDialog
 from listboxlib import ListBoxListDnD
 from listboxlib import ListControl
+from macroboxlib import DIALOG_PAD
 from macroboxlib import Button
 from macroboxlib import COLOR_STATUS_BG
 from macroboxlib import ComboBox
@@ -707,6 +708,7 @@ class ListBoxTabHeader(RectBox):
             return
         # the + under the mouse, and held down on it (as the rows' close mark)
         button = getattr(self, 'add_button', None)
+        kind = self.parent.TabList.GetCurrentSection()[1]
         hovered = bool(button) and self.onClient and self.IsInRect(button, (event.X, event.Y))
         downed = hovered and event.LeftIsDown and event.down.X is not None\
             and self.IsInRect(button, (event.down.X, event.down.Y))
@@ -714,9 +716,13 @@ class ListBoxTabHeader(RectBox):
             self.add_state = (hovered, downed)
             self.reInitBuffer = True
         self.HandleEventTabAddDown(event)
-        # the name (anywhere off the +): the playlists folded or opened
-        if self.onClient and event.LeftDown and button and hovered is False:
-            toggle_section('playlists')
+        # the name (anywhere off the +): its section folded or opened (the next one's, on its
+        # top coming up into the box)
+        following = self.parent.TabList.GetFollowingSection()
+        if following and event.Y >= following[2]:
+            kind = following[1]
+        if self.onClient and event.LeftDown and hovered is False:
+            toggle_section(kind)
             self.reInitBuffer = True
             self.parent.TabList.reInitBuffer = True
             self.parent.SliderV.reInitBuffer = True
@@ -735,7 +741,7 @@ class ListBoxTabHeader(RectBox):
         #     return
         # pressed and released on it, as the tab's close (a click was lost to
         # a pixel's move or a press over half a second)
-        if event.down.X is None or event.down.Y is None:
+        if event.down.X is None or event.down.Y is None or not self.add_button:
             return
         if not self.IsInRect(self.add_button, (event.down.X, event.down.Y)):
             return
@@ -751,15 +757,35 @@ class ListBoxTabHeader(RectBox):
 
     def SetRectDraw(self, dc):
         width, height = self.GetSize()
-        lines = [(0, 1, width, 1)]
+        tablist = self.parent.TabList
+        label, kind = tablist.GetCurrentSection()
+        following = tablist.GetFollowingSection()
+        self.drawn_sticky = ((label, kind), following)
+        # pushed up by the next section's header coming up into it (its top here, the rest
+        # in the rows under it), its line over it with it
+        shift = following[2] - height if following else 0
+        lines = [(0, 1 + shift, width, 1 + shift)]
         x = width - self.parent.scrollbar_size - 3
         lines.append((x, 1, x, height))
         color = self.parent.st.HEADER_PN_COLOR
         dc.DrawLineList(lines, pens=wx.Pen(color, 1))
+        self.DrawName(dc, label, kind, height, shift)
+        self.add_button = None
+        if kind == 'playlists':
+            self.DrawAddButton(dc, width, height, shift)
+        if following:
+            body = tablist.GetRect()
+            tablist.DrawHeader(dc, following[2], following[0], following[1], body.x,
+                               body.width)
+        lines = [(0, 1, 0, self.GetSize().height)]
+        color = self.parent.st.HEADER_PN_COLOR
+        dc.DrawLineList(lines, pens=wx.Pen(color, 1))
+
+    def DrawAddButton(self, dc, width, height, shift=0):
         size = self.bmp.add.GetWidth()
         # over the rows' close mark (2 px right with it, ListBoxTabList.DrawTabPolygon)
         offset_x = width - (size + self.parent.scrollbar_size + 10)
-        offset_y = (height - size) / 2 + 1
+        offset_y = (height - size) / 2 + 1 + shift
         # under the mouse a key's face behind it, pressed the pressed face and the mark a
         # pixel down (the rows' close mark's: ListBoxTabList.DrawTabPolygon)
         hovered, downed = getattr(self, 'add_state', (False, False))
@@ -774,28 +800,27 @@ class ListBoxTabHeader(RectBox):
                                     uikit.RADIUS)
         offset_y += 1 if downed else 0
         dc.DrawBitmap(self.bmp.add, int(offset_x), int(offset_y), useMask=True)
-        # the sidebar's first section named in its header (the + adds a playlist), in
-        # capitals as the list's header names its columns
+        # pad = 2
+        # self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
+        # the header's height, up to the line before the scrollbar (the 8px mark was 12px to hit)
+        pad = 8
+        self.add_button = (offset_x - pad, shift, size + pad * 2, height)
+
+    def DrawName(self, dc, label, kind, height, shift=0):
+        # the section scrolled into named (the + adds a playlist: PLAYLISTS' alone), in
+        # capitals as the list's header names its columns; its own header under it in the
+        # rows (PLAYLISTS fixed over LIBRARY's and RADIO's rows read as theirs: the user)
         font = uikit.get_font(10)
         dc.SetFont(font)
         dc.SetTextForeground(self.parent.TabList.GetColours()[1])
         # a pixel lower than the middle by its caps (it sat a pixel over the list's header
         # names beside it, measured)
-        top = int(round(uikit.get_caps_top(font, 2, height - 2))) + 1
-        dc.DrawText('PLAYLISTS', ListBoxTabList.HEADER_X, top)
+        top = int(round(uikit.get_caps_top(font, 2, height - 2))) + 1 + shift
+        dc.DrawText(label.upper(), ListBoxTabList.HEADER_X, top)
         caps = uikit.get_caps_ink(font)
-        draw_fold_mark(dc, ListBoxTabList.HEADER_X + dc.GetTextExtent('PLAYLISTS')[0] + 6,
-                       top + caps[0] + caps[1] / 2.0, is_section_folded('playlists'),
+        draw_fold_mark(dc, ListBoxTabList.HEADER_X + dc.GetTextExtent(label.upper())[0] + 6,
+                       top + caps[0] + caps[1] / 2.0, is_section_folded(kind),
                        self.parent.TabList.GetColours()[1])
-        # pad = 2
-        # self.add_button = (offset_x - pad, offset_y - pad, size + pad * 2, size + pad * 2)
-        # the header's height, up to the line before the scrollbar (the 8px mark was 12px to hit)
-        pad = 8
-        self.add_button = (offset_x - pad, 0, size + pad * 2, height)
-
-        lines = [(0, 1, 0, self.GetSize().height)]
-        color = self.parent.st.HEADER_PN_COLOR
-        dc.DrawLineList(lines, pens=wx.Pen(color, 1))
 
     def OnSize(self, event=None):
         self.DirectDraw()
@@ -913,8 +938,11 @@ class ListBoxTabList(RectBox):
         self.rects = [v if v is not None else wx.Rect(0, 0, 0, 0) for v in rects]
         self.normal_tabs = normal
         self.headers = headers
+        self.SetCurrentSection(headers)
         self.virtual_entries = virtual
-        self.content_height = y - vpy + 4
+        # 2 px under the last row as over the first (4 more left 5, the list read as ending
+        # short of its edge: the user)
+        self.content_height = y - vpy + 1
 
     def GetColours(self):
         # (text, dimmed text, hover ground, selected ground, accent) for the sidebar
@@ -1099,26 +1127,62 @@ class ListBoxTabList(RectBox):
                 dc.DrawLine(offset_x, offset_y + size, offset_x + size + 1, offset_y - 1)
         self.close_rects = close_rects
 
+    def SetCurrentSection(self, headers):
+        '''as a web page's sticky headers: the box over the sidebar the top of one view with
+        the rows, the section scrolled into named there once its header has gone up into
+        it, and the next one's header, coming up into it, pushing it out (its top in the
+        box, the rest in the rows: one header). named there while its header still showed
+        whole under it, LIBRARY read twice ("not as the web does", the user); the box drawn
+        again as it changes'''
+        box = getattr(self.parent, 'TabHeader', None)
+        band = box.GetSize().height if box is not None else self.HEADER_HEIGHT
+        current, following = ('Playlists', 'playlists'), None
+        for y, label, kind in headers:
+            if y + band > 0:
+                if y < 0:
+                    following = (label, kind, int(y) + band)
+                break
+            current = (label, kind)
+        self.current_section = current
+        self.following_section = following
+        if box is not None and getattr(box, 'drawn_sticky', None) != (current, following):
+            box.reInitBuffer = True
+            box.DirectDraw()
+
+    def GetFollowingSection(self):
+        # (name, kind, its top in the box) of the next section's header coming up into the
+        # box over the sidebar, else None
+        return getattr(self, 'following_section', None)
+
+    def GetCurrentSection(self):
+        # (name, kind) of the section the sidebar is scrolled into
+        return getattr(self, 'current_section', ('Playlists', 'playlists'))
+
     def DrawHeaders(self, dc):
         # the section names dimmed, in capitals (as the list's header), each on a band as
         # PLAYLISTS' header is (its ground, the line over it, its name placed as there):
         # on the rows' ground they looked another kind of thing
+        width = self.GetClientSize().width
+        for y, label, kind in self.headers:
+            self.DrawHeader(dc, y, label, kind, 0, width)
+
+    def DrawHeader(self, dc, y, label, kind, x, width):
+        # a section's header from (x, y) (the box over the sidebar draws the top of one coming
+        # up into it: its x the rows')
         dim = self.GetColours()[1]
         font = uikit.get_font(10)
         caps = uikit.get_caps_ink(font)
-        width = self.GetClientSize().width
-        for y, label, kind in self.headers:
-            dc.SetPen(wx.TRANSPARENT_PEN)
-            dc.SetBrush(wx.Brush(self.parent.st.HEADER_BG_COLOR))
-            dc.DrawRectangle(0, int(y), width, self.HEADER_HEIGHT)
-            dc.SetPen(wx.Pen(self.parent.st.HEADER_PN_COLOR, 1))
-            dc.DrawLine(0, int(y), width, int(y))
-            dc.SetFont(font)
-            dc.SetTextForeground(dim)
-            top = int(round(uikit.get_caps_top(font, y + 2, self.HEADER_HEIGHT - 2))) + 1
-            dc.DrawText(label.upper(), self.HEADER_X, top)
-            draw_fold_mark(dc, self.HEADER_X + dc.GetTextExtent(label.upper())[0] + 6,
-                           top + caps[0] + caps[1] / 2.0, is_section_folded(kind), dim)
+        dc.SetPen(wx.TRANSPARENT_PEN)
+        dc.SetBrush(wx.Brush(self.parent.st.HEADER_BG_COLOR))
+        dc.DrawRectangle(x, int(y), width, self.HEADER_HEIGHT)
+        dc.SetPen(wx.Pen(self.parent.st.HEADER_PN_COLOR, 1))
+        dc.DrawLine(x, int(y), x + width, int(y))
+        dc.SetFont(font)
+        dc.SetTextForeground(dim)
+        top = int(round(uikit.get_caps_top(font, y + 2, self.HEADER_HEIGHT - 2))) + 1
+        dc.DrawText(label.upper(), x + self.HEADER_X, top)
+        draw_fold_mark(dc, x + self.HEADER_X + dc.GetTextExtent(label.upper())[0] + 6,
+                       top + caps[0] + caps[1] / 2.0, is_section_folded(kind), dim)
 
     def HandleEventSectionFold(self, event):
         # a section's name clicked: its rows folded or opened (toggle_section)
@@ -1459,6 +1523,9 @@ class ListBoxTabList(RectBox):
         xy = wx.Point(x, y)
         # add_button_size = self.rects[0].height
 
+        # (on a header: no row under it hit)
+        if any(top <= y < top + self.HEADER_HEIGHT for top, _, _ in self.headers):
+            return None
         for i, rect in enumerate(self.rects):
             if self.IsInRect(rect, xy):
                 return i
@@ -1756,14 +1823,15 @@ class TabDeleteBox(ConfirmDialogBox):
                                   style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
         self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
         self.Text.SetFont(uikit.get_font(uikit.BODY))
-        self.SetClientSize((340, 120))
+        # two lines PAD in (the dialogs' spacing), the footer under them
+        self.SetClientSize((340, DIALOG_PAD * 2 + 40 + self.GetFooterHeight()))
         self.OnSize(None)
 
     def OnSize(self, event):
         ConfirmDialogBox.OnSize(self, event)
         if getattr(self, 'Text', None) is not None:
             width, height = self.GetClientSize()
-            self.Text.SetRect((10, 16, width - 20, 40))
+            self.Text.SetRect((DIALOG_PAD, DIALOG_PAD, width - DIALOG_PAD * 2, 40))
 
     def OnApply(self, event):
         # (told by a list of its caller's: the box is gone when ShowModal returns)

@@ -177,11 +177,8 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.PlayBox.VectorScope.CatchEvent(event)
         self.PlayBox.Apic.CatchEvent(event)
         self.PlayBox.VolumeSlider.CatchEvent(event)
-        self.PlayBox.TempoButton.CatchEvent(event)
-        self.PlayBox.KeyButton.CatchEvent(event)
         self.PlayBox.TempoStrip.CatchEvent(event)
         self.PlayBox.SnapButton.CatchEvent(event)
-        self.PlayBox.RackBar.CatchEvent(event)
         self.PlayBox.Rack.CatchEvent(event)
         self.ListSash.CatchEvent(event)
         if self.ListBox.IsAnyListLocked() is False\
@@ -213,10 +210,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             if hasattr(self, 'PlayBox') else 0
         # (the waveforms' frame 8 px from the header over it and from the control row under
         # it: 4 px less than before, 12 over and 8 under)
+        # (the header's own: PlayBox.HEADER_HEIGHT, 57 when 154 was written here, 61 since;
+        # left at 154, the box was 4 px short)
+        # (the whole song's waveform 40 of the 97 before: View > Waveform Height)
+        wave = 57 + self.parent.GetWaveformHeight() + self.parent.GetWaveformDetailHeight()
         if self.parent.IsPlayerTopShowOn():
-            # (the header 13 px lower than it was: PlayBox.HEADER_HEIGHT)
-            return 154 + self.parent.GetWaveformDetailHeight() + master
-        return 130 + self.parent.GetWaveformDetailHeight() + master
+            return PlayBox.HEADER_HEIGHT + wave + master
+        return PlayBox.HEADER_COMPACT + wave + master
 
     def SetListRects(self):
         w, h = self.GetSize()
@@ -297,6 +297,14 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.OnSize()
         self.BorderBoxHB.OnSize()
         self.Thaw()
+        # the window's least height follows the player's (MainFrame.FitLeastHeight)
+        if pbh != getattr(self, 'least_pbh', None):
+            self.least_pbh = pbh
+            wx.CallAfter(self.parent.FitLeastHeight)
+
+    def GetLeastHeight(self):
+        # the player, the search row and the status line, the list none tall (SetListRects)
+        return self.GetPlayBoxHeight() + 31 + SEARCH_ROW_HEIGHT
 
     def OnListTabSize(self):
         self.Freeze()

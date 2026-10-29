@@ -9,6 +9,7 @@ import audio
 import ctypes
 import images
 import io
+import listimages
 import math
 import mutagen
 import numpy
@@ -16,6 +17,8 @@ import os
 import mfeats
 import playboxlib
 import radio
+import re
+import tempfile
 import threading
 import time
 import uikit
@@ -30,9 +33,9 @@ from macroboxlib import PaintUnpainted
 from macroboxlib import RectBox
 from analyzerbox import AnalyzerPanel
 from masterbox import MasterPanel
-from mixerbox import MixerPanel
+from rackbox import KNOB_DRAG
 from rackbox import Rack
-from rackbox import RackBar
+from rackbox import RackModule
 from playboxlib import AudioControl
 from playboxlib import PlayBoxControl
 from playboxlib import PlayBoxDnD
@@ -75,18 +78,19 @@ class PlayBox(RectBox, PlayBoxControl):
         self.VisualClock = PlayBoxVisualClock(self)
         self.ControlButton = PlayBoxControlButton(self)
         self.VolumeSlider = VolumeSlider(self)
-        self.TempoButton = TempoButton(self)
-        self.KeyButton = KeyButton(self)
         self.TempoStrip = TempoStrip(self)
         self.SnapButton = SnapButton(self)
-        # the rack over the header: its bar at the top (a key for each module), under it
-        # MASTER's module and ANALYZER's (the bar's arrows; ANALYZER also from the View
-        # menu, or a click on the header's spectrum or scope)
+        # the rack over the header: MASTER's module at the top, always there (its header the
+        # rack's bar: the output's meter, the volume), ANALYZER's under it (from the View
+        # menu, or a click on the header's spectrum or scope); the signal's order, MASTER
+        # first and ANALYZER reading after it
         self.Master = MasterPanel(self)
         self.Analyzer = AnalyzerPanel(self)
-        self.Mixer = MixerPanel(self)
-        self.Rack = Rack(self, [self.Analyzer, self.Master, self.Mixer])
-        self.RackBar = RackBar(self)
+        self.Rack = Rack(self, [self.Master, self.Analyzer])
+        # the volume on MASTER's header (VolumeSlider.OnSize): its child, the header drawing
+        # around it (a sibling laid over it was drawn under it)
+        self.VolumeSlider.Reparent(self.Master)
+        self.Master.SetWindowStyleFlag(self.Master.GetWindowStyleFlag() | wx.CLIP_CHILDREN)
         # the header's visualizers in ANALYZER's BARS part: its children, its drawing
         # leaving them out
         self.Spectrum.Reparent(self.Analyzer)
@@ -105,9 +109,9 @@ class PlayBox(RectBox, PlayBoxControl):
     # above the control row, the waveforms at the bottom: the box's height as before
     # 13 px under the info's cells to the waveforms' frame, as over the cover and the title
     # from the rack (92: 26 under, measured)
-    # (the waveforms' frame 8 px under the cover and the info's cells, as the rack 8 over
-    # them: 13, then 10 before)
-    HEADER_HEIGHT = 57
+    # (the waveforms' frame 8 px under the cover and the info's cells, the rack 12 over
+    # them: 13, then 10 before; PlayBoxApic.TEXT_TOP)
+    HEADER_HEIGHT = 61
     HEADER_COMPACT = 33
     CONTROL_HEIGHT = 33
 
@@ -132,11 +136,12 @@ class PlayBox(RectBox, PlayBoxControl):
         info, title = getattr(self, 'Info', None), getattr(self, 'Title', None)
         if info is None or title is None or self.parent.parent.IsPlayerTopShowOn() is False:
             return
-        # counted as with the tempo strip at its widest (both its faders): the header's
-        # height kept when TEMPO or KEY shows or hides them
+        # counted with the tempo strip as it is (at its widest before, the header's height
+        # kept as TEMPO or KEY toggled it: a row more than the cells took with it hidden;
+        # it is View's to show now, seldom)
         # the cover as tall as the info's rows (PlayBoxApic.GetCoverSize): wider with more
         # of them, the text's room counted again for its size till the rows stay
-        right = title.GetTextRight() - self.GetStripSlack()
+        right = title.GetTextRight()
         side = self.parent.parent.IsPlayerSideShowOn()
         rows = 1
         for _ in range(3):
@@ -163,8 +168,9 @@ class PlayBox(RectBox, PlayBoxControl):
     def GetHeaderTop(self):
         return self.GetRackHeight()
 
-    # the tempo strip at the deck's right, its columns shown or hidden on their own: the
-    # tempo's by TEMPO (shown unless hidden), the key's by KEY (hidden unless shown); kept
+    # the tempo strip at the deck's right, its columns shown or hidden on their own (View >
+    # Tempo Control, Key Control; TEMPO and KEY on the control row before): the tempo's
+    # shown unless hidden, the key's hidden unless shown; kept
     def IsStripColumnShown(self, column):
         # read once and kept (asked many times a frame, the settings' file opened each time)
         shown = self.__dict__.setdefault('strip_shown', {})
@@ -176,11 +182,43 @@ class PlayBox(RectBox, PlayBoxControl):
         return shown[column]
 
     def SetStripColumnShown(self, column, shown):
-        self.__dict__.setdefault('strip_shown', {})[column] = bool(shown)
-        SetPreference('tempo_strip' if column == 'tempo' else 'key_strip', bool(shown))
-        self.TempoButton.reInitBuffer = True
-        self.KeyButton.reInitBuffer = True
+        '''a column shown is its control on; hidden, off: its value kept, the song heard as
+        it is (1.0, 0) till it is shown again, the value back (hidden, it was still heard
+        moved, unseen: the user)'''
+        shown = bool(shown)
+        was = self.IsStripColumnShown(column)
+        kept = self.__dict__.setdefault('strip_kept', {})
+        self.__dict__.setdefault('strip_shown', {})[column] = shown
+        SetPreference('tempo_strip' if column == 'tempo' else 'key_strip', shown)
+        if shown and not was and column in kept:
+            if column == 'tempo':
+                self.SetTempoRate(kept.pop(column))
+            else:
+                self.SetTempoSemitones(kept.pop(column))
+        elif was and not shown:
+            if column == 'tempo':
+                kept[column] = self.GetTempoRate()
+                self.SetTempoRateExact(1.0)
+            else:
+                kept[column] = self.GetTempoSemitones()
+                self.SetTempoSemitones(0)
+        menubar = getattr(self.parent.parent, 'MenuBar', None)
+        item = getattr(menubar, 'itemTempoControl' if column == 'tempo' else 'itemKeyControl',
+                       None)
+        if item is not None:
+            item.Check(shown)
         self.OnSize(settle=True)
+
+    def OnTempoMoved(self, column):
+        # moved while its column is hidden (not by its fader: a shortcut, DECK SYNC):
+        # shown, its value the new one, not one hidden moved
+        if column == 'tempo':
+            moved = abs(self.GetTempoRate() - 1.0) > 1e-9
+        else:
+            moved = self.GetTempoSemitones() != 0
+        if moved and not self.IsStripColumnShown(column):
+            self.__dict__.setdefault('strip_kept', {}).pop(column, None)
+            self.SetStripColumnShown(column, True)
 
     def GetDeckRight(self):
         # the header's and the waveforms' right end: left of the tempo strip when shown
@@ -190,20 +228,32 @@ class PlayBox(RectBox, PlayBoxControl):
             return w - 8 - TempoStrip.GetWidth(count) - 8
         return w - 8
 
-    def GetStripSlack(self):
-        # the room the tempo strip leaves now past its widest (both its columns): what is
-        # sized by the header's room counted as at its widest, kept as TEMPO or KEY toggles
-        return TempoStrip.GetWidth(2) + 8 - (self.GetClientSize().width - 8
-                                             - self.GetDeckRight())
+    # LOOP to SNAP at least: a group's gap (9 px at the window's least read cramped)
+    CONTROL_GAP = 13
+    # the control row narrower by level as the window is: all as it is, then the
+    # transport's keys and LOOP's narrower (PlayBoxControlButton.SetPreInitRects)
+    CONTROL_LEVELS = 2
+
+    def GetControlNeed(self, level=0):
+        # the width the control row needs on one row: the transport and the ways it plays,
+        # SNAP (TEMPO and KEY too before: View's Tempo Control and Key Control now)
+        strip = PlayBoxControlButton.STRIP_WIDTH\
+            - (PlayBoxControlButton.TRANSPORT_SAVE if level >= 1 else 0)\
+            - (PlayBoxControlButton.LOOP_SAVE if level >= 1 else 0)
+        return PlayBoxControlButton.STRIP_X + strip + self.CONTROL_GAP + SnapButton.LENGTH + 5
+
+    def GetControlLevel(self):
+        width = self.GetClientSize().width
+        for level in range(self.CONTROL_LEVELS):
+            if width >= self.GetControlNeed(level):
+                return level
+        return self.CONTROL_LEVELS - 1
 
     def GetControlRows(self):
-        # the control row a row more when the window is too narrow for both its sides: the
-        # transport and the ways it plays on the first, SNAP, TEMPO, KEY and the volume on
-        # the second (SNAP was hidden)
-        right = SnapButton.LENGTH + SnapButton.GROUP_GAP + TempoButton.LENGTH\
-            + KeyButton.LENGTH + SnapButton.GROUP_GAP + VolumeSlider.LENGTH + 5
-        left = PlayBoxControlButton.STRIP_X + PlayBoxControlButton.STRIP_WIDTH + 6
-        return 1 if self.GetClientSize().width >= left + right else 2
+        # the control row a row more only when even its narrowest does not fit (HIGHLIGHT
+        # and SHORT one key: one row at the window's least)
+        return 1 if self.GetClientSize().width\
+            >= self.GetControlNeed(self.CONTROL_LEVELS - 1) else 2
 
     def GetControlHeight(self):
         return self.CONTROL_HEIGHT * getattr(self, 'control_rows', 1)
@@ -214,18 +264,86 @@ class PlayBox(RectBox, PlayBoxControl):
     def GetControlTop(self):
         return self.GetClientSize().height - self.GetControlHeight()
 
-    def GetRightControlTop(self):
-        # the volume's row: the last
-        return self.GetClientSize().height - self.CONTROL_HEIGHT
-
     def IsControlTwoRows(self):
         # two rows: on the left the transport over the ways it plays, on the right SNAP,
-        # TEMPO and KEY over the volume
+        # TEMPO and KEY
         return getattr(self, 'control_rows', 1) == 2
 
-    def GetVolumeRoom(self):
-        # the volume's width and its gap left of TEMPO's group, on the same row
-        return 0 if self.IsControlTwoRows() else VolumeSlider.LENGTH + SnapButton.GROUP_GAP
+    def OpenTrackEditor(self):
+        # the tag editor (the list's Track Information Editor) on the song playing: its tab
+        # shown and it selected there first, as the editor edits the list's selection
+        if self.IsStreamTrack():
+            return
+        found = self.GetPlayingListItemIdx()
+        if not found:
+            return
+        listIdx, itemIdx = found
+        listbox = self.parent.ListBox
+        if listIdx != listbox.selectedList:
+            listbox.SetSelectedList(listIdx)
+            self.parent.OnSize(None)
+        listbox.SelectAndFocusItem(itemIdx)
+        self.Apic.HidePreview()
+        listbox.List.OpenItemEditBox(None)
+
+    def HandleDragOut(self, box, event, kind):
+        '''the playing song dragged out of the title or the info: its file, copied where it
+        is let go; out of the cover: its picture (as a file); one drag a press'''
+        if event.LeftIsDown is False:
+            box.dragging_out = False
+            return
+        if getattr(box, 'dragging_out', False) or event.LeftIsDrag is False\
+                or event.drag.rectIdx is None or self.parent.HasToSkipEvent():
+            return
+        box.dragging_out = True
+        path = self.cue.path
+        if self.IsStreamTrack() or not path or not os.path.isfile(path):
+            return
+        if kind == 'cover':
+            self.Apic.HidePreview()
+            path = self.MakeCoverFile(path)
+            if path is None:
+                return
+        self.parent.SetItemDrag((path,))
+
+    # the covers dragged out: their files, named after their songs (kept: where one is let go
+    # may copy it after the drag has ended)
+    COVER_FOLDER = os.path.join(tempfile.gettempdir(), 'PyMusicPlayer covers')
+
+    def MakeCoverFile(self, path):
+        # the cover's own bytes, as they are in the tags (none made smaller)
+        try:
+            data = listimages.read_cover(path)
+            kind = Image.open(io.BytesIO(data)).format if data else None
+        except Exception:
+            return None
+        if not kind:
+            return None
+        extension = {'JPEG': 'jpg'}.get(kind, kind.lower())
+        name = re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(os.path.basename(path))[0])
+        os.makedirs(self.COVER_FOLDER, exist_ok=True)
+        cover = os.path.join(self.COVER_FOLDER, '%s.%s' % (name, extension))
+        with open(cover, 'wb') as file:
+            file.write(data)
+        return cover
+
+    def HandleTrackEditor(self, event):
+        # the title's or the cover's double-click, or their menu, opens the tag editor
+        if event.rectIdx is None or self.parent.HasToSkipEvent() or self.IsStreamTrack():
+            return
+        if event.LeftDClick:
+            # (after the event: the editor is modal)
+            wx.CallAfter(self.OpenTrackEditor)
+        elif event.RightUp and event.down.rectIdx is not None:
+            menu = wx.Menu()
+            item = menu.Append(wx.ID_ANY, 'Edit Track Info...')
+            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.OpenTrackEditor), item)
+            # Find in Library with the playing song's tempo and key (as heard) set
+            find = menu.Append(wx.ID_ANY, 'Find in Library...')
+            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(
+                wx.GetTopLevelParent(self).OnFindInLibrary, None,
+                song=(self.GetPlayingTempo(), self.GetPlayingKey())), find)
+            self.parent.SetPopupMenu(menu, (event.x, event.y))
 
     def CheckControlRows(self):
         rows = self.GetControlRows()
@@ -240,7 +358,7 @@ class PlayBox(RectBox, PlayBoxControl):
     def GetRackHeight(self):
         # the rack over the header: its bar and its modules shown
         rack = getattr(self, 'Rack', None)
-        return RackBar.HEIGHT + (rack.GetHeight() if rack is not None else 0)
+        return rack.GetHeight() if rack is not None else 0
 
     # the header's last sizes (44 and 30, 300 wide at most: PlayBoxSpectrum.max_width)
     SCOPE_MOST = 44
@@ -248,8 +366,8 @@ class PlayBox(RectBox, PlayBoxControl):
 
     def LayoutAnalyzerVisuals(self):
         '''the spectrum's bars and the scope in ANALYZER's BARS part (their windows its
-        children: AnalyzerPanel.bars_rect), the scope a square at its right, 8 px apart;
-        hidden with the part or ANALYZER'''
+        children), the scope a square at its right, 8 px apart; hidden with the part or
+        ANALYZER (hidden always now: the part is SCOPE, drawn by ANALYZER itself)'''
         rect = getattr(self.Analyzer, 'bars_laid', None)
         if rect is None or rect.width < self.SCOPE_MOST + 32 + 40:
             self.Spectrum.Place(None)
@@ -286,17 +404,6 @@ class PlayBox(RectBox, PlayBoxControl):
         if self.IsControlTwoRows():
             dc.DrawLine(0, top + self.CONTROL_HEIGHT - 1, width, top + self.CONTROL_HEIGHT - 1)
         self.DrawWaveFrame(dc)
-        # the right side's separators on SNAP's row (the first)
-        # the line between SNAP's group and TEMPO's
-        snap = getattr(self, 'SnapButton', None)
-        if snap is not None and snap.IsShown():
-            sx = snap.GetRect().GetRight() + 1 + SnapButton.GROUP_GAP // 2
-            dc.DrawLine(sx, top + 8, sx, top + self.CONTROL_HEIGHT - 7)
-        # and between TEMPO's and KEY's and the volume's (on one row)
-        key = getattr(self, 'KeyButton', None)
-        if key is not None and self.IsControlTwoRows() is False:
-            sx = key.GetRect().GetRight() + 1 + SnapButton.GROUP_GAP // 2
-            dc.DrawLine(sx, top + 8, sx, top + self.CONTROL_HEIGHT - 7)
         self.DrawLiveMessage(dc)
 
     # the waveforms' frame: a display's edge this far around them
@@ -366,6 +473,15 @@ class PlayBox(RectBox, PlayBoxControl):
     def OnSize(self, event=None, settle=False):
         # settle: a single step's change (the tempo strip toggled), the waveforms painted
         # for it before the screen shows it (PlayBoxWave.SettleNow)
+        if event is not None:
+            # (sized by the mouse: laid out once more a moment after its last size, from
+            # the size it was left at; seen broken after a resize, the tempo strip over the
+            # waveforms, the user)
+            timer = getattr(self, 'settle_timer', None)
+            if timer is None:
+                self.settle_timer = wx.CallLater(200, self.OnSize)
+            else:
+                timer.Start(200)
         self.Freeze()
         self.DirectDraw()
         # the cover, the header right to left (scope, spectrum: as wide as leaves the title
@@ -380,11 +496,8 @@ class PlayBox(RectBox, PlayBoxControl):
         self.WaveDetail.OnSize(None)
         self.TempoStrip.OnSize(None)
         self.ControlButton.OnSize(None)
-        self.RackBar.OnSize()
         self.Rack.OnSize()
         self.VolumeSlider.OnSize(None)
-        self.TempoButton.OnSize(None)
-        self.KeyButton.OnSize(None)
         self.SnapButton.OnSize(None)
         if settle:
             self.Wave.SettleNow()
@@ -392,6 +505,15 @@ class PlayBox(RectBox, PlayBoxControl):
         self.Thaw()
         self.CheckHeaderRows()
         self.CheckControlRows()
+        # the rack's height at this width (its bar's rows, MASTER's sections side by side or
+        # one under another): a change lays the window out again, as the header's (the
+        # window kept the old height, the rack over the waveforms and the list: the user)
+        rack_height = self.GetRackHeight()
+        if rack_height != getattr(self, 'rack_height', None):
+            first = getattr(self, 'rack_height', None) is None
+            self.rack_height = rack_height
+            if not first:
+                wx.CallAfter(self.RelayoutHeader)
 
     def CATCH_EVT_GLOBAL(self, event):
 
@@ -451,11 +573,9 @@ class PlayBox(RectBox, PlayBoxControl):
                 self.OnResume()
 
         if namespace == 'loop_toggle' and self.cache.oneshotkey is False:
+            # its modes in turn, as LOOP's press (off, the list, the song)
             self.cache.oneshotkey = True
-            if self.IsLoopOn():
-                self.SetLoopOff()
-            else:
-                self.SetLoopOn()
+            self.CycleLoop()
             self.reInitBuffer = True
 
         if namespace == 'loud_toggle' and self.cache.oneshotkey is False:
@@ -550,8 +670,8 @@ class PlayBoxVisualClock(threading.Thread):
         # ANALYZER before the spectrum and the scope in it (drawn after them, it painted
         # over them)
         return [getattr(parent, name, None)
-                for name in ('RackBar', 'Analyzer', 'Master', 'Mixer', 'Spectrum',
-                             'VectorScope', 'Wave', 'WaveDetail')]
+                for name in ('Analyzer', 'Master', 'Spectrum', 'VectorScope',
+                             'Wave', 'WaveDetail')]
 
     def GetFPS(self):
         fps = [box.buffer.fps for box in self.GetBoxes() if box is not None]
@@ -578,23 +698,18 @@ class PlayBoxVisualClock(threading.Thread):
             return
         PaintUnpainted()
         if self.parent.IsVisualPlaying() is False:
-            # stopped: ANALYZER's meters and the rack bar's fall to rest, then nothing is
-            # drawn
+            # stopped: ANALYZER's meters and MASTER's header's fall to rest, then nothing
+            # is drawn
             analyzer = getattr(self.parent, 'Analyzer', None)
             if analyzer is not None and analyzer.analyzer.IsSettled() is False:
                 if analyzer.IsShown():
                     analyzer.DirectDraw()
-                self.parent.RackBar.DirectDraw()
+                self.parent.Master.DirectDraw()
             # MASTER's meters drawn once more, at rest (they held their last frame)
             master_panel = getattr(self.parent, 'Master', None)
             if master_panel is not None and not getattr(self, 'master_rested', False):
                 master_panel.reInitBuffer = True
                 self.master_rested = True
-            # MIXER's meters with them (and falling to rest after)
-            mixer = getattr(self.parent, 'Mixer', None)
-            if mixer is not None and mixer.IsShown() and mixer.IsActive():
-                mixer.DirectDraw()
-                mixer.Update()
             return
         self.master_rested = False
         for box in self.GetBoxes():
@@ -660,9 +775,13 @@ class PlayBoxControlButton(RectBox):
 
     # (its first button 8 px in: 6 and its own 2)
     STRIP_X = 6
-    # (HIGHLIGHT's and SHORT's length keys joined to them; HIGHLIGHT and SHORT 8 px in
-    # their faces either side, 6 and 7 before)
-    STRIP_WIDTH = 354
+    # narrower as the window is (PlayBox.GetControlLevel): the transport's keys this much
+    # narrower in all (126 to 94) and LOOP's (40 to 26), the keys after them moved
+    TRANSPORT_SAVE = 32
+    LOOP_SAVE = 14
+    # (the mode key's length key joined to it; HIGHLIGHT 8 px in its face either side;
+    # HIGHLIGHT and SHORT a key each before, 354; LOOP named, 44 wide, 282)
+    STRIP_WIDTH = 278
 
     def __init__(self, parent):
         RectBox.__init__(self, parent)
@@ -683,11 +802,21 @@ class PlayBoxControlButton(RectBox):
         self.button_flash = [0.0] * 10
         self.button_status = [False] * 10
         # 6: MASTER's panel folded or open (not a toggle of its own: the panel says);
-        # 7: SHORT (the radio edit); 8, 9: HIGHLIGHT's and SHORT's lengths (a menu each,
-        # the main menu's Highlight Duration before)
+        # 0: the mode key, HIGHLIGHT or SHORT (the radio edit; the two turn each other
+        # off: one key, SHORT's own before); 8: its menu (the mode, its lengths); 7, 9:
+        # SHORT and its lengths' keys, none now
         self.toggle_buttons = [True, False, True, False, True, True, False, True, False,
                                False]
+        # the mode the key plays and names: the last chosen (the one on when one is:
+        # OverrideStatusFromParent)
+        kind = GetPreference('play_mode_kind')
+        self.kind = kind if kind in ('highlight', 'short') else 'highlight'
         self.hovered = None
+        # PREV and NEXT: whether a song is before and after the one playing in its list
+        # (GetAround)
+        self.around = (True, True)
+        self.around_drawn = self.around
+        self.around_lap = 0.0
         self.SetBackgroundColour(uikit.ui().BAR_BG)
         self.SetPreInitRects()
         self.SetButtonColors()
@@ -724,6 +853,11 @@ class PlayBoxControlButton(RectBox):
         if hovered != self.hovered:
             self.hovered = hovered
             self.reInitBuffer = True
+            # the mark's name told on it alone
+            if hovered == 4:
+                self.SetToolTip(self.GetLoopTip())
+            else:
+                self.UnsetToolTip()
         mouseIsDown = event.LeftIsDown or event.RightIsDown or event.MiddleIsDown
         if mouseIsDown is False:
             self.downed_button = None
@@ -746,11 +880,18 @@ class PlayBoxControlButton(RectBox):
         self.SetButtonColors()
 
     def OverrideStatusFromParent(self):
-        if self.parent.IsHighlightOn() and self.button_status[0] is False:
-            self.button_status[0] = True
-            self.SetButtonColors()
-        elif self.parent.IsHighlightOn() is False and self.button_status[0]:
-            self.button_status[0] = False
+        if self.GetAround() != self.around_drawn:
+            self.around_drawn = self.around
+            self.reInitBuffer = True
+        # the mode key: the mode turned on (here, the menu, a key's shortcut) named
+        kind = 'short' if self.parent.IsRadioEditOn() else\
+            'highlight' if self.parent.IsHighlightOn() else self.kind
+        on = self.parent.IsRadioEditOn() if kind == 'short' else self.parent.IsHighlightOn()
+        if kind != self.kind:
+            self.kind = kind
+            self.reInitBuffer = True
+        if on != self.button_status[0]:
+            self.button_status[0] = on
             self.SetButtonColors()
         elif self.parent.IsPlaying() and self.button_status[2] is False:
             self.button_status[2] = True
@@ -758,20 +899,20 @@ class PlayBoxControlButton(RectBox):
         elif self.parent.IsPlaying() is False and self.button_status[2]:
             self.button_status[2] = False
             self.SetButtonColors()
-        elif self.parent.IsLoopOn() and self.button_status[4] is False:
-            self.button_status[4] = True
+        elif (self.parent.GetLoopMode() != 'off') != self.button_status[4]:
+            self.button_status[4] = self.parent.GetLoopMode() != 'off'
             self.SetButtonColors()
-        elif self.parent.IsLoopOn() is False and self.button_status[4]:
-            self.button_status[4] = False
-            self.SetButtonColors()
+        elif self.parent.GetLoopMode() != getattr(self, 'loop_drawn', None):
+            # the list's mark or the song's (the 1 by it), and its tip
+            self.loop_drawn = self.parent.GetLoopMode()
+            if self.hovered == 4:
+                self.SetToolTip(self.GetLoopTip())
+            self.reInitBuffer = True
         elif self.parent.IsLoudOn() and self.button_status[5] is False:
             self.button_status[5] = True
             self.SetButtonColors()
         elif self.parent.IsLoudOn() is False and self.button_status[5]:
             self.button_status[5] = False
-            self.SetButtonColors()
-        elif self.parent.IsRadioEditOn() != self.button_status[7]:
-            self.button_status[7] = self.parent.IsRadioEditOn()
             self.SetButtonColors()
 
     def HandleEventPlayControl(self, event):
@@ -783,26 +924,22 @@ class PlayBoxControlButton(RectBox):
         downIdx = event.down.rectIdx
         if self.IsDisabled(downIdx):
             return
-        if downIdx == 0 and status[0]:
-            self.parent.SetHighlightOn()
-            self.parent.GotoTrackOffsetTime()
-        if downIdx == 0 and status[0] is False:
-            self.parent.SetHighlightOff()
-        if downIdx == 4 and status[4]:
-            self.parent.SetLoopOn()
-        if downIdx == 4 and status[4] is False:
-            self.parent.SetLoopOff()
+        if downIdx == 0:
+            self.SetMode(self.kind, status[0])
+        if downIdx == 4:
+            # the next mode (off, the list, the song), the key lit in both of them
+            self.parent.CycleLoop()
+            status[4] = self.parent.GetLoopMode() != 'off'
+            self.SetButtonColors()
         if downIdx == 5 and status[5]:
             self.parent.SetLoudOn()
         if downIdx == 5 and status[5] is False:
             self.parent.SetLoudOff()
 
-        if downIdx == 7:
-            self.parent.SetRadioEdit(status[7])
-        if downIdx in (8, 9):
-            self.PopupLength(downIdx)
+        if downIdx == 8:
+            self.PopupMode()
         if downIdx == 6:
-            self.parent.Master.Toggle()
+            self.parent.parent.parent.SetMasterShow(self.parent.Master.folded)
         if downIdx == 1:
             self.parent.OnPrev()
             self.parent.SelectPlayingItem()
@@ -859,14 +996,50 @@ class PlayBoxControlButton(RectBox):
 
     # LOUD renamed MASTER (it is Auto Master: levels, stereo and the limiter), its panel's
     # arrow beside it
-    # 7, the radio edit, named SHORT (RADIO EDIT read as the song's own radio edit)
+    # 7, the radio edit, named SHORT (RADIO EDIT read as the song's own radio edit): the
+    # mode key's (0) name when it plays SHORT
     LABELS = ('HIGHLIGHT', None, None, None, 'LOOP', 'MASTER', None, 'SHORT', None, None)
 
-    def PopupLength(self, idx):
-        # under its key, from the key it goes with: HIGHLIGHT's lengths (as the main
-        # menu's), SHORT's (PlayBox.RADIO_EDIT_LENGTHS); chosen, the way it plays now
+    LOOP_TIPS = {'off': 'Loop: off (click: the list)',
+                 'list': 'Loop: the list, its first after its last (click: the song)',
+                 'one': 'Loop: the song again at its end (click: off)'}
+
+    def GetLoopTip(self):
+        return self.LOOP_TIPS[self.parent.GetLoopMode()]
+
+    def GetLabel(self, i):
+        if i == 0:
+            return 'SHORT' if self.kind == 'short' else 'HIGHLIGHT'
+        if i == 4:
+            # LOOP a mark, as the transport's beside it (the song again at its end: a
+            # player's repeat; its name in its tip, GetLoopTip)
+            return None
+        return self.LABELS[i]
+
+    def SetMode(self, kind, on):
+        # the mode key: HIGHLIGHT or SHORT on or off (the other off with it: SetRadioEdit,
+        # SetHighlightOn), the mode kept as the key's
+        self.kind = kind
+        SetPreference('play_mode_kind', kind)
+        if kind == 'short':
+            self.parent.SetRadioEdit(on)
+        elif on:
+            self.parent.SetHighlightOn()
+            self.parent.GotoTrackOffsetTime()
+        else:
+            self.parent.SetHighlightOff()
+        self.reInitBuffer = True
+
+    def PopupMode(self):
+        # under the mode key, from its face: the mode (chosen, it plays so), then the
+        # mode's lengths (HIGHLIGHT's as the main menu's, SHORT's PlayBox.RADIO_EDIT_LENGTHS)
         menu = wx.Menu()
-        if idx == 8:
+        for kind, label in (('highlight', 'Highlight'), ('short', 'Short')):
+            item = menu.AppendRadioItem(wx.ID_ANY, label)
+            item.Check(kind == self.kind)
+            menu.Bind(wx.EVT_MENU, lambda e, kind=kind: self.SetMode(kind, True), item)
+        menu.AppendSeparator()
+        if self.kind == 'highlight':
             frame = self.parent.parent.parent
             current = self.parent.GetHighlightStaticPeriodTime()
             for i, seconds in enumerate(frame.MenuBar.highlightDurationItems):
@@ -874,7 +1047,6 @@ class PlayBoxControlButton(RectBox):
                                             % (seconds // 2, seconds))
                 item.Check(seconds == current)
                 menu.Bind(wx.EVT_MENU, lambda e, i=i: self.ChooseHighlightLength(i), item)
-            owner = self.rects[0]
         else:
             current = self.parent.GetRadioEditLength()
             for length, label in self.parent.RADIO_EDIT_LENGTHS:
@@ -882,9 +1054,8 @@ class PlayBoxControlButton(RectBox):
                 item.Check(length == current)
                 menu.Bind(wx.EVT_MENU,
                           lambda e, length=length: self.parent.SetRadioEditLength(length), item)
-            owner = self.rects[7]
-        x, y, w, h = owner
-        self.menu_open = idx
+        x, y, w, h = self.rects[0]
+        self.menu_open = 8
         self.DirectDraw()
         self.parent.parent.SetPopupMenu(menu, tuple(self.ClientToScreen((x, y + h + 2))),
                                         closed=self.MenuClosed)
@@ -924,6 +1095,9 @@ class PlayBoxControlButton(RectBox):
                 icon = 'next'
             elif i == 2:
                 icon = 'pause' if status else 'play'
+            elif i == 4:
+                # the song's loop with a 1 by it (a player's repeat one)
+                icon = 'loop_one' if self.parent.GetLoopMode() == 'one' else 'loop'
             elif i in (8, 9):
                 # turned over while its menu is open
                 icon = 'up' if getattr(self, 'menu_open', None) == i else 'down'
@@ -937,27 +1111,45 @@ class PlayBoxControlButton(RectBox):
                 on = self.toggle_buttons[self.JOINED[i]] and self.button_status[self.JOINED[i]]
             down = self.downed_button == i or (not toggle and status and i not in self.JOINED)
             corners = 'right' if i in self.JOINED else 'left' if i in self.JOINED.values()\
-                else 'all'
-            uikit.draw_button(dc, rect, label=self.LABELS[i], icon=icon, on=on, down=down,
+                else self.TRANSPORT.get(i, 'all')
+            uikit.draw_button(dc, rect, label=self.GetLabel(i), icon=icon, on=on, down=down,
                               hover=self.hovered == i, disabled=self.IsDisabled(i),
                               corners=corners)
 
-    # the length keys and the keys they are joined to (HIGHLIGHT, SHORT)
-    JOINED = {8: 0, 9: 7}
+    # the length key and the key it is joined to (the mode key)
+    JOINED = {8: 0}
+    # prev, play and next joined as a button group: rounded at its ends alone
+    TRANSPORT = {1: 'left', 2: 'none', 3: 'right'}
 
-    # HIGHLIGHT, LOOP and SHORT: nothing for a station (a stream has no length)
-    STREAM_DISABLED = (0, 4, 7, 8, 9)
+    # the mode key and LOOP: nothing for a station (a stream has no length)
+    STREAM_DISABLED = (0, 4, 8)
 
     def IsDisabled(self, idx):
+        # PREV and NEXT: nothing before or after the song in its list
+        if idx in (1, 3):
+            return self.around[0 if idx == 1 else 1] is False
         return idx in self.STREAM_DISABLED and self.parent.IsStreamTrack()
+
+    # the list scanned for the song's neighbours (GetCueFileAroundPath) at most this often,
+    # not at every event
+    AROUND_EVERY = 0.3
+
+    def GetAround(self):
+        now = time.time()
+        if now - self.around_lap >= self.AROUND_EVERY:
+            self.around_lap = now
+            self.around = tuple(self.parent.GetCueFileAroundPath(direction) is not None
+                                for direction in (-1, 1))
+        return self.around
 
     # Buffered DC
 
     def OnSize(self, event=None):
         # two rows: the ways it plays under the transport
         two = self.parent.IsControlTwoRows()
-        if two != getattr(self, 'two_rows', None):
-            self.SetPreInitRects(two)
+        level = self.parent.GetControlLevel()
+        if (two, level) != (getattr(self, 'two_rows', None), getattr(self, 'level', None)):
+            self.SetPreInitRects(two, level)
         rows = 2 if two else 1
         # as wide as its keys (two rows: the second's, narrower; the first row's width
         # covered SNAP in a narrow window)
@@ -966,30 +1158,39 @@ class PlayBoxControlButton(RectBox):
                       self.height + (rows - 1) * self.parent.CONTROL_HEIGHT))
         self.DirectDraw()
 
-    def SetPreInitRects(self, two=False):
+    def SetPreInitRects(self, two=False, level=0):
         # make polygons, rectangles and lines when class starts
         # by index highlight, prev, play, next, loop, loud, its arrow, radio edit; placed
-        # transport first (prev, play wider, next), then the toggles (highlight, radio edit
-        # beside it: the two ways to play a song short, loop, master)
-        # in three groups, a line between them: the transport, the ways it plays (highlight,
-        # radio edit, loop), master
+        # transport first (prev, play wider, next) and LOOP beside it, a line, then the mode
+        # key (HIGHLIGHT or SHORT: the ways to play a song short)
         x, y, h = (2, 2, 19)
         # (MASTER and its arrow, 5 and 6, are the rack bar's now: no room of their own)
         # (HIGHLIGHT and SHORT each a narrow key joined to it, their edge shared: its
         # length, 8 and 9, an input group's)
         # (the length keys 20 wide, as the rack bar's arrows: 16 was tight round the mark)
-        rects = ((x + 140, y, 70, h), (x, y, 37, h), (x + 40, y, 46, h), (x + 89, y, 37, h),
-                 (x + 304, y, 44, h), (0, 0, 0, 0), (0, 0, 0, 0),
-                 (x + 232, y, 50, h), (x + 209, y, 20, h), (x + 281, y, 20, h))
-        self.separators = (x + 133,)
+        # (prev, play and next one group, their edges shared (TRANSPORT): three keys 3 px
+        # apart before; narrower by level: TRANSPORT_SAVE, LOOP_SAVE); LOOP as wide as prev
+        d = -self.TRANSPORT_SAVE if level >= 1 else 0
+        loop = 40 - (self.LOOP_SAVE if level >= 1 else 0)
+        transport = ((x, y, 31, h), (x + 30, y, 34, h), (x + 63, y, 31, h)) if level >= 1\
+            else ((x, y, 40, h), (x + 39, y, 48, h), (x + 86, y, 40, h))
+        # LOOP (the song again: a player's repeat) beside the transport, 3 px past next, as
+        # a player's repeat is (after HIGHLIGHT before: the user); the line, then the mode
+        # key (0) and its menu's key (8); SHORT's (7, 9) none; as wide in all as before
+        lx = x + 126 + d + 3
+        mx = lx + loop + 14
+        rects = ((mx, y, 70, h),) + transport\
+            + ((lx, y, loop, h), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0),
+               (mx + 69, y, 20, h), (0, 0, 0, 0))
+        self.separators = (lx + loop + 7,)
         if two:
-            # the ways it plays a row under the transport, from its left
+            # the mode key a row under the transport and LOOP, from its left
             y2 = y + 33
-            rects = ((x, y2, 70, h), rects[1], rects[2], rects[3], (x + 164, y2, 44, h),
-                     rects[5], rects[6], (x + 92, y2, 50, h), (x + 69, y2, 20, h),
-                     (x + 141, y2, 20, h))
+            rects = ((x, y2, 70, h), rects[1], rects[2], rects[3], rects[4],
+                     rects[5], rects[6], rects[7], (x + 69, y2, 20, h), rects[9])
             self.separators = ()
         self.two_rows = two
+        self.level = level
         self.rects = rects
         rx = max(v[0] + v[2] for v in rects) + 1
         lines = [(0, rects[-1][3] + 3, rx + 1, rects[-1][3] + 3)]
@@ -1044,21 +1245,32 @@ def get_lane_played(st):
 
 
 def format_tempo(percent):
-    # two decimals as a CDJ shows them; one from 100 (WIDE's whole range: its 0.5 steps)
-    return '%+.1f' % (percent) if abs(percent) >= 99.995 else '%+.2f' % (percent)
+    # two decimals as a CDJ shows them; one from 100 (WIDE's whole range: its 0.5 steps);
+    # 0 without a sign, its place kept as a space (+0.00 read as a little up; the digits
+    # not moved, the font's figures as wide as the space)
+    text = '%+.1f' % (percent) if abs(percent) >= 99.995 else '%+.2f' % (percent)
+    return ' ' + text[1:] if float(text) == 0 else text
+
+
+def format_semitones(semitones):
+    # K+1, K-2; at 0, K 0 (as the tempo's 0: no sign, its place kept)
+    return 'K%+d' % (semitones) if semitones else 'K 0'
 
 
 class VolumeSlider(RectBox):
 
-    '''the volume in the control row's right end, always there: a speaker key (a click
-    mutes, again unmutes), a slider (a click or a drag sets it, the wheel steps it), its
-    level in dB (a dropdown before)'''
+    '''the volume at the rack bar's right end (the control row's before), always there: a
+    speaker key (a click mutes, again unmutes) and a small knob (a drag up or down turns it,
+    the wheel steps it, a double click full; its level in dB under the mouse), a slider and
+    its level's display before: the bar on one row with them at any width (the user)'''
 
-    LENGTH = 164
-    KEY = (1, 2, 22, 19)
-    TRACK_LEFT = 32
-    TRACK_WIDTH = 70
-    READOUT = 46
+    # the knob's arc 3 px outside its radius and 2 thick (9 had it cut at the top); the
+    # key at its left edge, the knob the header's gap (MasterPanel.OUT_GAP, 8) from it, its arc's
+    # right at its right edge (each gap its own before: the user)
+    LENGTH = 52
+    HEIGHT = 23
+    KEY = (0, 2, 22, 19)
+    KNOB = (40, 11.5, 7)
 
     def __init__(self, parent):
         RectBox.__init__(self, parent)
@@ -1066,8 +1278,9 @@ class VolumeSlider(RectBox):
         self.buffer.fps = 30
         self.muted_volume = None
         self.hovered = None
-        self.sliding = False
-        self.SetBackgroundColour(uikit.ui().BAR_BG)
+        self.drag = None
+        # (the rack bar's ground, it lies on it)
+        self.SetBackgroundColour(self.parent.st.RACK_BG_COLOR)
         self.InitBuffer()
 
     def GetVolume(self):
@@ -1079,6 +1292,7 @@ class VolumeSlider(RectBox):
             return
         self.parent.SetVolume(volume)
         self.reInitBuffer = True
+        self.ShowLevel()
 
     def IsMuted(self):
         return self.muted_volume is not None
@@ -1091,14 +1305,23 @@ class VolumeSlider(RectBox):
             self.SetVolume(self.muted_volume)
             self.muted_volume = None
         self.reInitBuffer = True
+        self.ShowLevel()
 
-    def GetTrackRect(self):
-        h = self.GetClientSize().height
-        return wx.Rect(self.TRACK_LEFT, 2, self.TRACK_WIDTH, 19)
+    def GetLevelText(self):
+        # dB of the amplitude, MUTE muted; silent but not muted (the knob at its bottom):
+        # minus infinity, as a mixer shows it
+        volume = self.GetVolume()
+        if self.IsMuted():
+            return 'MUTE'
+        if volume <= 0.0:
+            return '-\u221e dB'
+        return '%.1f dB' % (20 * math.log10(volume))
+
+    def ShowLevel(self):
+        # (its level under the mouse: no room for its display on the bar)
+        self.SetToolTip('Volume %s' % (self.GetLevelText()))
 
     def SetRectDraw(self, dc):
-        st = self.parent.st
-        tokens = uikit.ui()
         muted = self.IsMuted()
         # the speaker key, warned (orange) while muted
         uikit.draw_button(dc, self.KEY, icon='mute' if muted else 'speaker', warn=muted,
@@ -1106,79 +1329,45 @@ class VolumeSlider(RectBox):
         gc = wx.GraphicsContext.Create(dc)
         if gc is None:
             return
-        track = self.GetTrackRect()
-        cy = track.y + track.height / 2.0
-        volume = self.GetVolume()
-        # the track, its level in the accent, a handle on it
-        gc.SetPen(wx.NullGraphicsPen)
-        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(tokens.CONTROL_BG))))
-        gc.DrawRoundedRectangle(track.x, cy - 2, track.width, 4, 2)
-        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(
-            tokens.BAR_TEXT_DIM if muted else tokens.ACCENT))))
-        gc.DrawRoundedRectangle(track.x, cy - 2, max(track.width * volume, 2), 4, 2)
-        hx = track.x + track.width * volume
-        face = uikit.colour(tokens.BAR_TEXT if self.hovered == 'track' or self.sliding
-                            else tokens.CONTROL_FG)
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(tokens.BAR_BG)).Width(1)))
-        gc.SetBrush(gc.CreateBrush(wx.Brush(face)))
-        # (half a pixel up and left: the renderer draws a shape's edge half a pixel down
-        # and right, and the handle sat low on the track, measured)
-        gc.DrawEllipse(hx - 5.5, cy - 5.5, 10, 10)
-        # the level: dB of the amplitude, MUTE muted
-        if muted:
-            text = 'MUTE'
-        elif volume <= 0.0:
-            # silent but not muted (the slider at its bottom): minus infinity, as a mixer
-            # shows it; MUTE is the key's (it gives the level back)
-            text = '-\u221e'
-        else:
-            text = '%.1f' % (20 * math.log10(volume))
-        font = wx.Font(wx.Size(0, uikit.READOUT), wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL,
-                       wx.FONTWEIGHT_NORMAL, faceName=FONT_PLAYINFO)
-        # on a display's cell as the other readouts (the digits ran to the row's edge)
-        gc.SetFont(font, uikit.colour(tokens.WARN if muted else st.LCD_TEXT_COLOR))
-        tw, th = gc.GetTextExtent('-00.0')[:2]
-        cell = wx.Rect(self.LENGTH - 3 - int(tw) - 14, 2, int(tw) + 14, 19)
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(st.RACK_EDGE_COLOR)).Width(1)))
-        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(st.LCD_BG_COLOR))))
-        gc.DrawRoundedRectangle(cell.x, cell.y, cell.width - 1, cell.height - 1, uikit.RADIUS)
-        tw = gc.GetTextExtent(text)[0]
-        # the level right-aligned as numbers are; MUTE (a word) centred
-        tx = cell.x + (cell.width - tw) / 2.0 if muted else cell.GetRight() - 6 - tw
-        gc.DrawText(text, tx, cell.y + (cell.height - th) / 2.0)
+        cx, cy, r = self.KNOB
+        # as MASTER's knobs (rackbox: its parent's theme the only thing it reads)
+        RackModule.DrawKnob(self, gc, cx, cy, 0.0 if muted else self.GetVolume(),
+                            self.hovered == 'knob' or self.drag is not None, radius=r)
 
     def GetHit(self, x, y):
         if wx.Rect(*self.KEY).Contains((x, y)):
             return 'key'
-        track = self.GetTrackRect()
-        if wx.Rect(track.x - 6, 0, track.width + 12, 23).Contains((x, y)):
-            return 'track'
+        cx, cy, r = self.KNOB
+        if abs(x - cx) <= r + 4 and abs(y - cy) <= r + 3:
+            return 'knob'
         return None
-
-    def SetFromX(self, x):
-        track = self.GetTrackRect()
-        self.muted_volume = None
-        self.SetVolume(1.0 * (x - track.x) / track.width)
-        self.reInitBuffer = True
 
     def CATCH_EVT_GLOBAL(self, event):
         hit = self.GetHit(event.X, event.Y) if self.onClient else None
         if hit != self.hovered:
             self.hovered = hit
             self.reInitBuffer = True
-        if self.sliding:
+        if self.drag is not None:
             if event.LeftIsDown:
-                self.SetFromX(event.X)
+                y0, v0 = self.drag
+                self.SetVolume(v0 + (y0 - event.y) / float(KNOB_DRAG))
                 return
-            self.sliding = False
+            self.drag = None
             self.reInitBuffer = True
-        if self.parent.parent.HasToSkipEvent() or event.LeftDown is False or hit is None:
+        if self.parent.parent.HasToSkipEvent() or hit is None:
+            return
+        if hit == 'knob' and event.LeftDClick:
+            self.muted_volume = None
+            self.SetVolume(1.0)
+            return
+        if event.LeftDown is False:
             return
         if hit == 'key':
             self.ToggleMute()
         else:
-            self.sliding = True
-            self.SetFromX(event.X)
+            self.muted_volume = None
+            self.drag = (event.y, self.GetVolume())
+            self.reInitBuffer = True
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
         if self.onClient is False:
@@ -1187,102 +1376,26 @@ class VolumeSlider(RectBox):
         self.SetVolume(self.GetVolume() + event.WheelRotation / 400.0 / 3)
 
     def OnSize(self, event=None):
-        # the control row's right end, TEMPO left of it
-        w = self.parent.GetClientSize().width
-        x = w - 5 - VolumeSlider.LENGTH
-        self.SetRect((x, self.parent.GetRightControlTop() + 5, self.LENGTH, 23))
-        self.DirectDraw()
-
-
-class TempoButton(RectBox):
-
-    '''left of the volume: the tempo strip's tempo fader shown or hidden (on, in the
-    accent, while shown); its label the tempo moved (+1.20), else TEMPO; the wheel over it
-    steps the tempo'''
-
-    # TEMPO 7 px in from either side (5 it was)
-    LENGTH = 52
-    FACE = (1, 2, 49, 19)
-    COLUMN = 'tempo'
-
-    def __init__(self, parent):
-        RectBox.__init__(self, parent)
-        self.parent = parent
-        self.buffer.fps = 30
-        self.hovered = False
-        self.SetBackgroundColour(uikit.ui().BAR_BG)
-        self.InitBuffer()
-
-    def GetLabel(self):
-        # its name for a station (no tempo of its own)
-        percent = (self.parent.GetTempoRate() - 1.0) * 100.0
-        if self.parent.IsStreamTrack():
-            return 'TEMPO'
-        return format_tempo(percent) if abs(percent) > 1e-6 else 'TEMPO'
-
-    def SetRectDraw(self, dc):
-        # a station's too: the strip shown or hidden still (its faders off there, the strip
-        # dims them); it was off, the strip left open with no way to close it
-        uikit.draw_button(dc, self.FACE, label=self.GetLabel(),
-                          on=self.parent.IsStripColumnShown(self.COLUMN),
-                          hover=self.onClient)
-
-    def CATCH_EVT_GLOBAL(self, event):
-        if self.onClient != self.hovered:
-            self.hovered = self.onClient
-            self.reInitBuffer = True
-        if self.parent.parent.HasToSkipEvent():
+        # where MASTER's header put it (MasterPanel.DrawHeaderRight: volume_at), its child,
+        # at its right
+        bar = getattr(self.parent, 'Master', None)
+        at = getattr(bar, 'volume_at', None)
+        if at is None or bar.IsShown() is False:
+            self.Hide()
             return
-        if event.LeftDown and event.down.rectIdx is not None:
-            shown = self.parent.IsStripColumnShown(self.COLUMN)
-            self.parent.SetStripColumnShown(self.COLUMN, not shown)
-
-    def Step(self, rotation):
-        self.parent.TempoStrip.StepTempo(rotation)
-
-    def CATCH_EVT_MOUSEWHEEL(self, event):
-        # a station's key moves, its tempo not (radio.open_stream)
-        if self.onClient is False or self.parent.IsStreamTrack() and self.COLUMN == 'tempo':
-            return
-        self.Step(event.WheelRotation)
-
-    def GetX(self):
-        w = self.parent.GetClientSize().width
-        return w - 5 - self.parent.GetVolumeRoom() - KeyButton.LENGTH - self.LENGTH
-
-    def OnSize(self, event=None):
-        # on the control row's first row (two rows: the volume under it)
-        self.SetRect((self.GetX(), self.parent.GetControlTop() + 5, self.LENGTH, 23))
+        self.SetRect((at[0], at[1], self.LENGTH, self.HEIGHT))
+        self.Show()
+        self.ShowLevel()
         self.DirectDraw()
-
-
-class KeyButton(TempoButton):
-
-    '''right of TEMPO: the strip's key fader shown or hidden; its label the key moved
-    (K+1), else KEY; the wheel over it steps the key'''
-
-    LENGTH = 40
-    FACE = (1, 2, 37, 19)
-    COLUMN = 'key'
-
-    def GetLabel(self):
-        semitones = self.parent.GetTempoSemitones()
-        return 'K%+d' % (semitones) if semitones else 'KEY'
-
-    def Step(self, rotation):
-        self.parent.TempoStrip.StepKey(rotation)
-
-    def GetX(self):
-        w = self.parent.GetClientSize().width
-        return w - 5 - self.parent.GetVolumeRoom() - self.LENGTH
 
 
 class TempoStrip(RectBox):
 
     '''the tempo at the deck's right, as a deck's pitch fader: its columns side by side,
-    each shown or hidden on its own (TEMPO, KEY): the tempo (in percent, its range, the key
-    lock and 0 under it) and the key (in semitones, a semitone up, down and 0 under it,
-    its keys row by row with the tempo's); their values over them;
+    each shown or hidden on its own (TEMPO, KEY): the tempo (in percent, its range and the
+    key lock under it) and the key (in semitones, a semitone up and down under it, its keys
+    row by row with the tempo's); their values over them; a fader double-clicked back to
+    0 (0% and KEY 0 keys under them before, the knobs' double-click not theirs);
     from the header's top to the waveforms' bottom (a dropdown under TEMPO before)'''
 
     RANGES = playboxlib.TEMPO_RANGES
@@ -1312,31 +1425,45 @@ class TempoStrip(RectBox):
     def GetColumns(self):
         return [c for c in ('tempo', 'key') if self.parent.IsStripColumnShown(c)]
 
+    # the keys a column (the faders as much longer as the rows they left)
+    KEY_ROWS = 2
+    # KEY + and KEY -: their marks drawn after KEY (uikit.draw_button)
+    KEY_MARKS = {'key_up': 'plus', 'key_down': 'minus'}
+
     def GetKeyRects(self):
-        # (column, key, label, on, rect): three keys a column, from the bottom up
+        # (column, key, label, on, rect): KEY_ROWS keys a column, from the bottom up
         h = self.GetClientSize().height
         keys = []
         span = self.parent.GetTempoRange()
         for k, column in enumerate(self.GetColumns()):
             x = self.PAD + k * (self.COLUMN - 1) + 2
             if column == 'tempo':
-                rows = (('reset', '0%', False),
-                        ('lock', 'LOCK', self.parent.IsTempoKeyLockOn()),
+                rows = (('lock', 'LOCK', self.parent.IsTempoKeyLockOn()),
                         ('range', 'WIDE' if span >= 100 else '%d%%' % (span), False))
             else:
-                # the minus sign (U+2212) as wide as the plus, set as KEY 0 is
-                rows = (('key_reset', 'KEY 0', False), ('key_down', 'KEY \u2212', False),
-                        ('key_up', 'KEY +', False))
+                # their plus and minus drawn (KEY_MARKS)
+                rows = (('key_down', 'KEY', False), ('key_up', 'KEY', False))
             for r, (key, label, on) in enumerate(rows):
                 keys.append((column, key, label, on,
                              wx.Rect(x, h - 3 - 19 - r * self.KEY_ROW, 37, 19)))
         return keys
 
     def GetSliderRange(self):
-        # the faders as long as the three keys under them leave; 9 px under the readout as
-        # over the keys (7 under it was, measured)
+        # the faders as long as the keys under them leave; 9 px under the readout as over
+        # the keys (7 under it was, measured)
         h = self.GetClientSize().height
-        return (26, h - 3 - 19 - 2 * self.KEY_ROW - 10)
+        return (26, h - 3 - 19 - (self.KEY_ROWS - 1) * self.KEY_ROW - 10)
+
+    def GetFaderColumn(self, x, y):
+        # the column whose fader (or the room round it a press takes) is at x, y; or None
+        top, bottom = self.GetSliderRange()
+        columns = self.GetColumns()
+        if not columns or not top - 8 <= y <= bottom + 8:
+            return None
+        index = min(max(int((x - self.PAD) // (self.COLUMN - 1)), 0), len(columns) - 1)
+        if self.parent.IsStreamTrack() and columns[index] == 'tempo':
+            return None
+        return columns[index]
 
     def GetSliderX(self, index):
         return self.PAD + index * (self.COLUMN - 1) + (self.COLUMN - self.FADER) * 0.5
@@ -1381,7 +1508,7 @@ class TempoStrip(RectBox):
             if column == 'tempo':
                 text = format_tempo((self.parent.GetTempoRate() - 1.0) * 100.0)
             else:
-                text = 'K%+d' % (self.parent.GetTempoSemitones())
+                text = format_semitones(self.parent.GetTempoSemitones())
             dc.SetFont(font)
             dc.SetTextForeground(tokens.BAR_TEXT_DIM if disabled else st.LCD_TEXT_COLOR)
             tw, th = dc.GetTextExtent(text)
@@ -1391,7 +1518,7 @@ class TempoStrip(RectBox):
             disabled = stream and column == 'tempo'
             uikit.draw_button(dc, tuple(rect), label=label, on=on and not disabled,
                               down=self.downed == key, hover=self.hovered == key,
-                              disabled=disabled)
+                              disabled=disabled, mark=self.KEY_MARKS.get(key))
 
     def CATCH_EVT_GLOBAL(self, event):
         # drawn again when the tempo, the key, the range or the lock moved elsewhere (keys)
@@ -1420,8 +1547,20 @@ class TempoStrip(RectBox):
                 self.Slide(event.Y)
                 return
             self.side = None
-        if self.parent.parent.HasToSkipEvent() or event.LeftDown is False\
-                or self.onClient is False:
+        if self.parent.parent.HasToSkipEvent() or self.onClient is False:
+            return
+        if event.LeftDClick:
+            # a fader double-clicked: back to 0 (its first press moved it where it was)
+            column = self.GetFaderColumn(event.X, event.Y)
+            if column is not None:
+                self.side = None
+                if column == 'tempo':
+                    self.parent.SetTempoRate(1.0)
+                else:
+                    self.parent.SetTempoSemitones(0)
+                self.Changed()
+                return
+        if event.LeftDown is False:
             return
         for column, key, label, on, rect in self.GetKeyRects():
             if rect.Contains(position):
@@ -1431,12 +1570,9 @@ class TempoStrip(RectBox):
                 self.Press(key)
                 self.Changed()
                 return
-        top, bottom = self.GetSliderRange()
-        columns = self.GetColumns()
-        index = min(max(int((event.X - self.PAD) // (self.COLUMN - 1)), 0), len(columns) - 1)
-        if columns and top - 8 <= event.Y <= bottom + 8\
-                and not (stream and columns[index] == 'tempo'):
-            self.side = columns[index]
+        column = self.GetFaderColumn(event.X, event.Y)
+        if column is not None:
+            self.side = column
             self.Slide(event.Y)
 
     def Press(self, key):
@@ -1447,10 +1583,6 @@ class TempoStrip(RectBox):
             current = self.parent.GetTempoRange()
             index = ranges.index(current) if current in ranges else -1
             self.parent.SetTempoRange(ranges[(index + 1) % len(ranges)])
-        elif key == 'reset':
-            self.parent.SetTempoRate(1.0)
-        elif key == 'key_reset':
-            self.parent.SetTempoSemitones(0)
         elif key in ('key_up', 'key_down'):
             self.StepKey(1 if key == 'key_up' else -1)
 
@@ -1490,8 +1622,6 @@ class TempoStrip(RectBox):
 
     def Changed(self):
         self.reInitBuffer = True
-        self.parent.TempoButton.reInitBuffer = True
-        self.parent.KeyButton.reInitBuffer = True
 
     def OnSize(self, event=None):
         # from the header's top to the waveforms' frame's bottom, 8 px from the right; as
@@ -1516,8 +1646,9 @@ class SnapButton(RectBox):
 
     # left of TEMPO: where a click or a drag on the waveforms lands (the grid's beat, bar or
     # 4 bars, or anywhere); lit while it snaps. a click on it snaps or not (its unit kept),
-    # its arrow the units (as HIGHLIGHT's and SHORT's lengths; the one key a menu before)
+    # its arrow the units (as the mode key's menu; the one key a menu before)
     # its widest label (SNAP 4 BARS, 64 px) 8 px in from either side (3 it was)
+    # (a chip on the waveform a while: out of place there, the user)
     LENGTH = 102
     FACE = (1, 2, 80, 19)
     # joined to it, their edge shared (an input group's); 20 wide as the rack bar's
@@ -1554,6 +1685,10 @@ class SnapButton(RectBox):
 
     def CATCH_EVT_GLOBAL(self, event):
         part = self.GetPart(event.X, event.Y) if self.onClient else None
+        if event.LeftDown:
+            # (a press elsewhere: none of its parts held, the last one pressed not
+            # drawn down again)
+            self.down = None
         down = getattr(self, 'down', None) if event.LeftIsDown else None
         if (part, down) != getattr(self, 'state', (None, None)):
             self.state = (part, down)
@@ -1591,14 +1726,15 @@ class SnapButton(RectBox):
 
     def OnSize(self, event=None):
         w = self.parent.GetClientSize().width
-        # its own group: a line between it and TEMPO (PlayBox.SetRectDraw)
-        x = w - 5 - self.parent.GetVolumeRoom() - KeyButton.LENGTH\
-            - TempoButton.LENGTH - self.GROUP_GAP - self.LENGTH
-        # out of the way only when it would meet the transport keys on its row (prev, play,
-        # next: the control strip's first 128 px)
-        if x < PlayBoxControlButton.STRIP_X + 128 + self.GROUP_GAP:
-            self.Hide()
+        if self.parent.IsControlTwoRows():
+            # two rows (a window narrower than its least): the second's right end
+            self.Show()
+            self.SetRect((w - 5 - self.LENGTH, self.parent.GetControlTop()
+                          + self.parent.CONTROL_HEIGHT + 5, self.LENGTH, 23))
+            self.DirectDraw()
             return
+        # the row's right end (TEMPO and KEY right of it before, a line between)
+        x = w - 5 - self.LENGTH
         self.Show()
         self.SetRect((x, self.parent.GetControlTop() + 5, self.LENGTH, 23))
         self.DirectDraw()
@@ -1722,6 +1858,8 @@ class PlayBoxTitle(RectBox):
         # if self.parent.parent.HasToSkipEvent(): return
         # self.HandleItemDrag(event)
         self.HandleTitleChange(event)
+        self.parent.HandleTrackEditor(event)
+        self.parent.HandleDragOut(self, event, 'file')
 
     def HandleTitleChange(self, event):
         title, subtitle = self.GetTitle(), self.GetSubtitle()
@@ -1753,21 +1891,21 @@ class PlayBoxTitle(RectBox):
             right = self.parent.Info.GetRect().x - 12
             self.SetRect((left, self.parent.GetHeaderTop() + 5, max(0, right - left), 23))
         else:
-            # the title's capitals' top on the cover's top (PlayBoxApic.TOP), measured
+            # the title's capitals' top at PlayBoxApic.TEXT_TOP, measured
             # (the title's capitals' top: its font's ink offset over its box)
             offset = int(round(uikit.get_caps_ink(uikit.get_font(self.TITLE_SIZE,
                                                                  bold=True))[0]))
             # down to the info's cells, not over them (40 tall it covered their top edge)
-            self.SetRect((left, self.parent.GetHeaderTop() + PlayBoxApic.TOP - offset,
+            self.SetRect((left, self.parent.GetHeaderTop() + PlayBoxApic.TEXT_TOP - offset,
                           max(0, right - left), offset + PlayBoxApic.CELLS))
         self.DirectDraw()
 
 
 class PlayBoxInfo(RectBox):
 
-    # the cells let go when narrow, first to last (the time played always stays): the
-    # time left, the key, the tempo
-    HIDE_ORDER = (4, 1, 0)
+    # the cells let go when narrow, first to last (the time always stays): the key, the
+    # tempo
+    HIDE_ORDER = (1, 0)
 
     def __init__(self, parent):
         RectBox.__init__(self, parent)
@@ -1778,6 +1916,11 @@ class PlayBoxInfo(RectBox):
         if self.information is None:
             self.information = '000.0 | - | 00:00:00 | 00:00:00'
         self.segments = self.information.split(SEPARATOR)
+        # the time cell's: the time played (TIME) or left (LEFT), a click on it the other
+        # (two cells side by side before); read once, kept on a click
+        self.time_left = bool(GetPreference('playbox_time_left'))
+        self.cell_rects = dict()
+        self.time_tip = False
 
         self.SetBackgroundColour(self.parent.st.PLAY_BG_COLOR)
         self.InitBuffer()
@@ -1795,8 +1938,9 @@ class PlayBoxInfo(RectBox):
     LABEL_GAP = 6
 
     def GetChips(self):
-        # (index, name, value): the tempo, the key, the time played of the length, the time
-        # left (to where the song moves on: its end, a highlight's or the edit's); a status
+        # (index, name, value[, the value it is as wide as]): the tempo, the key, the time
+        # played or left (to where the song moves on: its end, a highlight's or the edit's)
+        # of the length, as wide either way (its row not changed by a click); a status
         # (Connecting) in the accent, index 3
         segments = list(self.segments) + [''] * (5 - len(self.segments))
         tempo, key, position, duration, remain = segments[:5]
@@ -1806,8 +1950,11 @@ class PlayBoxInfo(RectBox):
         key = (key.strip() or '-').ljust(3) if key else ''
         chips = [(0, 'BPM', tempo.strip()), (1, 'KEY', key)]
         if duration.strip():
-            chips += [(2, 'TIME', '%s / %s' % (position.strip(), duration.strip())),
-                      (4, 'LEFT', remain.strip())]
+            played = '%s / %s' % (position.strip(), duration.strip())
+            left = '%s / %s' % (remain.strip(), duration.strip())
+            widest = max(played, left, key=len)
+            chips += [(2, 'LEFT', left, widest) if self.time_left else
+                      (2, 'TIME', played, widest)]
         else:
             chips += [(3, '', position.strip())]
         return [v for v in chips if v[2]]
@@ -1819,15 +1966,15 @@ class PlayBoxInfo(RectBox):
 
     def GetCellWidth(self, gc, chip):
         value, label = self.GetFonts()
-        gc.SetFont(value, wx.BLACK)
-        width = gc.GetTextExtent(chip[2])[0] + self.CELL_PAD * 2
+        uikit.set_font(gc, value, wx.BLACK)
+        width = gc.GetTextExtent(chip[3] if len(chip) > 3 else chip[2])[0] + self.CELL_PAD * 2
         if chip[1]:
-            gc.SetFont(label, wx.BLACK)
+            uikit.set_font(gc, label, wx.BLACK)
             width += gc.GetTextExtent(chip[1])[0] + self.LABEL_GAP
         return width
 
-    # the cells kept together on a row: the song's (tempo, key) and its time (played, left)
-    GROUPS = ((0, 1), (2, 4))
+    # the cells kept together on a row: the song's (tempo, key)
+    GROUPS = ((0, 1),)
 
     def GetRows(self, gc, chips, width):
         # the cells in rows as wide as width, in their order, a group to the next row whole
@@ -1851,8 +1998,10 @@ class PlayBoxInfo(RectBox):
 
     # the cells a song has, at their widest: the rows counted by them whatever plays (a
     # station's one cell made the header a row shorter, and taller again with a song)
-    SONG_CELLS = ((0, 'BPM', '000.0'), (1, 'KEY', 'C#m'), (2, 'TIME', '00:00.00 / 00:00.00'),
-                  (4, 'LEFT', '-00:00.00'))
+    # (the time one cell, played or left, as wide as the left: TIME and LEFT two cells
+    # before, counted so after they were one: a row more than they took, left empty)
+    SONG_CELLS = ((0, 'BPM', '000.0'), (1, 'KEY', 'C#m'),
+                  (2, 'LEFT', '-00:00.00 / 00:00.00'))
 
     def GetRowCount(self, width):
         bitmap = wx.Bitmap(1, 1)
@@ -1884,6 +2033,7 @@ class PlayBoxInfo(RectBox):
         gc = wx.GraphicsContext.Create(dc)
         if gc is None:
             return
+        self.cell_rects = dict()
         width, height = self.GetSize()
         if self.parent.GetHeaderHeight() == self.parent.HEADER_COMPACT:
             # one row at the right, the cells let go that do not fit
@@ -1893,8 +2043,17 @@ class PlayBoxInfo(RectBox):
         else:
             # under the title, a row more for the cells that do not fit
             pad = (self.CELL_SLOT - self.CELL_HEIGHT) // 2
-            rows = [(0, k * self.parent.INFO_ROW + pad, row)
-                    for k, row in enumerate(self.GetRows(gc, self.GetChips(), width))]
+            cells = self.GetRows(gc, self.GetChips(), width)
+            # the header's rows filled, not one left empty under the cells: a group a row
+            # (the song's, the time's) while they are no more than its rows
+            want = getattr(self.parent, 'header_rows', 1)
+            groups = [[v for v in self.GetChips() if v[0] in group] for group in self.GROUPS]
+            groups += [[v] for v in self.GetChips()
+                       if all(v[0] not in group for group in self.GROUPS)]
+            groups = [g for g in groups if g]
+            if len(cells) < want and 1 < len(groups) <= want:
+                cells = groups
+            rows = [(0, k * self.parent.INFO_ROW + pad, row) for k, row in enumerate(cells)]
         for x, y, chips in rows:
             self.DrawCells(gc, x, y, chips)
 
@@ -1909,8 +2068,9 @@ class PlayBoxInfo(RectBox):
         tokens = uikit.ui()
         failed = bool(self.parent.GetStreamFailure())
         for chip in chips:
-            index, label, text = chip
+            index, label, text = chip[:3]
             w = self.GetCellWidth(gc, chip)
+            self.cell_rects[index] = wx.Rect(int(x), int(y), int(w), self.CELL_HEIGHT)
             face, edge, ink = st.LCD_BG_COLOR, st.RACK_EDGE_COLOR, st.LCD_TEXT_COLOR
             if index == 3:
                 # connecting in the accent, not connected warned (orange)
@@ -1925,17 +2085,40 @@ class PlayBoxInfo(RectBox):
             tx = x + self.CELL_PAD
             if label:
                 # the name on the value's capitals' middle
-                gc.SetFont(label_font, wx.Colour(st.RACK_LABEL_COLOR))
+                uikit.set_font(gc, label_font, wx.Colour(st.RACK_LABEL_COLOR))
                 gc.DrawText(label, tx, self.GetInkTop(label_font, y))
                 tx += gc.GetTextExtent(label)[0] + self.LABEL_GAP
             # the value's capitals (its digits) centred too, not its text box: it sat a pixel
             # high, 5 px over it and 7 under (measured)
-            gc.SetFont(value_font, wx.Colour(ink))
+            uikit.set_font(gc, value_font, wx.Colour(ink))
             gc.DrawText(text, tx, self.GetInkTop(value_font, y))
             x += w + self.CELL_GAP
 
     def CATCH_EVT_GLOBAL(self, event):
+        self.HandleTimeClick(event)
         self.HandleInfoChange(event)
+        self.parent.HandleDragOut(self, event, 'file')
+
+    def HandleTimeClick(self, event):
+        rect = self.cell_rects.get(2)
+        on = self.onClient and rect is not None and self.IsShown()\
+            and rect.Contains(event.X, event.Y)
+        if on != self.time_tip:
+            # (told on the time cell alone, not over the tempo and the key)
+            self.time_tip = on
+            if on:
+                self.SetToolTip('Click: the time played or left')
+            else:
+                self.UnsetToolTip()
+        # (on the press let go, not dragged: a drag from it is the song's file, HandleDragOut)
+        if not on or event.LeftUp is False or getattr(self, 'dragging_out', False)\
+                or self.parent.parent.HasToSkipEvent():
+            return
+        self.time_left = not self.time_left
+        SetPreference('playbox_time_left', self.time_left)
+        # drawn again now, not at the next change
+        self.information = None
+        self.HandleInfoChange()
 
     def HandleInfoChange(self, event=None):
         # autogain = self.parent.cue.autogain
@@ -1994,8 +2177,9 @@ class PlayBoxInfo(RectBox):
         else:
             left, right = title.GetTextLeft(), title.GetTextRight()
             rows = getattr(self.parent, 'header_rows', 1)
-            # its last row's cells' bottom on the cover's bottom (PlayBoxApic.GetCoverSize)
-            self.SetRect((left, self.parent.GetHeaderTop() + PlayBoxApic.TOP
+            # under the title (PlayBoxApic.TEXT_TOP: its cells 4 px lower than the cover's
+            # bottom, as the title is lower than its top)
+            self.SetRect((left, self.parent.GetHeaderTop() + PlayBoxApic.TEXT_TOP
                           + PlayBoxApic.CELLS, max(0, right - left),
                           PlayBoxInfo.CELL_SLOT + (rows - 1) * self.parent.INFO_ROW))
         self.DirectDraw()
@@ -2011,9 +2195,15 @@ class PlayBoxApic(RectBox):
     # 8 px round it every way, the window's gutter at its left: under the rack, over the
     # waveforms' frame, before the text (13, then 10 before)
     TOP = 8
+    # the text beside it (the title, the folder, the info's cells) 12 px under the rack, the
+    # cover where it is (the title's capitals at the cover's top, its taller letters
+    # (Japanese, Hangul) sat on the rack's line: asked for again and again; moved with it,
+    # the cover too, which was to stay: the user)
+    TEXT_TOP = 12
     GAP = 8
     CELLS = 33
-    SIZE = CELLS + PlayBoxInfo.CELL_SLOT
+    # its bottom at the info's cells' still (the text 4 px lower: 4 px taller)
+    SIZE = TEXT_TOP - TOP + CELLS + PlayBoxInfo.CELL_SLOT
 
     @classmethod
     def GetCoverSize(cls, rows=1):
@@ -2059,7 +2249,7 @@ class PlayBoxApic(RectBox):
         # APIC:cover.jpg, APIC:Cover Image, APIC:desc, APIC:
         if isinstance(path, tuple):
             # a station: its picture (radio.get_picture)
-            return self.GetApicBitmap(path[2]), path
+            return self.GetApicImage(path[2]), path
 
         try:
             file = mutagen.File(path)
@@ -2069,10 +2259,11 @@ class PlayBoxApic(RectBox):
             artwork = file.tags[key[0]].data
         except Exception:
             return None, path
-        return self.GetApicBitmap(artwork), path
+        return self.GetApicImage(artwork), path
 
-    def GetApicBitmap(self, artwork):
-        # the picture's bytes scaled into the box, or None
+    def GetApicImage(self, artwork):
+        # the picture's bytes as an image (its own size: the box's and the preview's from
+        # it), or None
         if not artwork:
             return None
         buf = io.BytesIO(artwork)
@@ -2091,7 +2282,22 @@ class PlayBoxApic(RectBox):
             buf.seek(0)
             bmp = wx.Image(buf)
         buf.close()
-        ratio = 1.0 * bmp.GetWidth() / bmp.GetHeight()
+        return bmp if bmp.IsOk() and bmp.GetHeight() > 0 else None
+
+    def GetShownImage(self, image):
+        # the picture as the box shows it: cut to a square on its middle (View's Square
+        # Album Images), or as it is
+        if image is None or self.parent.parent.parent.IsCoverSquareOn() is False:
+            return image
+        left, top, right, bottom = listimages.get_square_box(image.GetWidth(), image.GetHeight())
+        return image.GetSubImage(wx.Rect(left, top, right - left, bottom - top))
+
+    def GetApicBitmap(self, image):
+        # the picture scaled into the box, or None
+        image = self.GetShownImage(image)
+        if image is None:
+            return None
+        ratio = 1.0 * image.GetWidth() / image.GetHeight()
         width, height = self.GetClientSize()
         w = width - self.margin * 2
         h = height - self.margin * 2
@@ -2101,15 +2307,14 @@ class PlayBoxApic(RectBox):
             h = int(round(h / ratio))
         if w <= 0 or h <= 0:
             return None
-        bmp = bmp.Rescale(w, h, quality=wx.IMAGE_QUALITY_HIGH)
-        bmp = bmp.ConvertToBitmap()
-        return bmp
+        return image.Scale(w, h, quality=wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
 
     def GetApicThread(self):
-        bmp, path = self.GetApic(self.path)
+        image, path = self.GetApic(self.path)
         if path != self.path:
             return
-        self.apic = bmp
+        self.apic_image = image
+        self.apic = self.GetApicBitmap(image)
         self.reInitBuffer = True
         # self.DirectDraw()
 
@@ -2121,7 +2326,62 @@ class PlayBoxApic(RectBox):
 
     def CATCH_EVT_GLOBAL(self, event):
         self.HandleApicChange()
+        self.HandlePreview()
+        self.parent.HandleTrackEditor(event)
+        self.parent.HandleDragOut(self, event, 'cover')
         # self.HandleSizeChange()
+
+    # the cover large beside it while the mouse is on it (after a moment: not as the mouse
+    # passes over it), at most PREVIEW px and twice its own size
+    PREVIEW = 360
+    PREVIEW_AFTER_MS = 250
+
+    def HandlePreview(self):
+        hovered = self.onClient and self.IsShown() and self.apic is not None\
+            and getattr(self, 'apic_image', None) is not None
+        if hovered == getattr(self, 'previewing', False):
+            return
+        self.previewing = hovered
+        if hovered:
+            wx.CallLater(self.PREVIEW_AFTER_MS, self.ShowPreview)
+        else:
+            self.HidePreview()
+
+    def ShowPreview(self):
+        # (the file's own proportions, not the box's square: the user)
+        image = getattr(self, 'apic_image', None)
+        if not self or self.previewing is False or image is None:
+            return
+        iw, ih = image.GetWidth(), image.GetHeight()
+        scale = min(float(self.PREVIEW) / max(iw, ih), 2.0)
+        w, h = max(int(iw * scale), 1), max(int(ih * scale), 1)
+        if getattr(self, 'preview', None) is None:
+            # a popup: it takes neither the focus nor the mouse from the player
+            self.preview = wx.PopupWindow(self.GetTopLevelParent(), wx.BORDER_NONE)
+            self.preview.Bind(wx.EVT_PAINT, self.OnPreviewPaint)
+        self.preview.bitmap = image.Scale(w, h, quality=wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
+        # beside the cover at its top, kept on its display
+        x, y = self.ClientToScreen((self.GetSize().width + 8, 0))
+        index = wx.Display.GetFromWindow(self)
+        area = wx.Display(index if index != wx.NOT_FOUND else 0).GetClientArea()
+        x = min(x, area.right - w - 1)
+        y = min(max(y, area.top), area.bottom - h - 1)
+        self.preview.SetRect((x, y, w, h))
+        self.preview.Show()
+        self.preview.Refresh()
+
+    def OnPreviewPaint(self, event):
+        dc = wx.PaintDC(self.preview)
+        dc.DrawBitmap(self.preview.bitmap, 0, 0)
+        dc.SetPen(wx.Pen(self.parent.st.RACK_EDGE_COLOR, 1))
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        w, h = self.preview.GetClientSize()
+        dc.DrawRectangle(0, 0, w, h)
+
+    def HidePreview(self):
+        self.previewing = False
+        if getattr(self, 'preview', None) is not None:
+            self.preview.Hide()
 
     def DrawApic(self, dc):
         # rounded by a clip (the overlay mask was a 150 px picture for one size); no
@@ -2165,6 +2425,8 @@ class PlayBoxApic(RectBox):
         if source == self.path and forced is False:
             return
         self.apic = None
+        self.apic_image = None
+        self.HidePreview()
         self.path = source
         if hasattr(self, 'Thread') and self.Thread.is_alive():
             # print(dir(self.Thread))
@@ -2482,6 +2744,7 @@ class PlayBoxWave(RectBox):
         self.wave_exact = None
         self.wave_source = None
         self.wave_job = 0
+        self.ahead = None
         self.resize_timer = None
         self.last_size = self.GetSize()
         self.rectHighlight = (0, 0, 0, 0)
@@ -2514,6 +2777,7 @@ class PlayBoxWave(RectBox):
 
         # the frame (4 px around) 8 px from the window's edges (or from the tempo strip)
         leftPad = 12
+        self.height = self.parent.parent.parent.GetWaveformHeight()
         rightPad = self.parent.GetClientSize().width - self.parent.GetDeckRight() + 4
 
         # over the control row
@@ -2525,6 +2789,7 @@ class PlayBoxWave(RectBox):
             rect = (x, y, w - (leftPad + rightPad + apic_pad), self.height)
         if rect == self.last_size:
             return
+        same_width = len(self.last_size) == 4 and self.last_size[2] == rect[2]
         self.last_size = rect
         self.SetRect(rect)
         # while the window is resized the last waveform is stretched to it, and
@@ -2532,6 +2797,14 @@ class PlayBoxWave(RectBox):
         # step it took 18 ms a step for a song and 140 ms for a two-hour mix
         if self.wave_exact is None:
             self.parent.reInitWave = True
+        elif same_width:
+            # its height alone (View > Waveform Height): painted now from the columns
+            # kept for the width (audio.waveform_columns), not stretched 0.4 s first
+            if self.resize_timer is not None:
+                self.resize_timer.Stop()
+            self.SetRectWave(now=True)
+            self.SetRectHighlight()
+            self.InitBuffer()
         else:
             self.StretchWave()
             if self.resize_timer is None:
@@ -2649,36 +2922,50 @@ class PlayBoxWave(RectBox):
             return
         known = self.parent.IsGridPhraseKnown()
         anchor = self.parent.GetGridPhraseStart() if known else self.parent.GetGridDownbeat()
+        # its lines worked out once a song, size and theme, drawn a list a pen (a pen and a
+        # line at a time, every frame: 60 lines a frame for a song, the most of its drawing)
+        key = (grid.bpm, anchor, known, duration, tuple(self.wave_rect),
+               tuple(self.parent.st.PLAY_BG_COLOR))
+        cache = getattr(self, 'grid_lines', None)
+        if cache is None or cache[0] != key:
+            cache = self.grid_lines = (key, self.MakeGridLines(grid, anchor, known, duration))
+        for pen, lines in cache[1]:
+            if lines:
+                dc.DrawLineList(lines, pens=pen)
+
+    def MakeGridLines(self, grid, anchor, known, duration):
+        # [(pen, [(x1, y1, x2, y2), ...])]: across the waveform, in the lanes, the 4 bars
         x, y, w, h = self.wave_rect
         span = 60.0 / grid.bpm * 64
         if span / duration * w < 6:
-            return
+            return []
         bg = wx.Colour(self.parent.st.PLAY_BG_COLOR)
 
         def light(share):
-            return wx.Colour(*[int(v + (255 - v) * share) for v in (bg.Red(), bg.Green(), bg.Blue())])
+            return wx.Pen(wx.Colour(*[int(v + (255 - v) * share)
+                                      for v in (bg.Red(), bg.Green(), bg.Blue())]), 1)
 
+        across, lanes, fours = [], [], []
         lane = PlayBoxWaveDetail.GRID_LANE
         bottom = y + h
         # 4 bars a step (the 16 bars are 4 of them)
         phrase = span / 4
         seconds = anchor % phrase
         index = -int(round((anchor - seconds) / phrase))
+        # (DrawLine's last pixel left out, DrawLineList's too)
         while seconds < duration:
             lx = int(x + seconds * w / duration)
             if index % 4 == 0:
                 if known:
-                    dc.SetPen(wx.Pen(light(0.35), 1))
-                    dc.DrawLine(lx, y, lx, bottom)
-                dc.SetPen(wx.Pen(light(0.9), 1))
-                dc.DrawLine(lx, y - lane, lx, y)
-                dc.DrawLine(lx, bottom, lx, bottom + lane)
+                    across.append((lx, y, lx, bottom))
+                lanes.append((lx, y - lane, lx, y))
+                lanes.append((lx, bottom, lx, bottom + lane))
             elif phrase / duration * w >= 6:
-                dc.SetPen(wx.Pen(light(0.5), 1))
-                dc.DrawLine(lx, y - lane, lx, y - lane // 2)
-                dc.DrawLine(lx, bottom + lane // 2, lx, bottom + lane)
+                fours.append((lx, y - lane, lx, y - lane // 2))
+                fours.append((lx, bottom + lane // 2, lx, bottom + lane))
             seconds += phrase
             index += 1
+        return [(light(0.35), across), (light(0.9), lanes), (light(0.5), fours)]
 
     def DrawNormalWave(self, dc):
         if self.wave_bitmaps is None:
@@ -2801,11 +3088,14 @@ class PlayBoxWave(RectBox):
             self.wave_bitmaps = None
             self.wave_exact = None
         self.wave_source = waveform
-        # normal, dimmed for outside the highlight, and on the highlight ground
-        bgcolor = self.parent.st.PLAY_BG_COLOR
-        hlcolor = self.parent.st.HIGHLIGHT_BG_COLOR
-        grounds = ((bgcolor, 1.0), (bgcolor, self.highlight_dim), (hlcolor, 1.0))
+        grounds = self.GetWaveGrounds()
         job = self.wave_job
+        ahead = self.ahead
+        if ahead is not None and ahead[0] is waveform and ahead[1] == (w, h, grounds):
+            # painted while the stream opened (PaintAhead)
+            self.ahead = None
+            self.SetWaveImages(job, (x, y, w, h), ahead[2])
+            return
 
         def paint():
             images = [audio.paint_waveform_3band(waveform, w, h, ground=ground, dim=dim).tobytes()
@@ -2819,6 +3109,25 @@ class PlayBoxWave(RectBox):
             paint()
             return
         threading.Thread(target=paint, daemon=True).start()
+
+    def GetWaveGrounds(self):
+        # normal, dimmed for outside the highlight, and on the highlight ground
+        bgcolor = self.parent.st.PLAY_BG_COLOR
+        hlcolor = self.parent.st.HIGHLIGHT_BG_COLOR
+        return ((bgcolor, 1.0), (bgcolor, self.highlight_dim), (hlcolor, 1.0))
+
+    def PaintAhead(self, waveform):
+        # (the prefetch's thread: PlayBoxControl.PrefetchAnalysis) the song's waveform
+        # painted for the size the last one had, taken by SetRectWave when it is the same
+        if audio.is_waveform_3band(waveform) is False:
+            return
+        _, _, w, h = self.wave_rect
+        if w <= 0 or h <= 0:
+            return
+        grounds = self.GetWaveGrounds()
+        images = [audio.paint_waveform_3band(waveform, w, h, ground=ground, dim=dim).tobytes()
+                  for ground, dim in grounds]
+        self.ahead = (waveform, (w, h, grounds), images)
 
     def SetWaveImages(self, job, rect, images):
         # a song or a size since: painted again for that one already
@@ -2960,6 +3269,8 @@ class PlayBoxWaveDetail(RectBox):
         self.last_key = None
         self.last_step = 0
         self.last_bitmap = None
+        # the zoom chip's left (the bar numbers kept off it)
+        self.chips_left = None
         self.SetDropTarget(PlayBoxDnD(self.parent))
         color = self.parent.st.PLAY_BG_COLOR
         self.SetBackgroundColour(color)
@@ -3025,6 +3336,7 @@ class PlayBoxWaveDetail(RectBox):
             self.Hide()
             return
         self.Show()
+        self.height = self.parent.parent.parent.GetWaveformHeight('detail')
         x, y, w, h = self.parent.Wave.GetRect()
         self.SetRect((x, y - self.height - self.gap, w, self.height))
         # not painted again here: a new width is a new key (DrawDetailWave), and
@@ -3061,9 +3373,11 @@ class PlayBoxWaveDetail(RectBox):
             return (offset, self.parent.GetDurationTime())
         return (offset, offset + period)
 
-    # the zoom told at the strip's right top: against the first zoom (span 5 s), the
-    # seconds across, and where it is between the closest and the widest (a bar)
-    ZOOM_FIRST = 5.0
+    # the zoom told at the strip's right top: the bars across when the grid is known, else
+    # the seconds (x1.0 against the first zoom, the seconds and a bar between the closest
+    # and the widest before: one thing told three ways)
+    CHIP_TOP = 3
+    CHIP_HEIGHT = 17
 
     # bar numbers: at least this many pixels from one numbered bar to the next (30 made a
     # row of them zoomed out)
@@ -3071,8 +3385,7 @@ class PlayBoxWaveDetail(RectBox):
 
     def SetRectDraw(self, dc):
         self.DrawStrip(dc)
-        self.zoom_rect = None
-        self.DrawZoom(dc)
+        self.DrawChips(dc)
         self.DrawBarNumbers(dc)
 
     def DrawBarNumbers(self, dc):
@@ -3113,8 +3426,8 @@ class PlayBoxWaveDetail(RectBox):
                 continue
             text = '%d' % (index + 1)
             tw, th = dc.GetTextExtent(text)
-            if self.zoom_rect is not None and x + tw + 6 >= self.zoom_rect.x\
-                    and 2 + th >= self.zoom_rect.y:
+            if self.chips_left is not None and x + tw + 6 >= self.chips_left\
+                    and 2 + th >= self.CHIP_TOP:
                 continue
             dc.SetPen(wx.TRANSPARENT_PEN)
             dc.SetBrush(wx.Brush(st.PLAY_BG_COLOR))
@@ -3122,42 +3435,41 @@ class PlayBoxWaveDetail(RectBox):
             dc.SetTextForeground(st.TITLE_DIM_COLOR)
             dc.DrawText(text, x + 4, 1)
 
-    def DrawZoom(self, dc):
+    def GetZoomText(self):
+        span = self.GetSpan()
+        if self.parent.IsStreamTrack():
+            return get_span_text(min(self.span, radio.TRACE_SECONDS))
+        grid = self.parent.GetGrid()
+        if grid is None or not grid.bpm:
+            return get_span_text(span)
+        bars = span * grid.bpm / 240.0
+        value = '%d' % (round(bars)) if bars >= 10 else ('%.1f' % (bars)).rstrip('0').rstrip('.')
+        return '%s BAR%s' % (value, '' if value == '1' else 'S')
+
+    def DrawChips(self, dc):
+        self.chips_left = None
         w, h = self.GetSize()
         if w < 200 or h < 20:
             return
         st = self.parent.st
-        span = self.GetSpan()
-        if self.parent.IsStreamTrack():
-            span = min(self.span, radio.TRACE_SECONDS)
-        text = '\u00d7%.1f  %s' % (self.ZOOM_FIRST / span, get_span_text(span))
+        y, ch = self.CHIP_TOP, self.CHIP_HEIGHT
         gc = wx.GraphicsContext.Create(dc)
         if gc is None:
             return
+        # a readout on the waveform, its ground let through a little
+        text = self.GetZoomText()
         font = wx.Font(wx.Size(0, 11), wx.FONTFAMILY_MODERN, wx.FONTSTYLE_NORMAL,
                        wx.FONTWEIGHT_NORMAL, faceName=FONT_PLAYINFO)
-        gc.SetFont(font, wx.Colour(st.CHIP_FG_COLOR))
+        uikit.set_font(gc, font, wx.Colour(st.CHIP_FG_COLOR))
         tw, th = gc.GetTextExtent(text)[:2]
-        bar = 36
-        cw, ch = tw + bar + 22, 16
-        x, y = w - self.margin - cw - 4, 3
-        self.zoom_rect = wx.Rect(int(x), int(y), int(cw), int(ch))
+        cw = int(tw) + 14
+        x = w - self.margin - 4 - cw
         face = wx.Colour(st.CHIP_BG_COLOR)
         gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(face.Red(), face.Green(), face.Blue(), 225))))
         gc.DrawRoundedRectangle(x, y, cw, ch, uikit.RADIUS)
         gc.DrawText(text, x + 7, y + (ch - th) / 2.0)
-        # the bar: closest (span_least) at its left, the whole track (or the widest) at its
-        # right, by the wheel's steps (a log scale)
-        widest = max(self.parent.GetDurationTime(), self.span_least * self.span_step)
-        share = math.log(max(span, self.span_least) / self.span_least)\
-            / math.log(max(widest, self.span_least * 1.01) / self.span_least)
-        share = min(max(share, 0.0), 1.0)
-        bx, by = x + tw + 14, y + ch / 2.0 - 1
-        gc.SetBrush(gc.CreateBrush(wx.Brush(st.TITLE_DIM_COLOR)))
-        gc.DrawRectangle(bx, by, bar, 2)
-        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.ui().ACCENT)))
-        gc.DrawRoundedRectangle(bx + share * (bar - 4), by - 3, 4, 8, 1.5)
+        self.chips_left = x
 
     def DrawStrip(self, dc):
         w, h = self.GetSize()
