@@ -90,7 +90,7 @@ class SetDefaultScript():
             if name in scripts:
                 continue
             path = self.parent.GetSelectedScriptPath(name)
-            exec('script = self.%s()' % (name))
+            exec(f'script = self.{name}()')
             self.parent.SaveScriptFile(path, script)
 
     def id3tag_to_filename(self):
@@ -296,7 +296,7 @@ class ScriptEditorBox(DialogBox, ScriptControl):
         self.PreviewPanel.TextCtrl.ClearAll()
         for v in self.preview_result:
             self.PreviewPanel.TextCtrl.SetReadOnly(False)
-            exec('preview = v[1].%s' % (field))
+            exec(f'preview = v[1].{field}')
             self.PreviewPanel.TextCtrl.AppendText(preview)
             self.PreviewPanel.TextCtrl.DocumentEnd()
             self.PreviewPanel.TextCtrl.NewLine()
@@ -1036,8 +1036,8 @@ class StyledTextCtrl(wx.stc.StyledTextCtrl, TextCtrlMaxLineWidthCache):
         bgcolor = rgb_dec2hex(st.EDITOR_BG_COLOR)
         fgcolor = rgb_dec2hex(st.EDITOR_FG_COLOR)
         self.StyleSetSpec(wx.stc.STC_STYLE_DEFAULT,
-                          'fore:#%s,back:#%s,face:%s,size:%d' % (fgcolor, bgcolor, fontname, fontsize))
-        self.StyleSetSpec(wx.stc.STC_STYLE_CONTROLCHAR, 'face:%s' % fontname)
+                          f'fore:#{fgcolor},back:#{bgcolor},face:{fontname},size:{int(fontsize)}')
+        self.StyleSetSpec(wx.stc.STC_STYLE_CONTROLCHAR, f'face:{fontname}')
 
         self.RegisterImage(1, images.checkmark_icon14.GetBitmap())
 
@@ -1069,15 +1069,16 @@ class StyledTextCtrl(wx.stc.StyledTextCtrl, TextCtrlMaxLineWidthCache):
         st = self.parent.parent.parent.st.EDITBOX
         # Clear styles and revert to default.
         # Line numbers in margin
-        self.StyleSetSpec(wx.stc.STC_STYLE_LINENUMBER, 'fore:#%s,back:#%s'
-                          % (rgb_dec2hex(st.LINENUM_FG_COLOR), rgb_dec2hex(st.LINENUM_BG_COLOR)))
+        self.StyleSetSpec(wx.stc.STC_STYLE_LINENUMBER,
+                          f'fore:#{rgb_dec2hex(st.LINENUM_FG_COLOR)},'
+                          f'back:#{rgb_dec2hex(st.LINENUM_BG_COLOR)}')
 
         bg = rgb_dec2hex(st.BRACE_BG_COLOR)
         fg = rgb_dec2hex(st.BRACE_FG_COLOR)
         # Highlighted brace
-        self.StyleSetSpec(wx.stc.STC_STYLE_BRACELIGHT, 'fore:#%s,back:#%s' % (fg, bg))
+        self.StyleSetSpec(wx.stc.STC_STYLE_BRACELIGHT, f'fore:#{fg},back:#{bg}')
         # Unmatched brace
-        self.StyleSetSpec(wx.stc.STC_STYLE_BRACEBAD, 'fore:#%s,back:#%s' % (fg, bg))
+        self.StyleSetSpec(wx.stc.STC_STYLE_BRACEBAD, f'fore:#{fg},back:#{bg}')
         # Indentation guide
         self.StyleSetSpec(wx.stc.STC_STYLE_INDENTGUIDE, 'fore:#404040')
 
@@ -1086,12 +1087,12 @@ class StyledTextCtrl(wx.stc.StyledTextCtrl, TextCtrlMaxLineWidthCache):
         # Python styles
         bg = rgb_dec2hex(st.EDITOR_BG_COLOR)
         fg = rgb_dec2hex(st.EDITOR_FG_COLOR)
-        self.StyleSetSpec(wx.stc.STC_P_DEFAULT, 'fore:#%s' % (fg))
+        self.StyleSetSpec(wx.stc.STC_P_DEFAULT, f'fore:#{fg}')
         # Comments
         self.StyleSetSpec(wx.stc.STC_P_COMMENTLINE,  'fore:#404040')
         self.StyleSetSpec(wx.stc.STC_P_COMMENTBLOCK, 'fore:#404040')
         # Numbers
-        self.StyleSetSpec(wx.stc.STC_P_NUMBER, 'fore:#%s,back:#%s' % (fg, bg))
+        self.StyleSetSpec(wx.stc.STC_P_NUMBER, f'fore:#{fg},back:#{bg}')
         # Strings and characters
         self.StyleSetSpec(wx.stc.STC_P_STRING, 'fore:#22AA22')
         self.StyleSetSpec(wx.stc.STC_P_CHARACTER, 'fore:#22AA22')
@@ -1108,7 +1109,7 @@ class StyledTextCtrl(wx.stc.StyledTextCtrl, TextCtrlMaxLineWidthCache):
         self.StyleSetSpec(wx.stc.STC_P_OPERATOR, 'fore:#882222,bold')
         # Identifiers. I leave this as not bold because everything seems
         # to be an identifier if it doesn't match the above criterae
-        self.StyleSetSpec(wx.stc.STC_P_IDENTIFIER, 'fore:#%s' % (fg))
+        self.StyleSetSpec(wx.stc.STC_P_IDENTIFIER, f'fore:#{fg}')
 
     def SetUpPreview(self):
         self.SetUpCommonStyle()
@@ -1123,17 +1124,17 @@ class StyledTextCtrl(wx.stc.StyledTextCtrl, TextCtrlMaxLineWidthCache):
         bgcolor = rgb_dec2hex(st.PREVIEW_BG_COLOR)
         fgcolor = rgb_dec2hex(st.PREVIEW_FG_COLOR)
         self.StyleSetSpec(wx.stc.STC_STYLE_DEFAULT,
-                          'fore:#%s,back:#%s,face:%s,size:%d' % (fgcolor, bgcolor, fontname, fontsize))
-        self.StyleSetSpec(wx.stc.STC_STYLE_CONTROLCHAR, 'face:%s' % fontname)
+                          f'fore:#{fgcolor},back:#{bgcolor},face:{fontname},size:{int(fontsize)}')
+        self.StyleSetSpec(wx.stc.STC_STYLE_CONTROLCHAR, f'face:{fontname}')
         self.StyleClearAll()
 
         # Line numbers in margin
         fg = rgb_dec2hex(st.LINENUM_FG_COLOR)
         bg = rgb_dec2hex(st.LINENUM_BG_COLOR)
-        self.StyleSetSpec(wx.stc.STC_STYLE_LINENUMBER, 'fore:#%s,back:#%s' % (fg, bg))
+        self.StyleSetSpec(wx.stc.STC_STYLE_LINENUMBER, f'fore:#{fg},back:#{bg}')
         # Python styles
         fg = rgb_dec2hex(st.EDITOR_FG_COLOR)
-        self.StyleSetSpec(wx.stc.STC_P_DEFAULT, 'fore:#%s' % (fg))
+        self.StyleSetSpec(wx.stc.STC_P_DEFAULT, f'fore:#{fg}')
 
     def RegisterModifiedEvent(self, eventHandler):
         self.Bind(wx.stc.EVT_STC_CHANGE, eventHandler)

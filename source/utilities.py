@@ -93,7 +93,7 @@ def get_macaddress(host='localhost'):
     buffer = ctypes.c_buffer(6)
     addlen = ctypes.c_ulong(ctypes.sizeof(buffer))
     if SendARP(inetaddr, 0, ctypes.byref(buffer), ctypes.byref(addlen)) != 0:
-        raise WindowsError('Retreival of mac address(%s) - failed' % host)
+        raise WindowsError(f'Retreival of mac address({host}) - failed')
     # Convert binary data into a string.
     macaddr = ''
     for intval in struct.unpack('BBBBBB', buffer):
@@ -126,14 +126,14 @@ class Struct():
 def dict_to_struct(data):
     result = Struct()
     for key in data.keys():
-        exec('result.%s = data["%s"]' % (key, key))
+        exec(f'result.{key} = data["{key}"]')
     return result
 
 
 def struct_to_dict(data):
     result = dict()
     for key in data.keys():
-        exec('result["%s"] = data.%s' % (key, key))
+        exec(f'result["{key}"] = data.{key}')
     return result
 
 
@@ -392,7 +392,7 @@ def kill_process_by_pid(pid):
         ctypes.windll.kernel32.TerminateProcess(handle, -1)
         ctypes.windll.kernel32.CloseHandle(handle)
     elif sys.platform.startswith('darwin'):
-        cmd = ['kill', '-9', '%s' % (pid)]
+        cmd = ['kill', '-9', f'{pid}']
         try:
             run_hidden_subprocess(cmd)
         except Exception:
@@ -492,7 +492,7 @@ def is_process_running_by_pid(pid):
 
 def is_process_running_by_name(name):
     selfpid = os.getpid()
-    name = """name=u'%s'""" % (name)
+    name = f"""name=u'{name}'"""
     ps = filter(lambda p: name in str(p.name) and p.pid != selfpid, psutil.process_iter())
     if ps == []:
         return False
@@ -696,7 +696,7 @@ class SocketMessenger(threading.Thread):
 
 
 def send_pipe_message(message, address):
-    pipe = '\\\\.\\pipe\\%s' % (address)
+    pipe = f'\\\\.\\pipe\\{address}'
     p = win32pipe.CreateNamedPipe(pipe,
                                   win32pipe.PIPE_ACCESS_DUPLEX,
                                   win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_WAIT,
@@ -722,7 +722,7 @@ class PipeReceiver(SocketReceiver):
             time.sleep(self.interval)
             received = None
             try:
-                pipe = '\\\\.\\pipe\\%s' % (self.address)
+                pipe = f'\\\\.\\pipe\\{self.address}'
                 fileHandle = win32file.CreateFile(pipe,
                                                   win32file.GENERIC_READ,
                                                   0, None, win32file.OPEN_EXISTING,

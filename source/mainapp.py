@@ -610,11 +610,11 @@ class MacroBoxApp(wx.App):
             # (the boxes' drawing: ms a second since the last note)
             try:
                 counts = dict(list(COUNTS.items()))
-                file.write('memory %d MB, counts %s\n' % (memory(), counts))
+                file.write(f'memory {int(memory())} MB, counts {counts}\n')
                 for key in [k for k in counts if k.startswith('ms ')]:
                     COUNTS.pop(key, None)
             except Exception as error:
-                file.write('note failed: %r\n' % error)
+                file.write(f'note failed: {error!r}\n')
 
         def watch():
             path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'hang.log')
@@ -624,11 +624,11 @@ class MacroBoxApp(wx.App):
                 if time.time() - lap > 15.0:
                     lap = time.time()
                     with open(path, 'a', encoding='utf-8') as file:
-                        file.write('=== %s\n' % time.strftime('%H:%M:%S'))
+                        file.write(f'=== {time.strftime("%H:%M:%S")}\n')
                         note(file)
                 if time.time() - beat[0] > 3.0:
                     with open(path, 'a', encoding='utf-8') as file:
-                        file.write('--- %s\n' % time.strftime('%H:%M:%S'))
+                        file.write(f'--- {time.strftime("%H:%M:%S")}\n')
                         note(file)
                         file.flush()
                         faulthandler.dump_traceback(file=file, all_threads=True)
@@ -661,7 +661,7 @@ def mainapp(initfile=None):
         app = MacroBoxApp(initfile=initfile)
         # app.SetCallFilterEvent(False)
     elif LOGGING is True:
-        filename = '%s.log' % (os.path.splitext(os.path.basename(__file__))[0])
+        filename = f'{os.path.splitext(os.path.basename(__file__))[0]}.log'
         app = MacroBoxApp(initfile=initfile, filename=filename, redirect=True)
         app.SetCallFilterEvent(True)
     app.MainLoop()

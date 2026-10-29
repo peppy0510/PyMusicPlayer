@@ -85,7 +85,7 @@ class ListImages():
             self.asked = set(k for k in self.asked if not (k[1] == mdx and k[0] == kind))
         if kind == 'cover':
             try:
-                os.remove(os.path.join(self.folder, '%s.png' % (mdx)))
+                os.remove(os.path.join(self.folder, f'{mdx}.png'))
             except OSError:
                 pass
 
@@ -121,7 +121,7 @@ class ListImages():
         return audio.paint_waveform_3band(resp.waveform, width, height, ground=ground)
 
     def MakeCover(self, mdx, path, width, height, ground, square=False):
-        thumbnail = os.path.join(self.folder, '%s.png' % (mdx))
+        thumbnail = os.path.join(self.folder, f'{mdx}.png')
         if os.path.isfile(thumbnail):
             # an empty file: the song has no cover
             if os.path.getsize(thumbnail) == 0:
@@ -271,7 +271,7 @@ def write_cover(path, data):
         song.tags['covr'] = [mutagen.mp4.MP4Cover(data, imageformat=imageformat)]
         song.save()
     else:
-        raise ValueError('covers are not put in %s files' % (kind.lstrip('.').upper()))
+        raise ValueError(f'covers are not put in {kind.lstrip(".").upper()} files')
 
 
 def remove_cover(path):
@@ -295,4 +295,4 @@ def remove_cover(path):
             del song.tags['covr']
             song.save()
     else:
-        raise ValueError('covers are not taken out of %s files' % (kind.lstrip('.').upper()))
+        raise ValueError(f'covers are not taken out of {kind.lstrip(".").upper()} files')

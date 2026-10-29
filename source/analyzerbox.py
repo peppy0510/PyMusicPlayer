@@ -95,8 +95,8 @@ def mix(one, other, share):
 
 def get_short_hz(value):
     if value >= 1000:
-        return ('%.1f' % (value / 1000)).rstrip('0').rstrip('.') + 'k'
-    return '%d' % round(value)
+        return (f'{value / 1000:.1f}').rstrip('0').rstrip('.') + 'k'
+    return f'{round(value)}'
 
 
 def get_meter_colour(db):
@@ -619,10 +619,10 @@ class AnalyzerPanel(RackModule):
         centre = len(xs) // 2
         for name, share, value, tone in (
                 ('correlation', (a.correlation + 1) / 2.0,
-                 '%+.2f' % a.correlation if abs(a.correlation) >= 0.005 else '0.00',
+                 f'{a.correlation:+.2f}' if abs(a.correlation) >= 0.005 else '0.00',
                  METER_BLUE if a.correlation >= 0 else METER_MID),
                 ('balance', 0.5 + max(-1.0, min(1.0, a.balance / BALANCE_RANGE)) / 2.0,
-                 '%+.1f' % a.balance if abs(a.balance) >= 0.05 else '0.0', METER_BLUE)):
+                 f'{a.balance:+.1f}' if abs(a.balance) >= 0.05 else '0.0', METER_BLUE)):
             bar = g[name]
             reach = int(round((share - 0.5) * 2 * centre))
             end = min(max(centre + reach, 0), len(xs) - 1)
@@ -644,7 +644,7 @@ class AnalyzerPanel(RackModule):
             if key not in values:
                 continue
             value, floor = values[key]
-            words = '--' if value <= floor else '%.1f' % value
+            words = '--' if value <= floor else f'{value:.1f}'
             if key.endswith('pk'):
                 tone = CLIP if value > -0.1 else TEXT
             elif key.endswith('rms'):
@@ -765,8 +765,8 @@ class AnalyzerPanel(RackModule):
         freq = 20.0 * 1000.0 ** ((x - inner.x) / float(max(1, inner.width)))
         db = float(numpy.interp(x, xs, self.analyzer.spectrum))
         midi = int(round(12 * math.log2(freq / 440.0) + 69))
-        hz = '%.0f Hz' % freq if freq < 1000 else '%.2f kHz' % (freq / 1000)
-        words = '%s  %s%d  %.1f dB' % (hz, NOTE_NAMES[midi % 12], midi // 12 - 1, db)
+        hz = f'{freq:.0f} Hz' if freq < 1000 else f'{freq / 1000:.2f} kHz'
+        words = f'{hz}  {NOTE_NAMES[midi % 12]}{midi // 12 - 1}  {db:.1f} dB'
         self.SetDC(dc, LCD_AXIS)
         dc.DrawRectangle(x, inner.y, 1, inner.height)
         dc.SetFont(get_font(7.5, mono=True))

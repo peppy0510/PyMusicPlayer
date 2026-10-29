@@ -26,7 +26,7 @@ class ShortCut():
         if not name:
             return path
         if not name.lower().endswith('.lnk'):
-            name = '{}.lnk'.format(name)
+            name = f'{name}.lnk'
         return os.path.join(path, name)
 
     @classmethod
@@ -35,7 +35,7 @@ class ShortCut():
         if not name:
             return path
         if not name.lower().endswith('.lnk'):
-            name = '{}.lnk'.format(name)
+            name = f'{name}.lnk'
         return os.path.join(path, name)
 
     @classmethod
@@ -54,7 +54,7 @@ class ShortCut():
         ext = os.path.splitext(path)[-1][1:].lower()
         if ext == 'url':
             with open(path, 'w') as file:
-                file.write('[InternetShortcut]\nURL=%s' % target_path)
+                file.write(f'[InternetShortcut]\nURL={target_path}')
         else:
             shell = Dispatch('WScript.Shell')
 
@@ -77,5 +77,5 @@ def create_shortcut(*args, **kwargs):
 def create_desktop_ini(directory, icon_resource, folder_type='Generic'):
     with open(os.path.join(directory, 'desktop.ini'), 'w') as file:
         file.write('\n'.join([
-            '[.ShellClassInfo]', 'IconResource=%s,0' % icon_resource,
-            '[ViewState]', 'Mode=', 'Vid=', 'FolderType=%s' % folder_type]))
+            '[.ShellClassInfo]', f'IconResource={icon_resource},0',
+            '[ViewState]', 'Mode=', 'Vid=', f'FolderType={folder_type}']))

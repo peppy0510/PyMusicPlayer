@@ -46,7 +46,7 @@ class Build():
                     shutil.rmtree(path)
                     # print('removing %s' % (path))
                 except Exception:
-                    print('removing failed %s' % (path))
+                    print(f'removing failed {path}')
 
     @classmethod
     def makebuild_mfeats(self):
@@ -82,7 +82,7 @@ class Build():
         #         os.remove(os.path.join('dist', name))
 
         issc = r'''"C:\\Program Files (x86)\\Inno Setup 5\\ISCC.exe"'''
-        command = '''%s "macrobox.iss"''' % (issc)
+        command = f'''{issc} "macrobox.iss"'''
         proc = subprocess.Popen(command, shell=True)
         proc.communicate()
 

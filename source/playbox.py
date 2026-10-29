@@ -323,7 +323,7 @@ class PlayBox(RectBox, PlayBoxControl):
         extension = {'JPEG': 'jpg'}.get(kind, kind.lower())
         name = re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(os.path.basename(path))[0])
         os.makedirs(self.COVER_FOLDER, exist_ok=True)
-        cover = os.path.join(self.COVER_FOLDER, '%s.%s' % (name, extension))
+        cover = os.path.join(self.COVER_FOLDER, f'{name}.{extension}')
         with open(cover, 'wb') as file:
             file.write(data)
         return cover
@@ -437,7 +437,7 @@ class PlayBox(RectBox, PlayBoxControl):
         # (text, warned) while a station connects or after it failed to, else None
         failure = self.GetStreamFailure()
         if failure:
-            return ('Could not connect: %s' % (failure), True)
+            return (f'Could not connect: {failure}', True)
         if self.GetStreamConnecting() is not None:
             return ('Connecting to the station...', False)
         return None
@@ -765,10 +765,10 @@ class PlayBoxVisualClock(threading.Thread):
 def get_span_text(seconds):
     # a span as it reads best: 2.1 s, 45 s, 3:20
     if seconds < 10:
-        return '%.1f s' % (seconds)
+        return f'{seconds:.1f} s'
     if seconds < 60:
-        return '%d s' % (round(seconds))
-    return '%d:%02d' % (seconds // 60, seconds % 60)
+        return f'{round(seconds)} s'
+    return f'{int(seconds // 60)}:{int(seconds % 60):02d}'
 
 
 def draw_live_trace(dc, parent, rect, seconds, spread=audio.WAVEFORM_BAND_SPREAD):
@@ -1067,8 +1067,8 @@ class PlayBoxControlButton(RectBox):
             frame = self.parent.parent.parent
             current = self.parent.GetHighlightStaticPeriodTime()
             for i, seconds in enumerate(frame.MenuBar.highlightDurationItems):
-                item = menu.AppendCheckItem(wx.ID_ANY, '%d bars (about %d s)'
-                                            % (seconds // 2, seconds))
+                item = menu.AppendCheckItem(wx.ID_ANY, f'{int(seconds // 2)} bars (about '
+                                                       f'{int(seconds)} s)')
                 item.Check(seconds == current)
                 menu.Bind(wx.EVT_MENU, lambda e, i=i: self.ChooseHighlightLength(i), item)
         else:
@@ -1272,13 +1272,13 @@ def format_tempo(percent):
     # two decimals as a CDJ shows them; one from 100 (WIDE's whole range: its 0.5 steps);
     # 0 without a sign, its place kept as a space (+0.00 read as a little up; the digits
     # not moved, the font's figures as wide as the space)
-    text = '%+.1f' % (percent) if abs(percent) >= 99.995 else '%+.2f' % (percent)
+    text = f'{percent:+.1f}' if abs(percent) >= 99.995 else f'{percent:+.2f}'
     return ' ' + text[1:] if float(text) == 0 else text
 
 
 def format_semitones(semitones):
     # K+1, K-2; at 0, K 0 (as the tempo's 0: no sign, its place kept)
-    return 'K%+d' % (semitones) if semitones else 'K 0'
+    return f'K{int(semitones):+d}' if semitones else 'K 0'
 
 
 class VolumeSlider(RectBox):
@@ -1339,11 +1339,11 @@ class VolumeSlider(RectBox):
             return 'MUTE'
         if volume <= 0.0:
             return '-\u221e dB'
-        return '%.1f dB' % (20 * math.log10(volume))
+        return f'{20 * math.log10(volume):.1f} dB'
 
     def ShowLevel(self):
         # (its level under the mouse: no room for its display on the bar)
-        self.SetToolTip('Volume %s' % (self.GetLevelText()))
+        self.SetToolTip(f'Volume {self.GetLevelText()}')
 
     def SetRectDraw(self, dc):
         muted = self.IsMuted()
@@ -1463,7 +1463,7 @@ class TempoStrip(RectBox):
             x = self.PAD + k * (self.COLUMN - 1) + 2
             if column == 'tempo':
                 rows = (('lock', 'LOCK', self.parent.IsTempoKeyLockOn()),
-                        ('range', 'WIDE' if span >= 100 else '%d%%' % (span), False))
+                        ('range', 'WIDE' if span >= 100 else f'{int(span)}%', False))
             else:
                 # their plus and minus drawn (KEY_MARKS)
                 rows = (('key_down', 'KEY', False), ('key_up', 'KEY', False))
@@ -1693,7 +1693,7 @@ class SnapButton(RectBox):
         disabled = self.parent.IsStreamTrack()
         part, down = getattr(self, 'state', (None, None))
         on = self.parent.GetSnapMode() != 'off'
-        uikit.draw_button(dc, self.FACE, label='SNAP %s' % (label.upper()), on=on,
+        uikit.draw_button(dc, self.FACE, label=f'SNAP {label.upper()}', on=on,
                           hover=part == 'face', down=down == 'face', disabled=disabled,
                           corners='left')
         # its arrow turned over while the menu is open
@@ -1879,7 +1879,7 @@ class PlayBoxTitle(RectBox):
         # by the cue's own columns (item_column: its row is made in them), not the playing
         # list's (a station's tab has its own order: an index of its put a number here)
         value = self.parent.GetPlayingItemInfo(field)
-        return '' if value is None else '%s' % (value)
+        return '' if value is None else f'{value}'
 
     def CATCH_EVT_GLOBAL(self, event):
         # if self.parent.parent.HasToSkipEvent(): return
@@ -1979,8 +1979,8 @@ class PlayBoxInfo(RectBox):
         key = (key.strip() or '-').ljust(3) if key else ''
         chips = [(0, 'BPM', tempo.strip()), (1, 'KEY', key)]
         if duration.strip():
-            played = '%s / %s' % (position.strip(), duration.strip())
-            left = '%s / %s' % (remain.strip(), duration.strip())
+            played = f'{position.strip()} / {duration.strip()}'
+            left = f'{remain.strip()} / {duration.strip()}'
             widest = max(played, left, key=len)
             chips += [(2, 'LEFT', left, widest) if self.time_left else
                       (2, 'TIME', played, widest)]
@@ -2173,22 +2173,22 @@ class PlayBoxInfo(RectBox):
         # none known (a station that did not open, a cue being opened): 0
         pos_sec, dur_sec = (
             self.parent.GetPositionTime() or 0.0, self.parent.cue.duration or 0.0)
-        duration = '%02d:%02d.%02d' % (dur_sec / 60, dur_sec % 60, dur_sec % 1 * 100)
-        position = '%02d:%02d.%02d' % (pos_sec / 60, pos_sec % 60, pos_sec % 1 * 100)
+        duration = f'{int(dur_sec / 60):02d}:{int(dur_sec % 60):02d}.{int(dur_sec % 1 * 100):02d}'
+        position = f'{int(pos_sec / 60):02d}:{int(pos_sec % 60):02d}.{int(pos_sec % 1 * 100):02d}'
         # left: to where it moves on (the song's end, or a highlight's, or the edit's)
         finish = self.parent.GetTrackFinishTime()
         if not finish or finish < 0:
             finish = dur_sec
         left = max(finish - pos_sec, 0.0)
-        remain = '-%02d:%02d.%02d' % (left / 60, left % 60, left % 1 * 100)
-        segments = ['%05.1f' % tempo, key, position, duration, remain]
+        remain = f'-{int(left / 60):02d}:{int(left % 60):02d}.{int(left % 1 * 100):02d}'
+        segments = [f'{tempo:05.1f}', key, position, duration, remain]
         if self.parent.IsStreamTrack():
             # a station: how long it has played, live (no tempo, no key, no length); while
             # it connects, for how long (a second at a time, nothing moving)
             segments = ['', '', position, 'LIVE']
             connecting = self.parent.GetStreamConnecting()
             if connecting is not None:
-                segments = ['', '', 'Connecting %ds' % (int(connecting)), '']
+                segments = ['', '', f'Connecting {int(connecting)}s', '']
             elif self.parent.GetStreamFailure():
                 segments = ['', '', 'Not connected', '']
         information = SEPARATOR.join(segments)
@@ -3458,7 +3458,7 @@ class PlayBoxWaveDetail(RectBox):
             x = int(self.margin + (downbeat + index * bar - start) / pixel)
             if x < self.margin or x > self.margin + w - 8:
                 continue
-            text = '%d' % (index + 1)
+            text = f'{index + 1}'
             tw, th = dc.GetTextExtent(text)
             if self.chips_left is not None and x + tw + 6 >= self.chips_left\
                     and 2 + th >= self.CHIP_TOP:
@@ -3477,8 +3477,8 @@ class PlayBoxWaveDetail(RectBox):
         if grid is None or not grid.bpm:
             return get_span_text(span)
         bars = span * grid.bpm / 240.0
-        value = '%d' % (round(bars)) if bars >= 10 else ('%.1f' % (bars)).rstrip('0').rstrip('.')
-        return '%s BAR%s' % (value, '' if value == '1' else 'S')
+        value = f'{round(bars)}' if bars >= 10 else (f'{bars:.1f}').rstrip('0').rstrip('.')
+        return f'{value} BAR{"" if value == "1" else "S"}'
 
     def DrawChips(self, dc):
         self.chips_left = None
@@ -3742,14 +3742,14 @@ class PlayBoxPopupGrid(wx.Menu):
             item.Enable(False)
             return
         # the time clicked in the labels: where it lands is seen before it is chosen
-        at = '%d:%04.1f' % (seconds // 60, seconds % 60)
-        labels = ('Bar starts on this beat (%s)' % (at), 'Bar starts at the play position',
+        at = f'{int(seconds // 60)}:{seconds % 60:04.1f}'
+        labels = (f'Bar starts on this beat ({at})', 'Bar starts at the play position',
                   'Bar one beat earlier', 'Bar one beat later', 'Bar as analyzed')
         for label, handler in zip(labels, (self.OnHere, self.OnHerePlaying, self.OnEarlier,
                                            self.OnLater, self.OnAnalyzed)):
             self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))
         self.AppendSeparator()
-        labels = ('Phrase starts on this bar (%s)' % (at), 'Phrase starts at the play position',
+        labels = (f'Phrase starts on this bar ({at})', 'Phrase starts at the play position',
                   'Phrase as analyzed')
         for label, handler in zip(labels, (self.OnPhraseHere, self.OnPhraseHerePlaying,
                                            self.OnPhraseAnalyzed)):
@@ -3758,14 +3758,14 @@ class PlayBoxPopupGrid(wx.Menu):
         source = 'Beat This!' if grid.source.startswith('beatthis') else 'the beats alone'
         if grid.source.endswith('+changes'):
             source += ', moved by the song\'s changes'
-        item = self.Append(wx.ID_ANY, '%.3f BPM, bar from %s' % (grid.bpm, source))
+        item = self.Append(wx.ID_ANY, f'{grid.bpm:.3f} BPM, bar from {source}')
         item.Enable(False)
         self.AppendSeparator()
         scale = grid.bpm_scale or 1.0
-        labels = [('Tempo x2 (%.2f BPM)' % (grid.bpm * 2), self.OnTempoDouble),
-                  ('Tempo /2 (%.2f BPM)' % (grid.bpm / 2), self.OnTempoHalf)]
+        labels = [(f'Tempo x2 ({grid.bpm * 2:.2f} BPM)', self.OnTempoDouble),
+                  (f'Tempo /2 ({grid.bpm / 2:.2f} BPM)', self.OnTempoHalf)]
         if scale != 1.0:
-            labels.append(('Tempo as analyzed (%.2f BPM)' % (grid.bpm / scale),
+            labels.append((f'Tempo as analyzed ({grid.bpm / scale:.2f} BPM)',
                            self.OnTempoAnalyzed))
         for label, handler in labels:
             self.Bind(wx.EVT_MENU, handler, self.Append(wx.ID_ANY, label))

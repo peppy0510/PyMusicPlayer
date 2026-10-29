@@ -333,8 +333,8 @@ class LicenseOnlineCheckPanel(DialogPanel, wx.Timer):
         self.Thread.start()
 
     def UpdateProgress(self):
-        label = 'Check for your license. (Step %d/%d)'\
-                % (self.Thread.step, self.Thread.max_step)
+        label = ('Check for your license. (Step '
+                 f'{int(self.Thread.step)}/{int(self.Thread.max_step)})')
         self.TextMessage.SetLabelText(label)
         self.ProgressBar.SetValue(self.Thread.step)
         if self.Thread.step != self.Thread.max_step:
@@ -485,8 +485,8 @@ class LicenseNotifyPanel(DialogPanel):
         width, height = self.parent.GetClientSize()
         self.SetRect((0, 0, width, 80))
 
-        label = 'Unless license, you will see this message every %d minutes.'\
-                % int(self.parent.check_interval / 60)
+        label = ('Unless license, you will see this message every '
+                 f'{int(self.parent.check_interval / 60)} minutes.')
         self.Message = StaticText(self, label=label)
         self.Message.SetForegroundColour((255, 255, 255))
         font = wx.Font(0, wx.SWISS, wx.NORMAL, wx.FONTWEIGHT_NORMAL)
@@ -595,14 +595,14 @@ class LicenseNotifyBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
         # self.LicenseNotifyPanel.ProgressBar.SetValue(self.count)
         left_time = 1.0 * (self.notify_time - self.count * self.interval) / 1000
         self.count += 1
-        label = 'Unless license, you will see this message every %d minutes. (Wait %0.1f seconds)'\
-                % (int(self.check_interval / 60), left_time)
+        label = (f'Unless license, you will see this message every {int(self.check_interval / 60)} '
+                 f'minutes. (Wait {left_time:.1f} seconds)')
         self.LicenseNotifyPanel.Message.SetLabelText(label)
         if self.count * self.interval <= self.notify_time:
             return
         self.stop = True
-        label = 'Unless license, you will see this message every %d minutes.'\
-                % int(self.check_interval / 60)
+        label = (f'Unless license, you will see this message every {int(self.check_interval / 60)} '
+                 'minutes.')
         self.LicenseNotifyPanel.Message.SetLabelText(label)
         self.CloseButton.SetEnable()
 

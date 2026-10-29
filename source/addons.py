@@ -53,7 +53,7 @@ def log(text):
     try:
         with open(os.path.join(get_user_docapp_path(), 'addons.log'), 'a',
                   encoding='utf-8') as file:
-            file.write('%s %s\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), text))
+            file.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {text}\n')
     except OSError:
         pass
 
@@ -68,18 +68,17 @@ def fetch(name):
             body = resp.read()
         data = zipfile.ZipFile(io.BytesIO(body)).read(addon['member'])
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as error:
-        log('%s: not fetched, %s' % (name, error))
+        log(f'{name}: not fetched, {error}')
         return False
     digest = hashlib.sha256(data).hexdigest()
     if digest != addon['sha256']:
-        log('%s: not used, its sha256 %s is not the tested one (a newer release?)'
-            % (name, digest))
+        log(f'{name}: not used, its sha256 {digest} is not the tested one (a newer release?)')
         return False
     path = os.path.join(get_addons_path(), name)
     with open(path + '.part', 'wb') as file:
         file.write(data)
     os.replace(path + '.part', path)
-    log('%s: fetched' % (name))
+    log(f'{name}: fetched')
     return True
 
 

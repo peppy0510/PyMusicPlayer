@@ -97,7 +97,7 @@ def encode_wave(audiodata):
 def decode_wave(raw_data):
     nframes = len(raw_data) / 2
     # 8bit:"%iB":unsigned chars # 16bit:"%ih":signed 2 byte shorts
-    for fmt in ('%ih' % nframes, '%iB' % nframes):
+    for fmt in (f'{int(nframes)}h', f'{int(nframes)}B'):
         try:
             return struct.unpack(fmt, raw_data)
         except Exception:
@@ -1087,8 +1087,8 @@ def generate_m3u(filename, paths):
 
 def second2time(duration, format=0):
     if format == 0:
-        return '%02d:%02d' % (duration / 60, duration % 60)
-    return '%02d:%02d.%02d' % (duration / 60, duration % 60, duration % 1 * 100)
+        return f'{int(duration / 60):02d}:{int(duration % 60):02d}'
+    return f'{int(duration / 60):02d}:{int(duration % 60):02d}.{int(duration % 1 * 100):02d}'
 
 
 # exec compile('get_id3 = get_id3', '<string>', 'exec')

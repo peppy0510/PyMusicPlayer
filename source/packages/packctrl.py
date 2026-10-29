@@ -59,10 +59,10 @@ def get_libraryName(path):
 def get_libraryFileName(path):
     name = get_libraryName(path)
     if sys.platform.startswith('win'):
-        return '%s.dll' % (name)
+        return f'{name}.dll'
     elif sys.platform.startswith('darwin'):
-        return 'lib%s.dylib' % (name)
-    return 'lib%s.so' % (name)
+        return f'lib{name}.dylib'
+    return f'lib{name}.so'
 
 
 def get_libraryLoadCMD(path):

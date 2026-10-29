@@ -75,9 +75,9 @@ def rename(path, script):
     return FILENAME
     filename = os.path.basename(path)
     keywords = r'regexp|replace|case'
-    keywords = r'[\t|\s]{0,}(%s){1}' % (keywords)
+    keywords = rf'[\t|\s]{{0,}}({keywords}){{1}}'
     parameters = r'(\([\w\d\_\|\,]{0,}\)){0,}'
-    linepattern = r'^%s%s\:(.*){1}\:(.*){1}\:' % (keywords, parameters)
+    linepattern = rf'^{keywords}{parameters}\:(.*){{1}}\:(.*){{1}}\:'
     linepattern = re.compile(linepattern)
     for line in script.split(os.linesep):
         line = line.strip(os.linesep)

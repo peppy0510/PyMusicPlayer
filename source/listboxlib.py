@@ -253,9 +253,9 @@ class ListBoxListDnD(wx.FileDropTarget):
             self.parent.parent.parent.MFEATS.AutoAnalyzer()
             gc.collect(2)
             # collected = gc.collect(2)
-            message = ['Imported %d tracks' % imported_count]
+            message = [f'Imported {imported_count} tracks']
             if already_have_count > 0:
-                message += ['%d tracks already in the playlist' % already_have_count]
+                message += [f'{already_have_count} tracks already in the playlist']
                 self.parent.parent.parent.StatusBox.alarm_color = 'red'
             else:
                 self.parent.parent.parent.StatusBox.alarm_color = 'blue'
@@ -886,7 +886,7 @@ class ListControl():
             self.selectedList = 0
         self.innerList.append(InnerList())
         self.selectedList = len(self.innerList) - 1
-        timeId = '%0.12f' % (time.time())
+        timeId = f'{time.time():0.12f}'
         self.innerList[self.selectedList].Id = timeId
         self.innerList[self.selectedList].lock = False
         if filtered:
@@ -906,10 +906,10 @@ class ListControl():
         existingTitles = [self.innerList[i].title.lower() for i in range(len(self.innerList))]
         lowerPrefix = prefix.lower()
         for cnt in range(1, 1000):
-            title = '%s%02d' % (lowerPrefix, cnt)
+            title = f'{lowerPrefix}{cnt:02d}'
             if title in existingTitles:
                 continue
-            return '%s%02d' % (prefix, cnt)
+            return f'{prefix}{cnt:02d}'
 
     def DeleteInnerList(self, idx):
         if len(self.innerList) == 1:
@@ -996,14 +996,11 @@ class ListControl():
     def SetColumn(self, key, **kwrd):  # SetColumn('order', width=100)
         if type(key) != int:
             for kw in kwrd.keys():
-                exec(
-                    'self.innerList[self.selectedList].columns[%s].%s=%s'
-                    % (self.GetColumnKeyToIdx(key), kw, kwrd[kw]))
+                idx = self.GetColumnKeyToIdx(key)
+                exec(f'self.innerList[self.selectedList].columns[{idx}].{kw}={kwrd[kw]}')
         else:
             for kw in kwrd.keys():
-                exec(
-                    'self.innerList[self.selectedList].columns[%s].%s=%s'
-                    % (key, kw, kwrd[kw]))
+                exec(f'self.innerList[self.selectedList].columns[{key}].{kw}={kwrd[kw]}')
 
     def GetColumn(self, key, selectedList):  # GetColumn('order')
         if selectedList is None:
@@ -1636,7 +1633,7 @@ class ListControl():
         if self.innerList[selectedList].columns[idx].key == 'size':
             def key(item):
                 try:
-                    return float(('%s' % item[idx]).split()[0])
+                    return float(f'{item[idx]}'.split()[0])
                 except (ValueError, IndexError):
                     return -1.0
         if direction == 1:
@@ -1676,7 +1673,7 @@ class ListControl():
                 continue
             if tempo <= 95:
                 tempo = tempo * 2.0
-            item[tempoIdx] = '%05.1f' % (tempo)
+            item[tempoIdx] = f'{tempo:05.1f}'
             self.innerList[selectedList].items[itemIdx] = tuple(item)
         self.SetListUnLock(selectedList)
         self.List.reInitBuffer = True
@@ -1696,7 +1693,7 @@ class ListControl():
                 continue
             if tempo >= 120:
                 tempo = tempo * 0.5
-            newValue = '%05.1f' % (tempo)
+            newValue = f'{tempo:05.1f}'
             if newValue == oldValue:
                 continue
             self.RenameID3TAGByColumnItemIdx(
@@ -1737,8 +1734,8 @@ class FileOpenDialog(wx.FileDialog):
         message = 'Import Tracks'
         defaultDir = os.path.expanduser(u'~')
         defaultDir = os.path.dirname(defaultDir)
-        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
-        wildcard += [u'*.%s' % (v) for v in SUPPORTED_AUDIO_TYPE]
+        wildcard = [f'*.{v}' for v in SUPPORTED_PLAYLIST_TYPE]
+        wildcard += [f'*.{v}' for v in SUPPORTED_AUDIO_TYPE]
         wildcard = u';'.join(wildcard)
         wx.FileDialog.__init__(self, parent,
                                defaultDir=defaultDir, message=message, wildcard=wildcard,
@@ -1752,7 +1749,7 @@ class FileSaveDialog(wx.FileDialog):
         message = 'Export Tracklist'
         defaultDir = os.path.expanduser(u'~')
         defaultDir = os.path.dirname(defaultDir)
-        wildcard = [u'*.%s' % (v) for v in SUPPORTED_PLAYLIST_TYPE]
+        wildcard = [f'*.{v}' for v in SUPPORTED_PLAYLIST_TYPE]
         wildcard = u';'.join(wildcard)
         wx.FileDialog.__init__(self, parent,
                                defaultDir=defaultDir, message=message, wildcard=wildcard,

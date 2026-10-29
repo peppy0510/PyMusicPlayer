@@ -90,7 +90,7 @@ def open_stream(url, decode=False):
                 pybass.DOWNLOADPROC(), None)
         except Exception as e:
             handle, error = 0, -1
-            log_failure(url, address, '%s %s' % (type(e).__name__, e))
+            log_failure(url, address, f'{type(e).__name__} {e}')
             continue
         if handle and tempo_create:
             # (decode: for a mixer, the audio graph's deck)
@@ -307,9 +307,8 @@ def log_failure(url, address, error):
     try:
         with open(os.path.join(get_user_docapp_path(), 'radio.log'), 'a',
                   encoding='utf-8') as file:
-            file.write('%s error %s codec %s | %s | %s\n' % (
-                time.strftime('%Y-%m-%d %H:%M:%S'), error, station.get('codec', ''),
-                station.get('name', ''), address))
+            file.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} error {error} codec '
+                       f'{station.get("codec", "")} | {station.get("name", "")} | {address}\n')
     except OSError:
         pass
 
@@ -412,12 +411,12 @@ def show_found(mainpanel, stations, label):
     listbox.SetSelectedList(index)
     listbox.reInitBuffer = True
     mainpanel.ListTab.TabList.reInitBuffer = True
-    tell(mainpanel, '%s: %d stations' % (label, len(stations)))
+    tell(mainpanel, f'{label}: {len(stations)} stations')
 
 
 def browse(mainpanel, label, work):
     # the directory asked on a thread, its stations shown in the Browse tab
-    tell(mainpanel, 'Reading %s ...' % (label))
+    tell(mainpanel, f'Reading {label} ...')
 
     def run():
         try:
@@ -425,7 +424,7 @@ def browse(mainpanel, label, work):
         except Exception as e:
             stations, error = None, str(e)
         if error is not None:
-            wx.CallAfter(tell, mainpanel, 'The directory did not answer: %s' % (error), True)
+            wx.CallAfter(tell, mainpanel, f'The directory did not answer: {error}', True)
         else:
             wx.CallAfter(show_found, mainpanel, stations, label)
 
@@ -456,7 +455,7 @@ def add_favorites(mainpanel, stations):
     inner.filterCache = None
     listbox.reInitBuffer = True
     mainpanel.ListTab.TabList.reInitBuffer = True
-    tell(mainpanel, '%d added to %s' % (len(added), RADIO_TABS[RADIO_TITLE]))
+    tell(mainpanel, f'{len(added)} added to {RADIO_TABS[RADIO_TITLE]}')
 
 
 def remove_favorites(mainpanel, urls):
@@ -478,7 +477,7 @@ def remove_favorites(mainpanel, urls):
     inner.selectedItems = []
     listbox.reInitBuffer = True
     mainpanel.ListTab.TabList.reInitBuffer = True
-    tell(mainpanel, '%d removed from %s' % (removed, RADIO_TABS[RADIO_TITLE]))
+    tell(mainpanel, f'{removed} removed from {RADIO_TABS[RADIO_TITLE]}')
 
 
 def note_recent(url):
@@ -525,16 +524,16 @@ def get_browse_choices():
     stations they have (the directory's lists, kept a day)'''
     genres, countries = get_lists()
     choices = [('Top voted', dict())]
-    choices += [('Genre: %s' % (name), dict(tag=name, tagExact='true'))
+    choices += [(f'Genre: {name}', dict(tag=name, tagExact='true'))
                 for name, _ in genres[:100]]
-    choices += [('Country: %s' % (name),
+    choices += [(f'Country: {name}',
                  dict(countrycode=code) if code else dict(country=name, countryExact='true'))
                 for name, _, code in countries[:100]]
     return choices
 
 
 def read_directory(path, query=None):
-    url = '%s/%s' % (DIRECTORY, path)
+    url = f'{DIRECTORY}/{path}'
     if query:
         url += '?' + urllib.parse.urlencode(query)
     request = urllib.request.Request(url)

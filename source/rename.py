@@ -37,7 +37,7 @@ def rename(ORIGINAL, SCRIPT, SYSPATH):
     NEW = Struct()
     CUSTOMFIELD = ''
     for v in KEYWORDS:
-        exec('%s = ORIGINAL.%s' % (v, v))
+        exec(f'{v} = ORIGINAL.{v}')
     del v
     try:
         exec(SCRIPT)
@@ -45,7 +45,7 @@ def rename(ORIGINAL, SCRIPT, SYSPATH):
         return
     NEW = Struct()
     for v in KEYWORDS:
-        exec('NEW.%s = %s' % (v, v))
+        exec(f'NEW.{v} = {v}')
     del v
     NEW.CUSTOMFIELD = CUSTOMFIELD
     # print vars().keys()

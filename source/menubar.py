@@ -503,7 +503,7 @@ class MacroBoxPreference():
         self.cover_square = GetPreference('cover_square') is True
         self.waveform_heights = dict()
         for kind in ('whole', 'detail'):
-            height = GetPreference('waveform_height_%s' % (kind))
+            height = GetPreference(f'waveform_height_{kind}')
             self.waveform_heights[kind] = height if height in WAVE_HEIGHTS else WAVE_HEIGHT_DEFAULT
         # self.maximize_loudness = False
         self.playbox_title_format = None
@@ -722,7 +722,7 @@ class MacroBoxPreference():
 
     def SetWaveformHeight(self, kind, height):
         self.waveform_heights[kind] = height
-        SetPreference('waveform_height_%s' % (kind), height)
+        SetPreference(f'waveform_height_{kind}', height)
         self.CheckWaveformHeightItems()
         if self.IsPlayerOnlyModeOn():
             self.SetPlayerOnlyHeight()
@@ -1542,8 +1542,8 @@ class PreferenceMFEATSPanel(DialogPanel):
         architecture = ''
         if 'PROGRAMFILES(X86)' in os.environ:
             architecture = ' (x86)'
-        app_path = 'C:\\Program Files%s\\%s %s\\macrobox.exe'\
-            % (architecture, PRODUCT_NAME, PRODUCT_EDITION)
+        app_path = (f'C:\\Program Files{architecture}\\{PRODUCT_NAME} '
+                    f'{PRODUCT_EDITION}\\macrobox.exe')
         supported_type = list(SUPPORTED_AUDIO_TYPE) + list(SUPPORTED_PLAYLIST_TYPE)
 
         if event.IsChecked() is False:
@@ -1551,7 +1551,7 @@ class PreferenceMFEATSPanel(DialogPanel):
                 # extention = 'mp3'
                 aReg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
                 address = 'Software\\Microsoft\\Windows\\'
-                address += 'CurrentVersion\\Explorer\\FileExts\\.%s' % (extention)
+                address += f'CurrentVersion\\Explorer\\FileExts\\.{extention}'
                 aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
                 winreg.DeleteKey(aKey, r'UserChoice')
                 winreg.CloseKey(aKey)
@@ -1567,7 +1567,7 @@ class PreferenceMFEATSPanel(DialogPanel):
 
             address = '\\'.join([mst_address, sub_address])
             aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
-            value = '"%s" "%%1"' % (app_path)
+            value = f'"{app_path}" "%1"'
             winreg.SetValueEx(aKey, r'', 0, winreg.REG_SZ, value)
             winreg.SetValueEx(aKey, r'@', 0, winreg.REG_SZ, value)
             winreg.CloseKey(aKey)
@@ -1583,7 +1583,7 @@ class PreferenceMFEATSPanel(DialogPanel):
 
         address = '\\'.join([mst_address, sub_address])
         aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
-        value = '"%s" "%%1"' % (app_path)
+        value = f'"{app_path}" "%1"'
         winreg.SetValueEx(aKey, r'', 0, winreg.REG_SZ, value)
         winreg.SetValueEx(aKey, r'@', 0, winreg.REG_SZ, value)
         winreg.CloseKey(aKey)
@@ -1591,7 +1591,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         for extention in supported_type:
             # extention = 'mp3'
             address = 'Software\\Microsoft\\Windows\\'
-            address += 'CurrentVersion\\Explorer\\FileExts\\.%s' % (extention)
+            address += f'CurrentVersion\\Explorer\\FileExts\\.{extention}'
             try:
                 aReg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
                 aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
@@ -1606,7 +1606,7 @@ class PreferenceMFEATSPanel(DialogPanel):
             winreg.CloseKey(aKey)
 
             address = 'Software\\Microsoft\\Windows\\'
-            address += 'CurrentVersion\\Explorer\\FileExts\\.%s\\UserChoice' % (extention)
+            address += f'CurrentVersion\\Explorer\\FileExts\\.{extention}\\UserChoice'
             aKey = winreg.OpenKey(aReg, address, 0, winreg.KEY_ALL_ACCESS)
             value = 'Applications\\macrobox.exe'
             winreg.SetValueEx(aKey, r'ProgId', 0, winreg.REG_SZ, value)
@@ -1726,7 +1726,7 @@ class PreferenceWebInfoPanel(DialogPanel):
         if fpcalc is None:
             label = u'fpcalc.exe not fetched yet: it is fetched when the player starts.'
         else:
-            label = u'fpcalc: %s' % (fpcalc)
+            label = f'fpcalc: {fpcalc}'
         text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
         text.SetSize(text.GetBestSize())
         offset += text.GetSize().height + DIALOG_GAP
@@ -1920,7 +1920,7 @@ class TutorialPanel(DialogPanel):
         bmp = wx.Bitmap(self.GetPage(path))
         width, height = self.GetSize()
         self.image = wx.StaticBitmap(self, -1, bmp, pos=(-3, -3), size=(width, height))
-        label = '%d / %s' % (self.current_page + 1, self.maxpage)
+        label = f'{int(self.current_page + 1)} / {self.maxpage}'
         if hasattr(self, 'text') is False:
             self.text = StaticText(self.parent, size=(80, 20), style=wx.ALIGN_RIGHT)
             self.text.SetDoubleBuffered(True)
@@ -2387,7 +2387,7 @@ class MenuBar(wx.MenuBar):
         for kind, label in (('whole', 'Waveform Height'), ('detail', 'Zoomed Waveform Height')):
             menu = wx.Menu()
             for height in WAVE_HEIGHTS:
-                item = menu.AppendCheckItem(wx.ID_ANY, '%d px' % (height))
+                item = menu.AppendCheckItem(wx.ID_ANY, f'{int(height)} px')
                 self.waveHeightItems[item.GetId()] = (kind, height)
             self.menuView.AppendSubMenu(menu, label)
         self.menuView.AppendSeparator()
@@ -2403,7 +2403,7 @@ class MenuBar(wx.MenuBar):
         self.menuRowHeight = wx.Menu()
         self.rowHeightItems = dict()
         for height in ROW_HEIGHTS:
-            item = self.menuRowHeight.AppendCheckItem(wx.ID_ANY, '%d px' % (height))
+            item = self.menuRowHeight.AppendCheckItem(wx.ID_ANY, f'{int(height)} px')
             self.rowHeightItems[item.GetId()] = height
         self.menuView.AppendSubMenu(self.menuRowHeight, 'Row Height')
 
@@ -2427,7 +2427,7 @@ class MenuBar(wx.MenuBar):
         self.itemHighlightDurationMenu = wx.Menu()
         self.highlightDurationItems = [8, 16, 32, 48, 64]
         for i, item in enumerate(self.highlightDurationItems):
-            title = '%2dbar (Approx %2dseconds)' % (item * 2 / 4, item)
+            title = f'{int(item * 2 / 4):2d}bar (Approx {int(item):2d}seconds)'
             self.itemHighlightDurationMenu.Append(wx.MenuItem(
                 self.itemHighlightDurationMenu, 200 + i + 1, title, wx.EmptyString, wx.ITEM_CHECK))
             self.parent.Bind(wx.EVT_MENU, self.parent.OnHighlightDuration,
@@ -2504,7 +2504,7 @@ class MenuBar(wx.MenuBar):
         self.menuHelp.AppendSeparator()
 
         self.itemAbout = wx.MenuItem(
-            self.menuHelp, wx.ID_ANY, u'About {}'.format(self.parent.__appname__), wx.EmptyString, wx.ITEM_NORMAL)
+            self.menuHelp, wx.ID_ANY, f'About {self.parent.__appname__}', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuHelp.Append(self.itemAbout)
 
         self.Append(self.menuHelp, u'Help')

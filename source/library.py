@@ -64,8 +64,8 @@ def get_grid_tempi():
     # the grid's tempo of every song that has one (finer than the analysis' 0.1 BPM)
     try:
         conn = mfeats.connect_grid()
-        rows = conn.execute('SELECT mdx, bpm FROM %s WHERE version = ? AND bpm > 0'
-                            % (mfeats.GRID_TABLE), (mfeats.GRID_VERSION,)).fetchall()
+        rows = conn.execute(f'SELECT mdx, bpm FROM {mfeats.GRID_TABLE} '
+                            'WHERE version = ? AND bpm > 0', (mfeats.GRID_VERSION,)).fetchall()
         conn.close()
     except sqlite3.Error:
         return dict()

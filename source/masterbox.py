@@ -501,7 +501,7 @@ class MasterPanel(RackModule):
             have = 10 ** (band['width'] / 10.0) if band['width'] > -100 else 0.0
             added = 10 ** (band['fill'] / 10.0) if band['fill'] > -100 else 0.0
             out = 10 * math.log10(have + added) if have + added > 1e-12 else -120.0
-            text = '%.1f dB' % out if out > low else 'MONO'
+            text = f'{out:.1f} dB' if out > low else 'MONO'
             return (text, 0.0, share(band['width']), (share(band['width']), share(out)),
                     share(band['target']))
         value = levels.get(key)
@@ -510,15 +510,15 @@ class MasterPanel(RackModule):
         shown = 0.0 if abs(value) < 0.05 else value
         if kind == 'reduce':
             # (lit from 0 down to low)
-            return ('%.1f dB' % min(0.0, shown), 0.0, min(max(value / low, 0.0), 1.0),
+            return (f'{min(0.0, shown):.1f} dB', 0.0, min(max(value / low, 0.0), 1.0),
                     None, None)
         if kind == 'gain':
-            return ('%+.1f dB' % shown, 0.0, share(value), None, None)
+            return (f'{shown:+.1f} dB', 0.0, share(value), None, None)
         if kind == 'phase':
-            delay = '' if shown == 0.0 else '%+.1f ms' % shown
+            delay = '' if shown == 0.0 else f'{shown:+.1f} ms'
             text = ('INV ' + delay).strip() if levels.get('phase_flip') else (delay or 'OK')
         else:
-            text = '%+.1f dB' % shown
+            text = f'{shown:+.1f} dB'
         return (text, share(0.0), share(value), None, None)
 
     def DrawBandMeter(self, gc, spec, x, y, names, width):

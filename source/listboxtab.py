@@ -1391,7 +1391,7 @@ class ListBoxTabList(RectBox):
         paths = map(itemgetter(pathIdx),
                     self.parent.parent.ListBox.innerList[selectedList].items)
         title = self.parent.parent.ListBox.innerList[selectedList].title
-        filename = os.path.sep.join([get_user_docapp_path(), '%s.m3u' % (title)])
+        filename = os.path.sep.join([get_user_docapp_path(), f'{title}.m3u'])
         audio.generate_m3u(filename, paths)
         filename = os.path.abspath(filename)
         self.parent.parent.SetItemDrag((filename,), del_source=True)
@@ -1818,8 +1818,8 @@ class TabDeleteBox(ConfirmDialogBox):
         self.ApplyButton.SetLabelText('Delete')
         # its message two lines tall, a text of its own (the box's sized itself to one)
         self.Message.Hide()
-        self.Text = wx.StaticText(self, label='Delete "%s" (%d tracks)?\nThe files stay where '
-                                  'they are.' % (title, count),
+        self.Text = wx.StaticText(self, label=f'Delete "{title}" ({int(count)} tracks)?\nThe files '
+                                              'stay where they are.',
                                   style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
         self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
         self.Text.SetFont(uikit.get_font(uikit.BODY))

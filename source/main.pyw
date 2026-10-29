@@ -46,13 +46,13 @@ def write_launch_log(message):
     try:
         path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'launch.log')
         with open(path, 'a', encoding='utf-8') as file:
-            file.write('%s pid %d: %s\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getpid(), message))
+            file.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} pid {os.getpid()}: {message}\n')
     except Exception:
         pass
 
 
 def launch(filepath=None):
-    write_launch_log('launching (cwd %s)' % (os.getcwd()))
+    write_launch_log(f'launching (cwd {os.getcwd()})')
     # a crash in native code (no Python error) and an error in an event handler
     # (wx goes on, pythonw shows nothing) are written there too
     try:
@@ -98,7 +98,7 @@ def send_filepath_to_mainapp(filepath):
         return
 
     try:
-        sock.send(('%s\n' % (json.dumps({'filepath': filepath}))).encode('utf-8'))
+        sock.send(f'{json.dumps({"filepath": filepath})}\n'.encode('utf-8'))
     except OSError:
         pass
     sock.close()
@@ -131,7 +131,7 @@ def main(initfile=None):
         #     launch()
         running = has_running_instance()
         if running:
-            write_launch_log('not started: already running as %s' % (running,))
+            write_launch_log(f'not started: already running as {running}')
         else:
             launch()
     # except Exception:

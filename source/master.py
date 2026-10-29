@@ -123,12 +123,12 @@ class Probe():
                                                    pybass.STREAMPROC_DUMMY, None)
             self.vst = audio.set_automaster(self.handle, True) if self.handle else 0
             if not self.vst:
-                return '%d%%' % (round(value * 100))
+                return f'{round(value * 100)}%'
         pybass.BASS_VST_SetParam(self.vst, index, value)
         info = pybass_vst.BASS_VST_PARAM_INFO()
         pybass.BASS_VST_GetParamInfo(self.vst, index, ctypes.byref(info))
-        text = ('%s %s' % (info.display.decode('ascii', 'replace').strip(),
-                           info.unit.decode('ascii', 'replace').strip())).strip()
+        text = (f'{info.display.decode("ascii", "replace").strip()} '
+                f'{info.unit.decode("ascii", "replace").strip()}').strip()
         self.texts[key] = text
         return text
 

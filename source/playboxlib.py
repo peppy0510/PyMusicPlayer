@@ -750,8 +750,7 @@ class PlayBoxControl():
         self.stream_failure = (self.cue.path, error)
         status = getattr(self.parent, 'StatusBox', None)
         if status is not None and error is not None:
-            status.alarm = 'Not played: %s (BASS error %s)' % (radio.ERRORS.get(error, 'error'),
-                                                               error)
+            status.alarm = f'Not played: {radio.ERRORS.get(error, "error")} (BASS error {error})'
             status.alarm_color = 'red'
         self.AudioControl.failed = False
         self.OnPause(endoflist=True)

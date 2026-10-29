@@ -674,7 +674,7 @@ class ListBoxList(RectBox):
                 if right_align:
                     # cut by the monospace digits it is drawn in (measured in the list's
                     # font it came out wider and ran left over the column before it)
-                    string = '%s' % (string)
+                    string = f'{string}'
                     fits = max(int((column.width - left_margin - 8) // mono_width), 0)
                     limitedString = string if len(string) <= fits\
                         else string[:max(fits - 1, 0)] + '\u2026'
@@ -1559,8 +1559,7 @@ class ListBoxHeader(RectBox):
         dc.SetFont(font)
         tws = list()
         for item in self.parent.GetShownItemsIdx():
-            string = '%s' % (self.parent
-                             .innerList[self.parent.selectedList].items[item][cid])
+            string = f'{self.parent.innerList[self.parent.selectedList].items[item][cid]}'
             # string = string.encode(sys.getfilesystemencoding())
             tw = dc.GetPartialTextExtents(string)
             if len(tw) == 0:
@@ -2237,7 +2236,7 @@ class ListBoxSearch(RectBox):
             self.library_origin = current
         found = library.search(library.collect(listbox), text=text)
         library.show_results(listbox, library.SEARCH_TITLE, found)
-        self.parent.StatusBox.alarm = '%d found for "%s" in the library' % (len(found), text)
+        self.parent.StatusBox.alarm = f'{len(found)} found for "{text}" in the library'
         self.parent.StatusBox.alarm_color = 'blue'
         self.parent.ListTab.TabList.reInitBuffer = True
         listbox.reInitBuffer = True
@@ -2343,7 +2342,7 @@ class ListBoxSearch(RectBox):
         if len(text) < self.LIVE_SEARCH_LEAST or text == self.searched:
             return
         self.searched = text
-        radio.browse(self.parent, 'Name: %s' % (text), lambda: radio.get_stations(name=text))
+        radio.browse(self.parent, f'Name: {text}', lambda: radio.get_stations(name=text))
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.HasToSkipEvent():
@@ -2455,7 +2454,7 @@ class ListBoxSearch(RectBox):
                 uikit.draw_button(dc, self.chooser_rect, label='All fields', disabled=True)
             else:
                 label = self.SearchComboFilter.GetStringSelection()
-                uikit.draw_button(dc, self.chooser_rect, label='%s  \u25be' % (label),
+                uikit.draw_button(dc, self.chooser_rect, label=f'{label}  \u25be',
                                   hover=self.IsInRect(self.chooser_rect, pointer))
         uikit.draw_button(dc, self.sidebar_rect, icon='menu',
                           on=self.parent.parent.IsListTabShowOn(),
@@ -3220,7 +3219,7 @@ class ItemEditBox(DialogBox):
                                        self.CancelButton),
                                 left=(self.LookUpButton,))
         # the page's number PAD before Prev, on the buttons' middle (and the tracks changed)
-        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
+        label = f'{int(self.selected_idx + 1)} / {int(self.total_items)}'
         self.PageNumber = StaticText(self, label=label, pos=(
             self.PrevButton.GetPosition().x - DIALOG_PAD - 160, top + 5), size=(160, 20),
             style=wx.ALIGN_RIGHT)
@@ -3335,7 +3334,7 @@ class ItemEditBox(DialogBox):
             if os.stat(path).st_mtime_ns != before.st_mtime_ns:
                 os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         except OSError as error:
-            wx.MessageBox('The modified date was not kept.\n%s' % (error), 'Modified',
+            wx.MessageBox(f'The modified date was not kept.\n{error}', 'Modified',
                           wx.OK | wx.ICON_WARNING, self)
 
     def OnAutoSave(self, event):
@@ -3370,7 +3369,7 @@ class ItemEditBox(DialogBox):
         if columnKey == 'tempo':
             try:
                 newValue = float(newValue)
-                newValue = u'%05.1f' % (0.1 * round(newValue * 10))
+                newValue = f'{0.1 * round(newValue * 10):05.1f}'
             except Exception:
                 newValue = ''
         self.parent.parent.SetItemValueByColumnIdx(itemIdx, self.columnIdx, newValue)
@@ -3439,9 +3438,9 @@ class ItemEditBox(DialogBox):
             text.frame.SetMark((lambda i=i: self.ShowFieldMenu(i)) if self.GetPicks(label)
                                else None)
         self.StashPage()
-        label = '%d / %d' % (self.selected_idx + 1, self.total_items)
+        label = f'{int(self.selected_idx + 1)} / {int(self.total_items)}'
         if self.total_items > 1 and self.pending:
-            label = '%d changed   %s' % (len(self.pending), label)
+            label = f'{len(self.pending)} changed   {label}'
         if self.PageNumber.GetLabelText() != label:
             size = self.PageNumber.GetSize()
             self.PageNumber.SetLabelText(label)
@@ -3475,14 +3474,14 @@ class ItemEditBox(DialogBox):
         picks = self.GetPicks(label)
         for value, sources in picks:
             shown = value if len(value) <= 60 else value[:57] + '...'
-            add('%s\t%s' % (shown.replace('&', '&&'), ', '.join(sources)),
+            add(f'{shown.replace("&", "&&")}\t{", ".join(sources)}',
                 lambda value=value: text.SetValue(value))
         if picks:
             menu.AppendSeparator()
         original = panel.restore_value[i]
         add('Revert', lambda: text.SetValue(original), text.GetValue() != original)
         if self.total_items > 1 and label != 'Filename':
-            add('Apply to All %d Tracks' % (self.total_items),
+            add(f'Apply to All {int(self.total_items)} Tracks',
                 lambda: self.ApplyToAll(label, text.GetValue()))
         menu.AppendSeparator()
         add('Cut', text.Cut, text.CanCut())
@@ -3550,7 +3549,7 @@ class ItemEditBox(DialogBox):
             elif listbox.IsID3TAGColumnByColumnIdx(columnIdx):
                 if label == 'Tempo':
                     try:
-                        value = u'%05.1f' % (0.1 * round(float(value) * 10))
+                        value = f'{0.1 * round(float(value) * 10):05.1f}'
                     except Exception:
                         value = ''
                 listbox.RenameID3TAGByColumnItemIdx(columnIdx, itemIdx, value)
@@ -3575,7 +3574,7 @@ class ItemEditBox(DialogBox):
             else:
                 listimages.write_cover(path, data)
         except Exception as error:
-            wx.MessageBox('The cover was not saved.\n%s' % (error), 'Cover',
+            wx.MessageBox(f'The cover was not saved.\n{error}', 'Cover',
                           wx.OK | wx.ICON_WARNING, self)
             return
         images = getattr(self.parent, 'images', None)
@@ -3640,9 +3639,9 @@ class DiscardEditsBox(ConfirmDialogBox):
         self.ApplyButton.SetLabelText('Discard')
         self.CloseButton.SetLabelText('Keep Editing')
         self.Message.Hide()
-        tracks = 'this track' if count == 1 else '%d tracks' % (count)
-        self.Text = wx.StaticText(self, label='Discard the changes to %s?\nNothing has been '
-                                  'written to the files.' % (tracks),
+        tracks = 'this track' if count == 1 else f'{int(count)} tracks'
+        self.Text = wx.StaticText(self, label=f'Discard the changes to {tracks}?\nNothing has been '
+                                  'written to the files.',
                                   style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
         self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
         self.Text.SetFont(uikit.get_font(uikit.BODY))
@@ -3716,8 +3715,8 @@ class LibrarySearchBox(DialogBox):
         label('BPM', y)
         self.Tempo = TextCtrl(self, pos=(x, y), size=(60, DIALOG_ROW), style=style)
         StaticText(self, label='\u00b1', pos=(x + 60 + DIALOG_GAP, y + 3), size=(10, -1))
-        self.Tolerance = ComboBox(self, value='%d%%' % (self.TOLERANCE),
-                                  choices=['%d%%' % (v) for v in self.TOLERANCES],
+        self.Tolerance = ComboBox(self, value=f'{int(self.TOLERANCE)}%',
+                                  choices=[f'{int(v)}%' for v in self.TOLERANCES],
                                   pos=(x + 60 + DIALOG_GAP * 2 + 10, y), size=(64, DIALOG_ROW),
                                   style=wx.CB_READONLY)
         # the check boxes a group past the fields, one column
@@ -3788,8 +3787,8 @@ class LibrarySearchBox(DialogBox):
         # ones (the playing one's, or a row's: the list's and the header's menus)
         tempo = library.to_float(tempo)
         if tempo > 0:
-            self.Tempo.SetValue('%.1f' % (tempo))
-            self.Tolerance.SetValue('%d%%' % (self.TOLERANCE))
+            self.Tempo.SetValue(f'{tempo:.1f}')
+            self.Tolerance.SetValue(f'{int(self.TOLERANCE)}%')
             self.Octave.SetValue(True)
         key = (key or '').strip()
         if key and key not in ('-', ' '):
@@ -3810,7 +3809,7 @@ class LibrarySearchBox(DialogBox):
             octave=self.Octave.GetValue(), key='' if key == self.ANY else key,
             compatible=self.Compatible.GetValue(), genre='' if genre == self.ANY else genre)
         show_library_results(self.mainpanel, library.SEARCH_TITLE, found)
-        self.Status.SetLabel('%d of %d songs' % (len(found), len(self.songs)))
+        self.Status.SetLabel(f'{len(found)} of {len(self.songs)} songs')
 
     def OnClose(self, event):
         self.Destroy()
@@ -4137,9 +4136,9 @@ class WebInfoBox(DialogBox):
         # a window painted without end, the player behind it at 3 to 10 frames a second
         # while it was open (the user; 59 with it hidden, measured)
         self.SetDoubleBuffered(False)
-        title = 'Look Up: %d found' % (len(candidates))
+        title = f'Look Up: {len(candidates)} found'
         if length:
-            title += ', this file %s' % (length)
+            title += f', this file {length}'
         self.SetTitle(title)
         self.candidates = candidates
         self.selected = None
@@ -4212,7 +4211,7 @@ class WebInfoBox(DialogBox):
         tags = GetPreference('lookup_apply_tags') is not False
         self.apply = dict()
         for key in self.APPLY_KEYS:
-            kept = GetPreference('lookup_apply_%s' % (key))
+            kept = GetPreference(f'lookup_apply_{key}')
             self.apply[key] = (tags if key != 'cover' else True) if kept is None else bool(kept)
         x = DIALOG_PAD
         for key in self.APPLY_KEYS:
@@ -4232,7 +4231,7 @@ class WebInfoBox(DialogBox):
 
     def GetRowValues(self, k):
         v = self.candidates[k]
-        score = '' if v['score'] is None else '%.2f' % (v['score'])
+        score = '' if v['score'] is None else f'{v["score"]:.2f}'
         cover = self.cover_cells.get(v['image'], '...') if v['image'] else '-'
         return (v['source'], cover, v['artist'], v['title'], v['album'], v['release'],
                 v['genre'], webinfo.format_duration(v['duration']), v['year'], score)
@@ -4300,12 +4299,13 @@ class WebInfoBox(DialogBox):
                 continue
             shown = 'its cover' if key == 'cover' else\
                 (value if len(value) <= 50 else value[:47] + '...')
-            add('Use %s: %s' % (key.capitalize(), shown),
+            add(f'Use {key.capitalize()}: {shown}',
                 lambda key=key, value=value: self.use(key.capitalize(), value),
                 self.use is not None)
         menu.AppendSeparator()
         cell = self.GetRowCells(idx)[column] if column >= 0 else ''
-        add('Copy "%s"' % (cell if len(cell) <= 40 else cell[:37] + '...') if cell else 'Copy',
+        shown = cell if len(cell) <= 40 else f'{cell[:37]}...'
+        add(f'Copy "{shown}"' if cell else 'Copy',
             lambda: self.CopyText(cell), bool(cell))
         add('Open Source Page', lambda: self.OpenPage(row), bool(row['url']))
         add('Search on YouTube', lambda: self.SearchYouTube(row),
@@ -4322,7 +4322,7 @@ class WebInfoBox(DialogBox):
     def SetApply(self, key=None, value=None):
         if key is not None:
             self.apply[key] = value
-            SetPreference('lookup_apply_%s' % (key), value)
+            SetPreference(f'lookup_apply_{key}', value)
         self.ApplyButton.Enable(self.candidates_found and any(self.apply.values()))
 
     def OnApply(self, event):
@@ -4436,9 +4436,9 @@ class WebInfoBox(DialogBox):
         if not self or self.closing:
             return
         bitmap, size = self.MakeCover(data)
-        self.covers[url] = (bitmap, label or ('%d x %d' % size if size else 'Not an image'))
+        self.covers[url] = (bitmap, label or (f'{size[0]} x {size[1]}' if size else 'Not an image'))
         # its rows told (the same cover may be several releases')
-        self.cover_cells[url] = '%d x %d' % size if size else 'Failed'
+        self.cover_cells[url] = f'{size[0]} x {size[1]}' if size else 'Failed'
         if size:
             self.thumbs[url] = self.MakeThumb(data)
         self.FillRows()
@@ -4569,14 +4569,14 @@ class OpenWebLinkHandler():
         field2 = preset[3].lower()
         if field1 != '':
             # exec('field1 = %s.GetSelectedItemsKeyValue(field1)[0]' % (parents))
-            field1 = eval('%s.GetSelectedItemsKeyValue(field1)[0]' % (parents))
+            field1 = eval(f'{parents}.GetSelectedItemsKeyValue(field1)[0]')
         if field2 != '':
             # exec('field2 = %s.GetSelectedItemsKeyValue(field2)[0]' % (parents))
-            field2 = eval('%s.GetSelectedItemsKeyValue(field2)[0]' % (parents))
+            field2 = eval(f'{parents}.GetSelectedItemsKeyValue(field2)[0]')
         fields = '+'.join((field1, field2)).strip('+')
         if len(fields) < 3:
             # exec('filename = %s.GetSelectedItemsKeyValue("filename")[0]' % (parents))
-            filename = eval('%s.GetSelectedItemsKeyValue("filename")[0]' % (parents))
+            filename = eval(f'{parents}.GetSelectedItemsKeyValue("filename")[0]')
             for srp in '_|-|(|)|[|]|{|}|&'.split('|'):
                 filename = filename.replace(srp, ' ')
                 filename = filename.replace('  ', ' ')
@@ -4801,7 +4801,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         target = [v for v in songs if v.path == path]
         if target == []:
             return
-        mainpanel.StatusBox.alarm = 'Finding songs like %s ...' % (os.path.basename(path))
+        mainpanel.StatusBox.alarm = f'Finding songs like {os.path.basename(path)} ...'
         mainpanel.StatusBox.alarm_timer = 0
 
         def work():
@@ -4810,7 +4810,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 
         def done(found):
             show_library_results(mainpanel, library.SIMILAR_TITLE, [target[0]] + found)
-            mainpanel.StatusBox.alarm = '%d songs like it in the Similar tab' % (len(found))
+            mainpanel.StatusBox.alarm = f'{len(found)} songs like it in the Similar tab'
             mainpanel.StatusBox.alarm_timer = 0
 
         threading.Thread(target=work, daemon=True).start()
@@ -4856,11 +4856,11 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         # filename = os.path.splitext(os.path.basename(path))[0]
         # upath = path.encode(sys.getfilesystemencoding())
         if sys.platform == 'darwin':
-            cmd = r'''open -- "%s"''' % (dirname)
+            cmd = rf'''open -- "{dirname}"'''
         elif sys.platform == 'linux2':
-            cmd = r'''gnome-open -- "%s"''' % (dirname)
+            cmd = rf'''gnome-open -- "{dirname}"'''
         elif sys.platform.startswith('win'):
-            cmd = r'''Explorer /select, "%s"''' % (path)
+            cmd = rf'''Explorer /select, "{path}"'''
         subprocess.call(cmd, shell=False)
 
 
@@ -4925,8 +4925,7 @@ class StatusBox(RectBox):
         if self.alarm is not None:
             message_left = self.alarm
         else:
-            message_left = u'Selected %s / %s tracks %s'\
-                % (selected, total, filtered)
+            message_left = f'Selected {selected} / {total} tracks {filtered}'
         waiting = task + proc
         if waiting == 0:
             self.batch = 0
@@ -4944,7 +4943,7 @@ class StatusBox(RectBox):
         self.reInitBuffer = True
 
     def GetProgressText(self, current, batch, core):
-        return u'Analyzing %s of %s  \u00b7  %s processes' % (current, batch, core)
+        return f'Analyzing {current} of {batch}  \u00b7  {core} processes'
 
     def SetRectDraw(self, dc):
         message_left, message_right = self.messages

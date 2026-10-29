@@ -88,7 +88,7 @@ class Cache():
 
 def cache_key(service, params):
     query = urllib.parse.urlencode(sorted(params.items()))
-    return '%s:%s' % (service, hashlib.sha1(query.encode('utf-8')).hexdigest())
+    return f'{service}:{hashlib.sha1(query.encode("utf-8")).hexdigest()}'
 
 
 def request_json(service, url, params, headers=None, post=False, cache=None):
@@ -102,7 +102,7 @@ def request_json(service, url, params, headers=None, post=False, cache=None):
     if post:
         data = query.encode('utf-8')
     else:
-        url = '%s?%s' % (url, query)
+        url = f'{url}?{query}'
     request = urllib.request.Request(url, data=data)
     request.add_header('User-Agent', USER_AGENT)
     request.add_header('Accept', 'application/json')
@@ -113,9 +113,9 @@ def request_json(service, url, params, headers=None, post=False, cache=None):
         with urllib.request.urlopen(request, timeout=TIMEOUT) as resp:
             body = json.loads(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as error:
-        raise WebInfoError('%s: HTTP %d %s' % (service, error.code, error.reason))
+        raise WebInfoError(f'{service}: HTTP {error.code} {error.reason}')
     except Exception as error:
-        raise WebInfoError('%s: %s' % (service, error))
+        raise WebInfoError(f'{service}: {error}')
     if cache is not None:
         cache.set(key, body)
     return body
@@ -132,7 +132,7 @@ def format_duration(seconds):
     if not seconds:
         return ''
     seconds = int(round(seconds))
-    return '%d:%02d' % (seconds // 60, seconds % 60)
+    return f'{int(seconds // 60)}:{int(seconds % 60):02d}'
 
 
 def split_artist_title(filename):
@@ -169,7 +169,7 @@ def get_fingerprint(path, fpcalc=None):
                               timeout=60, creationflags=flags)
         body = json.loads(resp.stdout.decode('utf-8'))
     except Exception as error:
-        raise WebInfoError('acoustid: fpcalc failed, %s' % (error))
+        raise WebInfoError(f'acoustid: fpcalc failed, {error}')
     return int(body['duration']), body['fingerprint']
 
 
@@ -181,7 +181,7 @@ def lookup_acoustid(path, client_key, cache=None, fpcalc=None):
                         params, post=True, cache=cache)
     if body.get('status') != 'ok':
         message = body.get('error', dict()).get('message', 'unknown error')
-        raise WebInfoError('acoustid: %s' % (message))
+        raise WebInfoError(f'acoustid: {message}')
     candidates = list()
     for result in body.get('results', list()):
         for recording in result.get('recordings', list()):
@@ -190,7 +190,7 @@ def lookup_acoustid(path, client_key, cache=None, fpcalc=None):
             artist = ', '.join([v['name'] for v in recording.get('artists', list())])
             groups = recording.get('releasegroups', list())
             album = groups[0].get('title', '') if groups else ''
-            url = 'https://musicbrainz.org/recording/%s' % (recording['id'])
+            url = f'https://musicbrainz.org/recording/{recording["id"]}'
             candidates.append(candidate('AcoustID', artist, recording['title'], album,
                                         score=result.get('score'), url=url,
                                         duration=recording.get('duration')))
@@ -200,9 +200,9 @@ def lookup_acoustid(path, client_key, cache=None, fpcalc=None):
 def get_discogs_auth(keys):
     # a personal access token, or an app's consumer key and secret (enough for the search)
     if keys.get('discogs_token'):
-        return 'Discogs token=%s' % (keys['discogs_token'])
+        return f'Discogs token={keys["discogs_token"]}'
     if keys.get('discogs_key') and keys.get('discogs_secret'):
-        return 'Discogs key=%s, secret=%s' % (keys['discogs_key'], keys['discogs_secret'])
+        return f'Discogs key={keys["discogs_key"]}, secret={keys["discogs_secret"]}'
     return None
 
 
@@ -222,7 +222,7 @@ def lookup_discogs(artist, title, auth, cache=None):
         if not album:
             release_artist, album = '', release_artist
         genre = (result.get('style') or result.get('genre') or [''])[0]
-        url = 'https://www.discogs.com%s' % (result.get('uri', ''))
+        url = f'https://www.discogs.com{result.get("uri", "")}'
         catno = result.get('catno', '')
         release = [', '.join((result.get('format') or list())[:2]),
                    (result.get('label') or [''])[0], result.get('country', ''),
@@ -241,7 +241,7 @@ def lookup_lastfm(artist, title, api_key, cache=None):
     if 'error' in body:
         if body['error'] == 6:
             return list()
-        raise WebInfoError('lastfm: %s' % (body.get('message', body['error'])))
+        raise WebInfoError(f'lastfm: {body.get("message", body["error"])}')
     track = body.get('track', dict())
     tags = track.get('toptags', dict()).get('tag', list())
     genre = tags[0]['name'] if tags else ''
@@ -274,9 +274,9 @@ def fetch_image(url, folder=None):
         with urllib.request.urlopen(request, timeout=TIMEOUT) as resp:
             data = resp.read(IMAGE_MAX_BYTES + 1)
     except urllib.error.HTTPError as error:
-        raise WebInfoError('image: HTTP %d %s' % (error.code, error.reason))
+        raise WebInfoError(f'image: HTTP {error.code} {error.reason}')
     except Exception as error:
-        raise WebInfoError('image: %s' % (error))
+        raise WebInfoError(f'image: {error}')
     if len(data) > IMAGE_MAX_BYTES:
         raise WebInfoError('image: too large')
     with open(path, 'wb') as file:

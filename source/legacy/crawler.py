@@ -63,7 +63,7 @@ class DiscogsThread(threading.Thread):
         for i in randomIdx:
             try:
                 release = artist.releases[i]
-                data = '%s %s' % (release.data['year'], release.data['title'])
+                data = f'{release.data["year"]} {release.data["title"]}'
                 self.info.releases.append(data)
                 # print(i)
                 # if 'images' in release.data.keys():
@@ -260,7 +260,7 @@ def DiscogsCrawler(path, queue):
     for i in randomIdx:
         try:
             release = artist.releases[i]
-            data = '%s %s' % (release.data['year'], release.data['title'])
+            data = f'{release.data["year"]} {release.data["title"]}'
             info.releases.append(data)
             if 'images' in release.data.keys():
                 # uri = release.data['images'][0]['uri']
@@ -288,7 +288,7 @@ def EchonestCrawler(path, queue):
     keywords = keywords.split('feat')[0]
     keywords = keywords.split('with')[0]
     keywords = keywords.split('and')[0]
-    keywords = u'%s' % (keywords)
+    keywords = f'{keywords}'
     echonest_config.ECHO_NEST_API_KEY = '3NUCRNQMMTWBDJCSL'
     try:
         bk = echonest_artist.Artist(keywords)
@@ -322,7 +322,7 @@ def MetaCrawler(path, queue):
     keywords = keywords.split('feat')[0]
     keywords = keywords.split('with')[0]
     keywords = keywords.split('and')[0]
-    keywords = u'%s' % (keywords)
+    keywords = f'{keywords}'
 
     echonest_config.ECHO_NEST_API_KEY = '3NUCRNQMMTWBDJCSL'
     try:
@@ -362,7 +362,7 @@ def MetaCrawler(path, queue):
         # for i in randomIdx:
         for i in range(len(artist.releases)):
             release = artist.releases[i]
-            data = '%s %s' % (release.data['year'], release.data['title'])
+            data = f'{release.data["year"]} {release.data["title"]}'
             info.discogs.releases.append(data)
             # if 'images' in release.data.keys():
             #   # uri = release.data['images'][0]['uri']

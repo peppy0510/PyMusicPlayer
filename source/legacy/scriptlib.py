@@ -112,8 +112,8 @@ class ScriptControl():
                     # resume = self.PlayBox.cue.resume
 
             for v in scriptvars:
-                exec('new = results[i].%s' % (v[1]))
-                exec('old = self.originals[i].%s' % (v[1]))
+                exec(f'new = results[i].{v[1]}')
+                exec(f'old = self.originals[i].{v[1]}')
                 if type(old) != unicode:
                     old = old.decode(sys.getfilesystemencoding())
                 if new == old:
@@ -136,7 +136,7 @@ class ScriptControl():
                     if v[0] == 'tempo':
                         try:
                             new = float(new)
-                            new = u'%05.1f' % (0.1 * round(new * 10))
+                            new = f'{0.1 * round(new * 10):05.1f}'
                         except Exception:
                             new = ''
                     tag_resp = self.parent.MainPanel\
@@ -198,7 +198,7 @@ class ScriptProcessProgressBox(DialogBox, ScriptControl):
         self.parent.process_result += [result]
         self.parent.PreviewPanel.TextCtrl.SetReadOnly(False)
         for v in result:
-            exec('preview = unicode(v[1][1].%s)' % (self.selected_field))
+            exec(f'preview = unicode(v[1][1].{self.selected_field})')
             self.parent.PreviewPanel.TextCtrl.AppendText(preview)
             self.parent.PreviewPanel.TextCtrl.DocumentEnd()
             self.parent.PreviewPanel.TextCtrl.NewLine()
@@ -209,8 +209,7 @@ class ScriptProcessProgressBox(DialogBox, ScriptControl):
 
         margin = 10
         width, height = self.GetClientSize()
-        label = 'Processing script. (%d/%d tracks)'\
-                % (self.item_count, self.item_total)
+        label = f'Processing script. ({int(self.item_count)}/{int(self.item_total)} tracks)'
         self.Message.SetLabelText(label)
         self.Message.SetInitialSize((width - margin * 2, 22))
         self.ProgressBar.SetValue(self.item_count)
@@ -278,8 +277,8 @@ class ScriptProcessProgressBox(DialogBox, ScriptControl):
                 resume = self.parent.PlayBox.cue.resume
 
         for v in scriptvars:
-            exec('old = result_old.%s' % (v[1]))
-            exec('new = result_new.%s' % (v[1]))
+            exec(f'old = result_old.{v[1]}')
+            exec(f'new = result_new.{v[1]}')
             if type(old) != unicode:
                 old = old.decode(sys.getfilesystemencoding())
             if new == old:
@@ -300,7 +299,7 @@ class ScriptProcessProgressBox(DialogBox, ScriptControl):
                 if v[0] == 'tempo':
                     try:
                         new = float(new)
-                        new = u'%05.1f' % (0.1 * round(new * 10))
+                        new = f'{0.1 * round(new * 10):05.1f}'
                     except Exception:
                         new = ''
                 tag_resp = self.parent.parent.MainPanel\
@@ -379,7 +378,7 @@ class ScriptPreviewProgressBox(DialogBox, ScriptControl):
         for v in result:
             # preview = unicode(v[1].PREVIEW)
             try:
-                exec('preview = unicode(v[1].%s)' % (self.selected_field))
+                exec(f'preview = unicode(v[1].{self.selected_field})')
             except Exception:
                 preview = 'ERROR'
             self.parent.PreviewPanel.TextCtrl.AppendText(preview)
@@ -392,8 +391,7 @@ class ScriptPreviewProgressBox(DialogBox, ScriptControl):
 
         margin = 10
         width, height = self.GetClientSize()
-        label = 'Rendering preview. (%d/%d tracks)'\
-                % (self.item_count, self.item_total)
+        label = f'Rendering preview. ({int(self.item_count)}/{int(self.item_total)} tracks)'
         self.Message.SetLabelText(label)
         self.Message.SetInitialSize((width - margin * 2, 22))
         self.ProgressBar.SetValue(self.item_count)

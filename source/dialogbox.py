@@ -67,17 +67,16 @@ class AboutPanel(DialogPanel):
         x = imgsize + 23 + 10
         offset = 17
         # label = u'%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
-        label = u'{}'.format(self.parent.parent.__appname__)
+        label = f'{self.parent.parent.__appname__}'
         text = StaticText(self, label=label)
         text.SetFont(font)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
 
         offset += 28
-        label = u'{} Version {} build {}'.format(
-            self.parent.parent.__appname__,
-            '.'.join(self.parent.parent.__version__.split('.')[:2]),
-            self.parent.parent.__version__.split('.')[-1])
+        version = self.parent.parent.__version__.split('.')
+        label = (f'{self.parent.parent.__appname__} Version {".".join(version[:2])} '
+                 f'build {version[-1]}')
         # label = label % (
         #     PRODUCT_NAME, PRODUCT_EDITION, PRODUCT_VERSION, PRODUCT_BUILD)
         text = StaticText(self, label=label)
@@ -98,13 +97,13 @@ class AboutPanel(DialogPanel):
         text.SetPosition((x, offset))
 
         offset += 20
-        label = u'Author: {}'.format(self.parent.parent.__author__)
+        label = f'Author: {self.parent.parent.__author__}'
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
 
         offset += 20
-        label = u'Contact: {}'.format(self.parent.parent.__email__)
+        label = f'Contact: {self.parent.parent.__email__}'
         text = StaticText(self, label=label)
         text.SetForegroundColour((255, 255, 255))
         text.SetPosition((x, offset))
@@ -300,8 +299,8 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
             self.stop = True
 
         self.ProgressPanel.ProgressBar.SetValue(self.count)
-        label = 'Checking %d/%d files. (found %d broken links)'\
-                % (self.count, self.items_number, self.error_counter)
+        label = (f'Checking {int(self.count)}/{int(self.items_number)} files. (found '
+                 f'{int(self.error_counter)} broken links)')
         self.ProgressPanel.TextMessage.SetLabelText(label)
         self.ProgressPanel.Refresh()
 
@@ -464,17 +463,17 @@ class AnalyzerVersionBox(DialogBox):
             elif row[2] != mfeats.GRID_VERSION:
                 grids += 1
         outdated = sum(older.values()) + grids + none
-        lines = ['The playlists\' %d tracks against the analyzer %s (its grid %s):'
-                 % (len(paths), mfeats.MFEATS_VERSION, mfeats.GRID_VERSION)]
-        versions = ', '.join('%s: %d' % (v, n) for v, n in sorted(older.items(), reverse=True))
-        lines.append('Analyzed by an older analyzer: %d%s'
-                     % (sum(older.values()), ' (%s)' % (versions) if versions else ''))
-        lines.append('Grid older or not made: %d' % (grids))
-        lines.append('Not analyzed yet: %d' % (none))
+        lines = [f'The playlists\' {len(paths)} tracks against the analyzer '
+                 f'{mfeats.MFEATS_VERSION} (its grid {mfeats.GRID_VERSION}):']
+        versions = ', '.join(f'{v}: {n}' for v, n in sorted(older.items(), reverse=True))
+        versions = f' ({versions})' if versions else ''
+        lines.append(f'Analyzed by an older analyzer: {sum(older.values())}{versions}')
+        lines.append(f'Grid older or not made: {grids}')
+        lines.append(f'Not analyzed yet: {none}')
         if failed:
-            lines.append('Not analyzable (left as they are): %d' % (failed))
+            lines.append(f'Not analyzable (left as they are): {failed}')
         lines.append('')
-        lines.append('Analyze the %d tracks again? It may take a while.' % (outdated)
+        lines.append(f'Analyze the {int(outdated)} tracks again? It may take a while.'
                      if outdated else 'All of them are analyzed by this version.')
         return '\n'.join(lines), outdated
 
@@ -546,8 +545,8 @@ class AutoUpdateBox(UpdateBoxCommon):
         self.SetTitle('Update Notify')
         width, height = self.GetClientSize()
         self.UpdatePanel = UpdatePanel(self)
-        label = u'New update are available. (Version %s Build %s)'\
-                % (str(self.result['version']), str(self.result['build']))
+        label = (f'New update are available. (Version {self.result["version"]} Build '
+                 f'{self.result["build"]})')
         self.UpdatePanel.TextMessage.SetLabelText(label)
         self.DownloadButton.Enable()
         self.OnSize(None)
@@ -622,8 +621,8 @@ class UpdateBox(UpdateBoxCommon):
             return
         if hasattr(self.ProgressPanel, 'ProgressBar') is False:
             width, height = self.GetSize()
-        label = u'Check avaliable update. (Step %d/%d)'\
-                % (self.Thread.step, self.Thread.max_step)
+        label = ('Check avaliable update. (Step '
+                 f'{int(self.Thread.step)}/{int(self.Thread.max_step)})')
         self.ProgressPanel.TextMessage.SetLabelText(label)
         self.ProgressPanel.ProgressBar.SetValue(self.Thread.step)
         if self.Thread.step != self.Thread.max_step:
@@ -647,8 +646,7 @@ class UpdateBox(UpdateBoxCommon):
         self.CloseButton.SetPosition((width - 95, height - 68))
         self.DownloadButton.SetPosition((width - 95 - 80, height - 68))
         self.AutoCheckUpdate.SetPosition((20, height - 63))
-        label = u'New update are available. (Version %s Build %s)'\
-                % (str(result['version']), str(result['build']))
+        label = f'New update are available. (Version {result["version"]} Build {result["build"]})'
         self.UpdatePanel.TextMessage.SetLabelText(label)
         self.Refresh()
 

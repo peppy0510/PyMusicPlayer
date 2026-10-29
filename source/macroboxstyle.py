@@ -45,20 +45,20 @@ def load(name, rgbstyle='dec', accent=None):
         for pname in pnames:
             if pname.startswith(u'__'):
                 continue
-            namespace = u'%s.%s.%s' % (name, cname, pname)
+            namespace = f'{name}.{cname}.{pname}'
             v = getattr(getattr(eval(name), cname), pname)
             if rgbstyle == 'dec' and isinstance(v, str) and v.startswith(u'#'):
                 v = rgb_hex2dec(v)
-                exec(u'%s = v' % (namespace))
+                exec(f'{namespace} = v')
             elif rgbstyle == 'hex' and type(v) in (list, tuple) and len(v) == 3:
                 v = rgb_dec2hex(v)
-                exec(u'%s = v' % (namespace))
+                exec(f'{namespace} = v')
             elif rgbstyle == 'hex#' and type(v) in (list, tuple) and len(v) == 3:
                 v = u'#' + rgb_dec2hex(v)
-                exec(u'%s = v' % (namespace))
+                exec(f'{namespace} = v')
             elif rgbstyle == 'hex#' and isinstance(v, str) and len(v) == 6:
                 v = u'#' + v
-                exec(u'%s = v' % (namespace))
+                exec(f'{namespace} = v')
     if rgbstyle == 'dec':
         apply_accent(style, accent or DEFAULT_ACCENT)
         CURRENT = style

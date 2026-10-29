@@ -61,7 +61,7 @@ PRODUCT_LOG_REQUEST_URL = MUTEKLAB_WEB_URL + 'product/log/req/'
 PRODUCT_UPDATE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/update/check/req/'
 PRODUCT_LICENSE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/license/check/req/'
 
-TITLE = '%s %s' % (PRODUCT_NAME, PRODUCT_EDITION)
+TITLE = f'{PRODUCT_NAME} {PRODUCT_EDITION}'
 
 # DEBUG(hang): how often costly things run (mainapp's watchdog writes them); removed
 # once found
@@ -133,8 +133,8 @@ class ColumnDefinition(list):
         struct = []
         # for k in local.iterkeys():
         for k in local.keys():
-            struct.append('%s=%s' % (k, k))
-        exec('self.append(Struct(%s))' % (','.join(struct)))
+            struct.append(f'{k}={k}')
+        exec(f'self.append(Struct({",".join(struct)}))')
 
 
 class ListBoxColumn(ColumnDefinition):
@@ -304,7 +304,7 @@ def MakeMusicFileItem(path, order, columns):
         stats = os.stat(path)  # noqa
     except Exception:
         return None
-    size = "%.2f MB" % (stats[stat.ST_SIZE] / 1024.0**2)  # noqa
+    size = f'{stats[stat.ST_SIZE] / 1024.0 ** 2:.2f} MB'  # noqa
     file = os.path.basename(path)  # noqa
     filename = os.path.splitext(os.path.basename(path))[0]  # noqa
 
@@ -331,9 +331,9 @@ def MakeMusicFileItem(path, order, columns):
         for v in columns:
             if v.id3 is None:
                 continue
-            exec(u'''%s = audio_id3[u"%s"]''' % (v.key, v.id3))
+            exec(f'''{v.key} = audio_id3[u"{v.id3}"]''')
         try:
-            tempo = '%03.5f' % (tempo)  # noqa
+            tempo = f'{tempo:03.5f}'  # noqa
         except Exception:
             tempo = ''
     mdx = audio.makemdx(path)
@@ -345,7 +345,7 @@ def MakeMusicFileItem(path, order, columns):
         tempo = resp.tempo
         duration = resp.duration
         try:
-            tempo = '%05.1f' % (0.1 * round(tempo * 10))
+            tempo = f'{0.1 * round(tempo * 10):05.1f}'
         except Exception:
             tempo = ''
         key = resp.key  # noqa
@@ -353,7 +353,7 @@ def MakeMusicFileItem(path, order, columns):
         # again (marked red, queued by the auto analyzer)
         if resp.version == mfeats.MFEATS_VERSION:
             status = 'analyzed'  # noqa
-    duration = '%02d:%02d' % (duration / 60, duration % 60)
+    duration = f'{int(duration / 60):02d}:{int(duration % 60):02d}'
 
     item = [None] * len(columns)
     for i, v in enumerate(columns):
@@ -996,9 +996,9 @@ class MFEATS_Scheduler(ThreadTimer):
         key = resp.key
         tempo = resp.tempo
         duration = resp.duration
-        duration = '%02d:%02d' % (duration / 60, duration % 60)
+        duration = f'{int(duration / 60):02d}:{int(duration % 60):02d}'
         try:
-            tempo = '%05.1f' % (0.1 * round(tempo * 10))
+            tempo = f'{0.1 * round(tempo * 10):05.1f}'
         except Exception:
             tempo = ''
         # an older version's row: not analyzed yet (MakeMusicFileItem)
@@ -1259,9 +1259,9 @@ class MFEATS_Network_Scheduler(wx.Timer):
         key = resp.key
         tempo = resp.tempo
         duration = resp.duration
-        duration = '%02d:%02d' % (duration / 60, duration % 60)
+        duration = f'{int(duration / 60):02d}:{int(duration % 60):02d}'
         try:
-            tempo = '%05.1f' % (0.1 * round(tempo * 10))
+            tempo = f'{0.1 * round(tempo * 10):05.1f}'
         except Exception:
             tempo = ''
         self.parent.ListBox.SetListItemsValueWhereColumnKey(
@@ -1885,7 +1885,7 @@ class RectRect():
         return self.IsInRect(rect, xy)
 
     def LimitTextLength(self, dc, string, width, margin=12):
-        string = '%s' % (string)
+        string = f'{string}'
         # each text's widths measured once a font: measured at every draw, a sash
         # dragged drew the list at every step and this was a sixth of all the time
         key = (dc.GetFont().GetNativeFontInfoDesc(), string)
@@ -2115,8 +2115,7 @@ class ItemTextEdit(wx.TextCtrl):
     def SetText(self, itemIdx, columnIdx):
         self.itemIdx = itemIdx
         self.columnIdx = self.parent.parent.GetShownColumnsIdx()[columnIdx]
-        value = '%s' % (
-                self.parent.parent.GetItemValueByColumnIdx(itemIdx, self.columnIdx))
+        value = f'{self.parent.parent.GetItemValueByColumnIdx(itemIdx, self.columnIdx)}'
         self.restore_value = value
         self.SetValue(value)
         self.SetFocus()
@@ -2135,7 +2134,7 @@ class ItemTextEdit(wx.TextCtrl):
         if columnKey == 'tempo':
             try:
                 newValue = float(newValue)
-                newValue = u'%05.1f' % (0.1 * round(newValue * 10))
+                newValue = f'{0.1 * round(newValue * 10):05.1f}'
             except Exception:
                 newValue = ''
         self.parent.parent.SetItemValueByColumnIdx(
@@ -2369,7 +2368,7 @@ class FancyDialogBoxGlobalEvent(RectRect):
         for v in objects:
             if hasattr(self, v) is False:
                 continue
-            exec('rect = self.%s.GetScreenRect()' % (v))
+            exec(f'rect = self.{v}.GetScreenRect()')
             if self.IsInRect(rect, xy):
                 is_movable = False
         if is_movable and self.draginit_xy is None\

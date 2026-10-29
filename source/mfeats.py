@@ -133,7 +133,7 @@ class MFEATS(Struct):
                 initial_value = '0'
             elif field_type.startswith('TEXT') or field_type.startswith('BLOB'):
                 initial_value = '""'
-            exec('''self.%s = %s''' % (field_key, initial_value))
+            exec(f'''self.{field_key} = {initial_value}''')
         self.__dict__.update(kwards)
 
 
@@ -1037,7 +1037,7 @@ DEEPRHYTHM_RETRY = 60
 
 
 def get_deeprhythm_address(pid):
-    return r'\\.\pipe\PyMusicPlayer-deeprhythm-%d' % (pid)
+    return rf'\\.\pipe\PyMusicPlayer-deeprhythm-{int(pid)}'
 
 
 def deeprhythm_server(control, address, threads=None):
@@ -1909,7 +1909,7 @@ def create_mfeats_table(table_name='mfeats', db_name=None):
         create_mfeats_index(table_name, db_name)
         return
     fields = ','.join([' '.join(field) for field in MFEATS_DEFINITION])
-    query = '''CREATE TABLE %s (%s);''' % (table_name, fields)
+    query = f'''CREATE TABLE {table_name} ({fields});'''
     conn = None
 
     conn = sqlite3.connect(db_name)
@@ -1933,7 +1933,7 @@ def create_mfeats_table(table_name='mfeats', db_name=None):
 def drop_table(table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
-    query = '''DROP TABLE IF EXISTS %s;''' % (table_name)
+    query = f'''DROP TABLE IF EXISTS {table_name};'''
     conn = None
     try:
         conn = sqlite3.connect(db_name)
@@ -1951,7 +1951,7 @@ def drop_table(table_name='mfeats', db_name=None):
 def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
-    query = '''DELETE FROM %s WHERE %s="%s"''' % (table_name, key, value)
+    query = f'''DELETE FROM {table_name} WHERE {key}="{value}"'''
     conn = None
     try:
         conn = sqlite3.connect(db_name)
@@ -1999,7 +1999,7 @@ def create_mfeats_index(table_name='mfeats', db_name=None):
     if db_name is None:
         db_name = MFEATS_DB
     conn = sqlite3.connect(db_name)
-    conn.execute('CREATE INDEX IF NOT EXISTS %s_path ON %s (path)' % (table_name, table_name))
+    conn.execute(f'CREATE INDEX IF NOT EXISTS {table_name}_path ON {table_name} (path)')
     conn.commit()
     conn.close()
 
@@ -2077,8 +2077,8 @@ def update_many_key_values(where, key_values, table_name='mfeats', db_name=None)
     # key_values = ','.join(key_values)
     # query = '''UPDATE %s SET %s WHERE %s="%s";''' % (table_name, key_values, where[0], where[1])
     # values as parameters: a quote in a key or a tempo broke the query
-    names = ','.join(['%s=?' % (key) for key, _ in key_values])
-    query = '''UPDATE %s SET %s WHERE %s=?;''' % (table_name, names, where[0])
+    names = ','.join([f'{key}=?' for key, _ in key_values])
+    query = f'''UPDATE {table_name} SET {names} WHERE {where[0]}=?;'''
     conn = None
     conn = sqlite3.connect(db_name)
     c = conn.cursor()
@@ -2106,7 +2106,7 @@ MFEATS_WAVE_TABLE = 'mfeats_wave'
 def insert_mfeats_wave(mfeats_data):
     fields = ','.join([' '.join(field) for field in MFEATS_DEFINITION])
     conn = sqlite3.connect(MFEATS_DB)
-    conn.execute('CREATE TABLE IF NOT EXISTS %s (%s)' % (MFEATS_WAVE_TABLE, fields))
+    conn.execute(f'CREATE TABLE IF NOT EXISTS {MFEATS_WAVE_TABLE} ({fields})')
     conn.commit()
     conn.close()
     insert_mfeats(mfeats_data, table_name=MFEATS_WAVE_TABLE)
@@ -2138,13 +2138,13 @@ GRID_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('bpm', 'REAL'), ('downbeat', 'R
 
 def connect_grid():
     conn = sqlite3.connect(MFEATS_DB)
-    conn.execute('CREATE TABLE IF NOT EXISTS %s (%s)' % (
-        GRID_TABLE, ','.join([' '.join(field) for field in GRID_DEFINITION])))
+    conn.execute(f'CREATE TABLE IF NOT EXISTS {GRID_TABLE} '
+                 f'({",".join([" ".join(field) for field in GRID_DEFINITION])})')
     # a table made before the phrase: its columns added (at the end, as listed)
-    columns = [v[1] for v in conn.execute('PRAGMA table_info(%s)' % (GRID_TABLE))]
+    columns = [v[1] for v in conn.execute(f'PRAGMA table_info({GRID_TABLE})')]
     for key, kind in GRID_DEFINITION:
         if key not in columns:
-            conn.execute('ALTER TABLE %s ADD COLUMN %s %s DEFAULT 0' % (GRID_TABLE, key, kind))
+            conn.execute(f'ALTER TABLE {GRID_TABLE} ADD COLUMN {key} {kind} DEFAULT 0')
             conn.commit()
     return conn
 
@@ -2153,7 +2153,7 @@ def get_grid(mdx):
     '''Struct of the song's grid row (bpm 0: none found), or None when not analyzed'''
     conn = connect_grid()
     try:
-        row = conn.execute('SELECT * FROM %s WHERE mdx=?' % (GRID_TABLE), (mdx,)).fetchone()
+        row = conn.execute(f'SELECT * FROM {GRID_TABLE} WHERE mdx=?', (mdx,)).fetchone()
     finally:
         conn.close()
     if row is None:
@@ -2167,8 +2167,8 @@ def get_done_mdx():
     conn = connect_grid()
     try:
         rows = conn.execute(
-            'SELECT m.mdx FROM mfeats m LEFT JOIN %s g ON g.mdx = m.mdx '
-            'WHERE m.version = ? AND (m.error != 0 OR g.version = ?)' % (GRID_TABLE),
+            f'SELECT m.mdx FROM mfeats m LEFT JOIN {GRID_TABLE} g ON g.mdx = m.mdx '
+            'WHERE m.version = ? AND (m.error != 0 OR g.version = ?)',
             (MFEATS_VERSION, GRID_VERSION)).fetchall()
     finally:
         conn.close()
@@ -2182,7 +2182,7 @@ def get_analysis_versions():
     try:
         rows = conn.execute(
             'SELECT m.mdx, m.version, m.error, g.version FROM mfeats m '
-            'LEFT JOIN %s g ON g.mdx = m.mdx' % (GRID_TABLE)).fetchall()
+            f'LEFT JOIN {GRID_TABLE} g ON g.mdx = m.mdx').fetchall()
     finally:
         conn.close()
     return dict((row[0], tuple(row[1:])) for row in rows)
@@ -2204,7 +2204,7 @@ def insert_grid(mdx, grid):
     phrase_set = 1 if old is not None and old.phrase_set else 0
     conn = connect_grid()
     try:
-        conn.execute('INSERT OR REPLACE INTO %s VALUES (?,?,?,?,?,?,?,?,?,?,?,?)' % (GRID_TABLE),
+        conn.execute(f'INSERT OR REPLACE INTO {GRID_TABLE} VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                      (mdx, grid.bpm, grid.downbeat, shift, grid.source, GRID_VERSION,
                       time.time(), grid.phrase, phrase_shift, grid.phrase_margin, phrase_set,
                       scale))
@@ -2248,8 +2248,8 @@ def set_grid_scale(mdx, scale):
     # a new scale: the moves were in the old one's beats, so they start again
     conn = connect_grid()
     try:
-        conn.execute('UPDATE %s SET bpm_scale=?, shift=0, phrase_shift=0, phrase_set=0 '
-                     'WHERE mdx=?' % (GRID_TABLE), (scale, mdx))
+        conn.execute(f'UPDATE {GRID_TABLE} SET bpm_scale=?, shift=0, phrase_shift=0, phrase_set=0 '
+                     'WHERE mdx=?', (scale, mdx))
         conn.commit()
     finally:
         conn.close()
@@ -2260,9 +2260,9 @@ def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
     # the phrase put by the user (1) or back to the analysis (0)
     conn = connect_grid()
     try:
-        conn.execute('UPDATE %s SET %s=? WHERE mdx=?' % (GRID_TABLE, key), (int(shift) % 4, mdx))
+        conn.execute(f'UPDATE {GRID_TABLE} SET {key}=? WHERE mdx=?', (int(shift) % 4, mdx))
         if phrase_set is not None:
-            conn.execute('UPDATE %s SET phrase_set=? WHERE mdx=?' % (GRID_TABLE),
+            conn.execute(f'UPDATE {GRID_TABLE} SET phrase_set=? WHERE mdx=?',
                          (phrase_set, mdx))
         conn.commit()
     finally:
@@ -2295,9 +2295,9 @@ def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):
         if field_type == 'BLOB':
             field_values[i] = compress_object(field_values[i])
         else:
-            field_values[i] = '%s' % (field_values[i])
+            field_values[i] = f'{field_values[i]}'
     marks = ','.join(['?'] * len(field_values))
-    query = '''INSERT OR REPLACE INTO %s VALUES (%s);''' % (table_name, marks)
+    query = f'''INSERT OR REPLACE INTO {table_name} VALUES ({marks});'''
     # print('SET', mfeats_data.mdx, mfeats_data.key, mfeats_data.tempo, field_values)
     conn = None
     conn = sqlite3.connect(db_name)
@@ -2465,9 +2465,9 @@ def boot_scheduler(master_pid, max_memory=0, max_idletime=0):
     cmd = [PROCESS_NAME]
     if PACKAGED is False:
         cmd += [os.path.abspath(os.path.join(get_master_path(), 'mfeats.py'))]
-    cmd += ['%d' % (master_pid)]
-    cmd += ['%.f' % (max_memory)]
-    cmd += ['%.f' % (max_idletime)]
+    cmd += [f'{int(master_pid)}']
+    cmd += [f'{max_memory:.f}']
+    cmd += [f'{max_idletime:.f}']
     run_hidden_subprocess(cmd)
 
 
