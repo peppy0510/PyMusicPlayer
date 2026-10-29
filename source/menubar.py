@@ -510,7 +510,32 @@ class MacroBoxPreference():
         color_scheme = GetPreference('color_scheme')
         if color_scheme is None:
             color_scheme = 'Dark Red'
-        self.st = macroboxstyle.load(color_scheme, rgbstyle='dec')
+        self.st = macroboxstyle.load(color_scheme, rgbstyle='dec',
+                                     accent=GetPreference('accent_color'))
+
+    def GetAccentColor(self):
+        accent = GetPreference('accent_color')
+        return accent if accent in macroboxstyle.ACCENT_NAMES else macroboxstyle.DEFAULT_ACCENT
+
+    def SetAccentColor(self, accent):
+        # the scheme loaded again with it, everything drawn again on it (its pictures kept
+        # on the style's colours made again: uikit.get_style_version)
+        SetPreference('accent_color', accent)
+        self.st = macroboxstyle.load(GetPreference('color_scheme'), rgbstyle='dec',
+                                     accent=accent)
+        panel = self.MainPanel
+        panel.ListBox.st = self.st.LISTBOX
+        panel.PlayBox.st = self.st.PLAYBOX
+        for window in [self] + list(self.GetChildren()):
+            self.RedrawAll(window)
+        self.Refresh()
+
+    def RedrawAll(self, window):
+        if hasattr(window, 'reInitBuffer'):
+            window.reInitBuffer = True
+        window.Refresh(False)
+        for child in window.GetChildren():
+            self.RedrawAll(child)
 
     def SetAlwaysOnTopOn(self):
         style = self.GetWindowStyle()
@@ -1120,7 +1145,7 @@ class AppearancePanel(wx.Panel):
     def OnColorScheme(self, event):
         name = event.GetString()
         import macroboxstyle
-        style = macroboxstyle.load(name, rgbstyle='dec')
+        style = macroboxstyle.load(name, rgbstyle='dec', accent=GetPreference('accent_color'))
         self.parent.parent.parent.st = style
         self.ApplyToMainFrame()
         self.ApplyToScriptEditorBox()
@@ -1456,6 +1481,18 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.WaveformMode.SetValue(dict(self.waveform_modes)[mode])
         self.WaveformMode.Bind(wx.EVT_COMBOBOX, self.OnWaveformMode)
 
+        offset += GROUP
+        label = u'Accent Color'
+        text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
+        text.SetRect((DIALOG_PAD, offset + 3, 200, -1))
+        self.AccentColor = ComboBox(
+            self, choices=list(macroboxstyle.ACCENT_NAMES), style=wx.CB_READONLY)
+        self.AccentColor.SetRect((FIELD, offset, 170, 24))
+        self.AccentColor.SetValue(self.parent.parent.parent.GetAccentColor())
+        self.AccentColor.Bind(wx.EVT_COMBOBOX, self.OnAccentColor)
+        self.AccentColor.SetToolTip(wx.ToolTip(
+            'The buttons on, the selected tracks and a field\'s focus.'))
+
         # offset += 10
         # offset += 25
         # label = u'Default Audio Player'
@@ -1470,6 +1507,13 @@ class PreferenceMFEATSPanel(DialogPanel):
         fit_name_column(self, DIALOG_PAD, 200)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
+
+    def OnAccentColor(self, event):
+        self.parent.parent.parent.SetAccentColor(self.AccentColor.GetValue())
+        # the dialog too (its buttons and fields on the accent)
+        self.GetTopLevelParent().Refresh()
+        for window in self.GetTopLevelParent().GetChildren():
+            self.parent.parent.parent.RedrawAll(window)
 
     def OnWaveformMode(self, event):
         mode = self.waveform_modes[self.WaveformMode.GetSelection()][0]

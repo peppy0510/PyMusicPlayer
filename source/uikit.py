@@ -41,6 +41,12 @@ def ui():
     return macroboxstyle.current().UI
 
 
+def get_style_version():
+    # for the pictures kept on the style's colours: its classes are the same ones after an
+    # accent's change (their values changed in them), a new number at every load
+    return macroboxstyle.VERSION
+
+
 def colour(value):
     return wx.Colour(*value) if isinstance(value, (tuple, list)) else wx.Colour(value)
 

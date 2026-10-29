@@ -269,7 +269,7 @@ class AnalyzerPanel(RackModule):
             # (its header a picture of its own, made again when the mouse moves over its keys
             # or its state changes: in the screen's, the whole of it was made again, 27 to
             # 31 ms each time the mouse went over a key, the keys slow to answer, the user)
-            key = (w, h, tuple(sections), self.folded, id(self.parent.st), id(uikit.ui()))
+            key = (w, h, tuple(sections), self.folded, uikit.get_style_version())
             if getattr(self, 'background', None) is None or self.background[0] != key:
                 self.background = (key,) + self.MakeBackground(w, h, sections)
             dc.Blit(0, 0, w, h, self.background_dc, 0, 0)
@@ -298,7 +298,7 @@ class AnalyzerPanel(RackModule):
     def GetHeaderPicture(self, w):
         # (key, its picture, a DC with it, its keys' hits)
         key = (w, self.GetState(), self.IsActive(), self.hovered, getattr(self, 'key_down', None),
-               self.folded, id(self.parent.st), id(uikit.ui()))
+               self.folded, uikit.get_style_version())
         cache = getattr(self, 'header_cache', None)
         if cache is None or cache[0] != key:
             bitmap = wx.Bitmap(max(w, 1), HEADER)

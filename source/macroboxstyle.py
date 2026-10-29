@@ -11,6 +11,23 @@ from utilities import rgb_dec2hex
 
 STYLE_NAMES = sorted(['Dark Red', 'Dark Black', 'Dark Gray', 'Light Gray', 'Snow White'])
 DEFAULT_NAME = 'Dark Red'
+# the accent (Preferences > Accent Color): the scheme's own blue, or red in its place on
+# the buttons on, the selected rows and their bar, a field's focus and the insert cursors
+# (the warnings' orange and the meters' blues kept as they are)
+ACCENT_NAMES = ('Blue', 'Red')
+DEFAULT_ACCENT = 'Blue'
+ACCENT_TOKENS = (('UI', ('ACCENT', 'FIELD_FOCUS')),
+                 ('LISTBOX', ('SELECTED_BG_COLOR', 'SELECTED_BAR_COLOR',
+                              'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')),
+                 ('EDITBOX', ('SELECTED_BG_COLOR', 'SELECTED_BAR_COLOR',
+                              'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')))
+# red's, dark and light: the full one, and the selected rows' muted one (a third over the
+# rows, as the blue's)
+RED = {True: ('#D8383F', '#5E1F27'), False: ('#C8303A', '#F4CDD1')}
+# each token's own value (the scheme's), by its class, kept at its first change
+accent_originals = dict()
+# a new number at every load (uikit.get_style_version)
+VERSION = 0
 # the style loaded last (load): the dialogs and the standard controls take its UI colours
 CURRENT = None
 
@@ -21,8 +38,8 @@ def current():
     return CURRENT
 
 
-def load(name, rgbstyle='dec'):
-    global CURRENT
+def load(name, rgbstyle='dec', accent=None):
+    global CURRENT, VERSION
     name = ''.join([v.capitalize() for v in (name or DEFAULT_NAME).split(' ')])
     style = eval(name)
     style = style()
@@ -48,8 +65,35 @@ def load(name, rgbstyle='dec'):
                 v = u'#' + v
                 exec(u'%s = v' % (namespace))
     if rgbstyle == 'dec':
+        apply_accent(style, accent or DEFAULT_ACCENT)
         CURRENT = style
+        VERSION += 1
     return style
+
+
+def apply_accent(style, accent):
+    # the scheme's blue tokens (the ones blue in it: a light scheme's black insert cursor
+    # left) red, or back to its own
+    strong, muted = (rgb_hex2dec(v) for v in RED[bool(getattr(style.UI, 'DARK', True))])
+    for cname, pnames in ACCENT_TOKENS:
+        cls = getattr(style, cname, None)
+        for pname in pnames:
+            if cls is None or not hasattr(cls, pname):
+                continue
+            key = (cls, pname)
+            if key not in accent_originals:
+                accent_originals[key] = getattr(cls, pname)
+            value = accent_originals[key]
+            if accent == 'Red' and is_blue(value):
+                value = muted if pname == 'SELECTED_BG_COLOR' else strong
+            setattr(cls, pname, value)
+
+
+def is_blue(value):
+    if not isinstance(value, (tuple, list)) or len(value) < 3:
+        return False
+    r, g, b = value[:3]
+    return b > r + 40 and b > g + 10
 
 
 class Default():

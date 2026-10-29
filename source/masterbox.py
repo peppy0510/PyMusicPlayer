@@ -446,8 +446,7 @@ class MasterPanel(RackModule):
         # (the mouse over the header's chips not one of its own)
         hovered = self.hovered if isinstance(self.hovered, tuple)\
             and self.hovered[0] in ('switch', 'knob', 'stage') else None
-        key = (int(width), tuple(values), hovered, self.compact, id(self.parent.st),
-               id(uikit.ui()))
+        key = (int(width), tuple(values), hovered, self.compact, uikit.get_style_version())
         cache = getattr(self, 'controls_cache', None)
         if cache is None or cache[0] != key:
             height = self.GetPartHeight('controls', CONTROLS)
