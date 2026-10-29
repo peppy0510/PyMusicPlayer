@@ -33,7 +33,7 @@ ADDONS = {
         member='chromaprint-fpcalc-1.5.1-windows-x86_64/fpcalc.exe',
         sha256='659ea2dba1a12d7df4fe2b6f23f60fd9414ae61aca1b014ee8fa37c5e09b930b'),
 }
-USER_AGENT = 'PyMusicPlayer/1.2.2 +https://github.com/peppy0510/PyMusicPlayer'
+USER_AGENT = 'PyMusicPlayer/1.3.1000 +https://github.com/peppy0510/PyMusicPlayer'
 TIMEOUT = 30
 
 

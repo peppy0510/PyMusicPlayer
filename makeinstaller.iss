@@ -2,19 +2,19 @@
 
 [Setup]
 AppName="PyMusicPlayer"
-AppVerName="PyMusicPlayer 1.2.2"
+AppVerName="PyMusicPlayer 1.3.1000"
 DefaultDirName="{autopf}\PyMusicPlayer"
 DefaultGroupName="PyMusicPlayer"
-AppVersion="1.2.2"
+AppVersion="1.3.1000"
 AppCopyright="Taehong Kim"
 AppPublisher="Taehong Kim"
 UninstallDisplayIcon="{app}\PyMusicPlayer.exe"
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=".dist"
-OutputBaseFilename="PyMusicPlayer-1.2.2-Setup"
-; VersionInfoVersion="1.2.2"
-VersionInfoProductVersion="1.2.2"
+OutputBaseFilename="PyMusicPlayer-1.3.1000-Setup"
+; VersionInfoVersion="1.3.1000"
+VersionInfoProductVersion="1.3.1000"
 VersionInfoCompany="Taehong Kim"
 VersionInfoCopyright="Taehong Kim"
 ArchitecturesInstallIn64BitMode="x64compatible"
