@@ -221,6 +221,9 @@ class Analyzer():
     def GetKWeights(self, size, rate):
         key = (size, rate)
         if key not in self.k_weights:
+            # (a frame's size is its time's: one more nearly every frame, kept without end)
+            if len(self.k_weights) >= 256:
+                self.k_weights.clear()
             self.k_weights[key] = get_k_weights(size, rate)
         return self.k_weights[key]
 
@@ -239,9 +242,10 @@ class Analyzer():
             self.bins[key] = (starts, ends, tilt)
         return self.bins[key]
 
-    def Update(self, samples, rate):
+    def Update(self, samples, rate, whole=True):
         '''a frame's readings from samples (n x 2, about to be heard; None: silence, the
-        meters falling and the pictures still)'''
+        meters falling and the pictures still; whole False: the levels and the loudness
+        only, the pictures falling as in silence)'''
         now = time.perf_counter()
         elapsed = 0.0 if self.lap is None else min(now - self.lap, 0.25)
         self.lap = now
@@ -253,6 +257,9 @@ class Analyzer():
         part = samples[:max(int(rate * max(elapsed, 1.0 / 60)), 64)].astype(numpy.float64)
         self.UpdateLevels(part, elapsed, now)
         self.UpdateLoudness(part, rate, now)
+        if whole is False:
+            self.FallPictures(elapsed)
+            return
         self.UpdateStereo(part, elapsed)
         self.UpdateSpectrum(samples, rate, elapsed, now)
         self.UpdateScope(samples[:SCOPE_SAMPLES])
@@ -273,18 +280,21 @@ class Analyzer():
             self.rms[c] = max(self.rms[c] - PEAK_FALL * elapsed, FLOOR)
             if now - self.hold_lap[c] > HOLD_TIME:
                 self.hold[c] = max(self.hold[c] - HOLD_FALL * elapsed, FLOOR)
-        self.spectrum = numpy.maximum(self.spectrum - SPECTRUM_FALL * elapsed, SPECTRUM_FLOOR)
-        self.peak_line = numpy.maximum(self.peak_line - PEAK_LINE_FALL * elapsed,
-                                       SPECTRUM_FLOOR)
-        self.scope *= SCOPE_PERSIST
-        if self.bars is not None:
-            self.bars = self.bars * max(0.0, 1.0 - elapsed * 8)
+        self.FallPictures(elapsed)
         # the stereo's readings back to their middle and the loudness's gone (they held their
         # last after a pause, "the meters do not come back", the user); the song's gated
         # momentaries kept, its integrated loudness going on from them when it plays again
         self.correlation *= max(0.0, 1.0 - elapsed * 8)
         self.balance *= max(0.0, 1.0 - elapsed * 8)
         self.loudness = (LOUDNESS_FLOOR, LOUDNESS_FLOOR, LOUDNESS_FLOOR)
+
+    def FallPictures(self, elapsed):
+        self.spectrum = numpy.maximum(self.spectrum - SPECTRUM_FALL * elapsed, SPECTRUM_FLOOR)
+        self.peak_line = numpy.maximum(self.peak_line - PEAK_LINE_FALL * elapsed,
+                                       SPECTRUM_FLOOR)
+        self.scope *= SCOPE_PERSIST
+        if self.bars is not None:
+            self.bars = self.bars * max(0.0, 1.0 - elapsed * 8)
 
     def UpdateLevels(self, part, elapsed, now):
         share = 1.0 - math.exp(-elapsed / RMS_TIME) if elapsed > 0 else 1.0

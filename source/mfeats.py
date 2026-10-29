@@ -1470,6 +1470,34 @@ def get_highlight_taper(count, duration):
     return taper
 
 
+def segment_means(values, a, b):
+    '''values[a[i]:b[i]].mean() for each i (0 where b[i] <= a[i], nan where the slice is empty
+    past the end), each segment summed by itself: a mean a bar in a Python loop took 0.6 s on
+    the GUI thread for a 2 hour mix, and a running sum's error grew over it'''
+    size = len(values)
+    a = numpy.asarray(a, dtype=numpy.int64)
+    b = numpy.asarray(b, dtype=numpy.int64)
+    lo, hi = numpy.minimum(a, size), numpy.minimum(b, size)
+    n = hi - lo
+    out = numpy.zeros(len(a))
+    ok = n > 0
+    if ok.any():
+        padded = numpy.append(numpy.asarray(values, dtype=float), 0.0)
+        index = numpy.empty(2 * int(ok.sum()), dtype=numpy.int64)
+        index[0::2], index[1::2] = lo[ok], hi[ok]
+        out[ok] = numpy.add.reduceat(padded, index)[0::2] / n[ok]
+    out[(b > a) & ~ok] = numpy.nan
+    return out
+
+
+def segment_mins(values, a, b):
+    # values[a[i]:b[i]].min() for each i, every segment holding one at least
+    index = numpy.empty(2 * len(a), dtype=numpy.int64)
+    index[0::2], index[1::2] = a, numpy.minimum(b, len(values))
+    padded = numpy.append(numpy.asarray(values, dtype=float), numpy.inf)
+    return numpy.minimum.reduceat(padded, index)[0::2]
+
+
 def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=None,
                             earliest=None, latest=None):
     '''(start, scores) of the highlight on the grid. the author's choice (mfeats_single: the
@@ -1486,41 +1514,53 @@ def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=
     weighted = amplitude * get_highlight_taper(len(amplitude), duration)
     low = waveform[:, 2].astype(float)
 
-    def mean(values, start, end):
-        a, b = int(max(start, 0) * columns), int(min(end, duration) * columns)
-        return values[a:b].mean() if b > a else 0.0
-
     first = phrase_start % bar
     count = int((duration - first) / bar)
     if count < 8:
         return None, []
-    bars = numpy.array([mean(amplitude, first + i * bar, first + (i + 1) * bar)
-                        for i in range(count)])
-    lows = numpy.array([mean(low, first + i * bar, first + (i + 1) * bar) for i in range(count)])
+    # (mean's bounds, every bar at once)
+    i = numpy.arange(count)
+    a = (numpy.maximum(first + i * bar, 0) * columns).astype(numpy.int64)
+    b = (numpy.minimum(first + (i + 1) * bar, duration) * columns).astype(numpy.int64)
+    bars, lows = segment_means(amplitude, a, b), segment_means(low, a, b)
     spread = bars.std() + 1e-9
     low_spread = lows.std() + 1e-9
     size = max(1, int(round(length / bar)))
-    scored = []
+    # the starts weighed (on past the end while none of them is allowed), then their
+    # measures all at once: a few means a start in the loop took 0.4 s for a 2 hour mix
+    starts, bar_index, allowed = [], [], []
+    found = False
     start = phrase_start % phrase
-    while start + bar * size <= duration + 1e-6 or not scored:
+    while start + bar * size <= duration + 1e-6 or not found:
         i = int(round((start - first) / bar))
-        inside = bars[i:i + size]
-        if len(inside) == 0:
+        if i < 0 or i >= count:
+            # (none of its bars: the loop's end; before the first bar, never on the grid)
             break
-        before = bars[max(0, i - 4):i]
-        rise = (inside[:2].mean() - before.mean()) / spread if len(before) else 0.0
-        dip = (inside.mean() - inside.min()) / spread
-        # the author's measure first, in the song's own spread; the rest corrects it
-        score = (mean(weighted, start, start + length) - bars.mean()) / spread\
-            + 0.25 * (lows[i:i + size].mean() - lows.mean()) / low_spread\
-            + 0.2 * min(max(rise, 0.0), 2.0) - 0.4 * dip
-        if (earliest is None or start >= earliest - 1e-6) and \
-                (latest is None or start <= latest + 1e-6):
-            scored.append((score, start))
+        starts.append(start)
+        bar_index.append(i)
+        allowed.append((earliest is None or start >= earliest - 1e-6)
+                       and (latest is None or start <= latest + 1e-6))
+        found = found or allowed[-1]
         start += phrase
-        if not scored and start > duration:
+        if not found and start > duration:
             break
-    return (max(scored)[1] if scored else None), scored
+    if not found:
+        return None, []
+    s = numpy.array(starts)
+    i = numpy.array(bar_index, dtype=numpy.int64)
+    inside = segment_means(bars, i, i + size)
+    before = numpy.maximum(i - 4, 0)
+    rise = numpy.where(i > before, (segment_means(bars, i, i + min(2, size))
+                                    - segment_means(bars, before, i)) / spread, 0.0)
+    dip = (inside - segment_mins(bars, i, i + size)) / spread
+    held = segment_means(weighted, (numpy.maximum(s, 0) * columns).astype(numpy.int64),
+                         (numpy.minimum(s + length, duration) * columns).astype(numpy.int64))
+    # the author's measure first, in the song's own spread; the rest corrects it
+    scores = (held - bars.mean()) / spread\
+        + 0.25 * (segment_means(lows, i, i + size) - lows.mean()) / low_spread\
+        + 0.2 * numpy.clip(rise, 0.0, 2.0) - 0.4 * dip
+    scored = [(score, start) for score, start, ok in zip(scores, starts, allowed) if ok]
+    return max(scored)[1], scored
 
 
 def get_bar_levels(waveform, duration, bar, first):
@@ -1529,12 +1569,10 @@ def get_bar_levels(waveform, duration, bar, first):
     columns = len(waveform) / duration
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     low = amplitude * waveform[:, 2].astype(float) / 255.0
-    levels, lows = [], []
-    for i in range(max(0, int((duration - first) / bar))):
-        a, b = int((first + i * bar) * columns), int((first + (i + 1) * bar) * columns)
-        levels.append(amplitude[a:b].mean() if b > a else 0.0)
-        lows.append(low[a:b].mean() if b > a else 0.0)
-    return numpy.array(levels), numpy.array(lows)
+    i = numpy.arange(max(0, int((duration - first) / bar)))
+    a = ((first + i * bar) * columns).astype(numpy.int64)
+    b = ((first + (i + 1) * bar) * columns).astype(numpy.int64)
+    return segment_means(amplitude, a, b), segment_means(low, a, b)
 
 
 def refine_highlight_start(waveform, duration, bpm, start):
@@ -1616,12 +1654,15 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=N
     columns = len(waveform) / duration
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     full = level.copy()
+    i = numpy.arange(count)
+    a = ((first + i * block) * columns).astype(numpy.int64)
+    b = ((first + (i + 1) * block) * columns).astype(numpy.int64)
     shares = []
     for band in (3, 4):
         share = amplitude * waveform[:, band].astype(float) / 255.0
-        values = numpy.array([share[int((first + i * block) * columns):
-                                    int((first + (i + 1) * block) * columns)].mean()
-                              for i in range(count)])
+        # (an empty slice's mean nan, as .mean() of it)
+        values = segment_means(share, a, b)
+        values[b <= a] = numpy.nan
         shares.append(values / (numpy.quantile(values, 0.75) + 1e-12))
         full += shares[-1]
     main = (level >= EDIT_MAIN) & (full / 3.0 >= EDIT_FULL) & (shares[0] >= EDIT_MIDS)

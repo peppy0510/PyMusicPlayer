@@ -318,7 +318,15 @@ def toggle_favorite_tracks(listbox, paths):
     radio.tell(mainpanel, 'Added to Favorite tracks' if starred else 'Removed from Favorite tracks')
 
 
-def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255):
+def get_shared_gc(dc, shared):
+    # one GraphicsContext for a list's rows (shared: a list kept by the drawing, empty at
+    # first): one a row cost 1.7 ms on the list's bitmap (its size's), 50 ms a draw
+    if not shared:
+        shared.append(wx.GraphicsContext.Create(dc))
+    return shared[0]
+
+
+def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255, shared=None):
     # a song's analysis: under way (a ring three quarters round, the accent) or waiting (a
     # ring of dots, dimmed), 9 px across; see-through by alpha (under the playing mark)
     tokens = macroboxstyle.current().UI
@@ -326,7 +334,7 @@ def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255):
     def ink(name):
         c = uikit.colour(getattr(tokens, name))
         return wx.Colour(c.Red(), c.Green(), c.Blue(), alpha)
-    gc = wx.GraphicsContext.Create(dc)
+    gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
     if gc is None:
         return
     if working:
@@ -336,13 +344,65 @@ def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255):
         path = gc.CreatePath()
         path.AddArc(cx, cy, r, start, start + math.radians(270), True)
         gc.StrokePath(path)
+    else:
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(ink('BAR_TEXT_DIM'))))
+        dots = 8 if r <= 4.0 else 12
+        for k in range(dots):
+            angle = math.radians(k * 360.0 / dots)
+            gc.DrawEllipse(cx + r * math.cos(angle) - 0.9, cy + r * math.sin(angle) - 0.9, 1.8,
+                           1.8)
+    if shared is not None:
+        # (on the bitmap now: the playing mark the dc draws next goes over it)
+        gc.Flush()
+
+
+def draw_waiting_icons(dc, points, r=4.0, shared=None):
+    '''draw_analysis_icon's waiting rings (dots, dimmed) at points [(cx, cy)], all in one
+    path: a ring a row, 8 ellipses each, was 2.4 ms of a list's 26'''
+    if not points:
         return
+    gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
+    if gc is None:
+        return
+    c = uikit.colour(macroboxstyle.current().UI.BAR_TEXT_DIM)
     gc.SetPen(wx.NullGraphicsPen)
-    gc.SetBrush(gc.CreateBrush(wx.Brush(ink('BAR_TEXT_DIM'))))
+    gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(c.Red(), c.Green(), c.Blue(), 255))))
     dots = 8 if r <= 4.0 else 12
-    for k in range(dots):
-        angle = math.radians(k * 360.0 / dots)
-        gc.DrawEllipse(cx + r * math.cos(angle) - 0.9, cy + r * math.sin(angle) - 0.9, 1.8, 1.8)
+    path = gc.CreatePath()
+    for cx, cy in points:
+        for k in range(dots):
+            angle = math.radians(k * 360.0 / dots)
+            path.AddEllipse(cx + r * math.cos(angle) - 0.9, cy + r * math.sin(angle) - 0.9, 1.8,
+                            1.8)
+    gc.FillPath(path)
+    if shared is not None:
+        gc.Flush()
+
+
+def draw_star_outlines(dc, points, r, colour, shared=None):
+    '''draw_star_outline's at points [(cx, cy)], all in one path (a path a row was 4.6 ms
+    of a list's 26)'''
+    if not points:
+        return
+    gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
+    if gc is None:
+        return
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour).Width(1)))
+    path = gc.CreatePath()
+    for cx, cy in points:
+        for k in range(10):
+            radius = r if k % 2 == 0 else r * 0.45
+            angle = math.pi / 2 + k * math.pi / 5
+            x, y = cx + radius * math.cos(angle), cy - radius * math.sin(angle)
+            if k == 0:
+                path.MoveToPoint(x, y)
+            else:
+                path.AddLineToPoint(x, y)
+        path.CloseSubpath()
+    gc.StrokePath(path)
+    if shared is not None:
+        gc.Flush()
 
 
 def draw_star(dc, cx, cy, r, colour):
@@ -358,26 +418,16 @@ def draw_star(dc, cx, cy, r, colour):
     dc.DrawPolygon(points)
 
 
-def draw_star_outline(dc, cx, cy, r, colour):
-    # a song not starred: the star's outline, faint (where a click stars it), smoothed
-    gc = wx.GraphicsContext.Create(dc)
-    if gc is None:
-        return
-    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour).Width(1)))
-    path = gc.CreatePath()
-    for k in range(10):
-        radius = r if k % 2 == 0 else r * 0.45
-        angle = math.pi / 2 + k * math.pi / 5
-        x, y = cx + radius * math.cos(angle), cy - radius * math.sin(angle)
-        if k == 0:
-            path.MoveToPoint(x, y)
-        else:
-            path.AddLineToPoint(x, y)
-    path.CloseSubpath()
-    gc.StrokePath(path)
+# a list text's picture over its ground (ListBoxList.DrawTexts, a text not Latin): (font,
+# text, ink, ground)
+TEXT_PICTURES = {}
 
 
 class ListBoxList(RectBox):
+
+    # drawn first of the boxes waiting (macroboxlib.DrawPending): songs skipped one after
+    # another, the cover, the buttons and the tabs took its turns and it jumped songs
+    PENDING_FIRST = True
 
     def __init__(self, parent):
         RectBox.__init__(self, parent)
@@ -406,6 +456,98 @@ class ListBoxList(RectBox):
         self.DrawListItem(dc)
         self.DrawInsertItemLine(dc)
         self.DrawTextEdit(dc)
+
+    def InitBuffer(self):
+        # the rows whose state changed drawn alone over the last picture when nothing else
+        # did (DrawChangedRows): songs skipped one after another moved the selection and the
+        # playing mark a row, and the whole list (10 to 20 ms) was drawn for two rows
+        state = self.GetDrawnState()
+        last, self.drawn_state = getattr(self, 'drawn_state', None), state
+        if state is not None and last is not None and self.DrawChangedRows(last, state):
+            self.reInitBuffer = getattr(self, 'redraw_next', False)
+            self.redraw_next = False
+            return
+        RectBox.InitBuffer(self)
+
+    def GetDrawnState(self):
+        '''(what the whole picture is drawn by, the scroll, {item: its row's state}), or None
+        when it is drawn whole whatever (a picture column, a turning icon, an edit, a drop)'''
+        lb = self.parent
+        if hasattr(lb, 'innerList') is False or len(lb.innerList) == 0:
+            return None
+        listIdx = lb.selectedList
+        inner = lb.innerList[listIdx]
+        columns = lb.GetShownColumns()
+        if any(getattr(column, 'key', None) in ('cover', 'wave') for column in columns)\
+                or getattr(self, 'spinning', False) or self.TextEdit is not None\
+                or self.FileDrop.insertItemIdx is not None or self.buffer.bmp is None:
+            return None
+        playbox = lb.parent.PlayBox
+        mfeats = lb.parent.MFEATS
+        if inner.title in (radio.BROWSE_TITLE, radio.RECENT_TITLE):
+            favorites = tuple(sorted(radio.get_favorite_urls(lb)))
+        elif inner.title not in radio.RADIO_TABS:
+            favorites = tuple(library.get_favorite_tracks())
+        else:
+            favorites = ()
+        whole = (tuple(self.GetSize()), tuple(self.buffer.bmp.GetSize()), lb.GetRowsHeight(),
+                 listIdx, inner.Id, inner.title, id(inner.items), len(inner.items),
+                 lb.GetVirtualPositionX(), tuple(lb.GetShownColumnsIdx()),
+                 tuple(column.width for column in columns), lb.font.GetNativeFontInfoDesc(),
+                 id(lb.st), favorites, getattr(self, 'star_hover', None),
+                 getattr(self, 'star_down', None), tuple(mfeats.GetProcPath()),
+                 frozenset(mfeats.GetTaskPath()))
+        pathIdx = lb.GetColumnKeyToIdx('path')
+        cue = playbox.cue
+        here = cue.listId == inner.Id or audio.is_stream_path(cue.path)
+        rows = {}
+        selected = inner.selectedItems
+        for item in lb.GetShownItemsIdx():
+            if item >= len(inner.items):
+                continue
+            row = inner.items[item]
+            playing = None
+            if here and row[pathIdx] == cue.path:
+                # (the playing mark's: as DrawListItem tells it)
+                playing = (playbox.IsStreamWaiting(), playbox.IsPlaying(),
+                           playbox.AudioControl.pending, playbox.GetStreamConnecting(),
+                           self.pending.SkipStopIcon)
+            rows[item] = (id(row), item in selected, playing)
+        return whole, lb.GetVirtualPositionY(), rows
+
+    def DrawChangedRows(self, last, state):
+        '''the rows changed since the last picture drawn over it (scrolled by whole rows: the
+        picture moved first, the rows come in drawn); False when it is to be drawn whole'''
+        whole, vpy, rows = state
+        last_whole, last_vpy, last_rows = last
+        row_size = self.parent.GetRowsHeight()
+        dy = vpy - last_vpy
+        if whole != last_whole or dy % row_size != 0:
+            return False
+        w, h = self.GetSize()
+        if abs(dy) >= h:
+            return False
+        if dy != 0 and max(rows, default=-1) >= len(
+                self.parent.innerList[self.parent.selectedList].items) - 1:
+            # (the end of the list in sight: the ground under it moved too)
+            return False
+        changed = [item for item, row in rows.items() if last_rows.get(item) != row]
+        if dy == 0 and len(changed) == 0:
+            return True
+        dc = wx.BufferedDC(None, self.buffer.bmp)
+        if dy != 0:
+            dc.Blit(0, max(dy, 0), w, h - abs(dy), dc, 0, max(-dy, 0))
+        region = wx.Region()
+        for item in changed:
+            region.Union(0, int(item * row_size + vpy), w, row_size)
+        dc.SetDeviceClippingRegion(region)
+        dc.SetBackground(wx.Brush(self.GetBackgroundColour()))
+        dc.SetBackgroundMode(wx.TRANSPARENT)
+        dc.Clear()
+        self.DrawListItem(dc, only=set(changed))
+        dc.DestroyClippingRegion()
+        del dc
+        return True
 
     def DrawTextEdit(self, dc):
         if self.TextEdit is None:
@@ -447,7 +589,8 @@ class ListBoxList(RectBox):
                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName=FONT_PLAYINFO)
         return font
 
-    def DrawListItem(self, dc):
+    def DrawListItem(self, dc, only=None):
+        # only: the items whose rows are drawn (DrawChangedRows), the rest left as drawn
         top_margin = 4
         left_margin = 5
         x, y = (0, 0)
@@ -494,7 +637,17 @@ class ListBoxList(RectBox):
         listColumns = self.parent.innerList[listIdx].columns
         self.KeepOrderRoom(listColumns, orderIdx, mono_width, left_margin)
         pictures = list()
+        ct = self.parent.st.LIST_BG_CONTRAST
+        r, g, b = self.parent.st.LIST_BG_COLOR
+        bgcolor_odd = [min(max(v, 0), 255) for v in (r - ct, g - ct, b - ct)]
+        bgcolor_even = [min(max(v, 0), 255) for v in (r + ct, g + ct, b + ct)]
+        # each text's ground (its row's), for its kept picture (DrawTexts)
+        n_grounds, s_grounds, m_grounds, ms_grounds = [], [], [], []
+        selected_ground = tuple(self.parent.st.SELECTED_BG_COLOR)[:3]
         for row, item in enumerate(shownItemIdx):
+            if only is not None and item not in only:
+                continue
+            ground = tuple(bgcolor_odd if item % 2 == 0 else bgcolor_even)
 
             for i, col in enumerate(shownColIdx):
                 column = columns[i]
@@ -521,10 +674,11 @@ class ListBoxList(RectBox):
                     tw = mono_width * len(limitedString)
                     txy = (column.x + column.width - left_margin - tw,
                            row_size * row + rect.y + top_margin - row_offset + mono_shift)
-                    texts, xys = (ms_texts, ms_xys) if self.parent.IsHighlightedItem(item)\
-                        else (m_texts, m_xys)
+                    texts, xys, grounds = (ms_texts, ms_xys, ms_grounds)\
+                        if self.parent.IsHighlightedItem(item) else (m_texts, m_xys, m_grounds)
                     texts.append(limitedString)
                     xys.append(txy)
+                    grounds.append(selected_ground if grounds is ms_grounds else ground)
                     continue
                 limitedString = self.LimitTextLength(
                     dc, string, column.width - left_margin - 8, tww)
@@ -533,9 +687,11 @@ class ListBoxList(RectBox):
                 if self.parent.IsHighlightedItem(item):
                     s_texts.append(limitedString)
                     s_xys.append(txy)
+                    s_grounds.append(selected_ground)
                 else:
                     n_texts.append(limitedString)
                     n_xys.append(txy)
+                    n_grounds.append(ground)
 
             width = column.x + column.width
             lines.append((rect.x, row_size * row + rect.y - row_offset,
@@ -553,20 +709,9 @@ class ListBoxList(RectBox):
                     n_rects_even.append((rect.x + 1, row_size * row + rect.y -
                                          row_offset, width - 1, row_size))
 
-        if shownItemIdx != []:
+        if shownItemIdx != [] and only is None:
             lines.append((rect.x, row_size * (row + 1) + rect.y - row_offset,
                           width, row_size * (row + 1) + rect.y - row_offset))
-
-        def limitcolor(v):
-            if v > 255:
-                return 255
-            if v < 0:
-                return 0
-            return v
-        ct = self.parent.st.LIST_BG_CONTRAST
-        r, g, b = self.parent.st.LIST_BG_COLOR
-        bgcolor_odd = [limitcolor(v) for v in (r - ct, g - ct, b - ct)]
-        bgcolor_even = [limitcolor(v) for v in (r + ct, g + ct, b + ct)]
 
         dc.DrawRectangleList(n_rects_odd,
                              pens=wx.Pen(bgcolor_odd, 1),
@@ -585,14 +730,11 @@ class ListBoxList(RectBox):
                              pens=wx.Pen(bar, 1), brushes=wx.Brush(bar))
 
         sel_bgcolor = self.parent.st.SELECTED_BG_COLOR
-        r, g, b = self.parent.st.LIST_FG_COLOR
-        dc.DrawTextList(n_texts, n_xys, foregrounds=wx.Colour(r, g, b))
-        r, g, b = self.parent.st.SELECTED_FG_COLOR
-        dc.DrawTextList(s_texts, s_xys, foregrounds=wx.Colour(r, g, b))
-        dc.SetFont(mono)
-        dc.DrawTextList(m_texts, m_xys, foregrounds=wx.Colour(*self.parent.st.LIST_FG_COLOR))
-        dc.DrawTextList(ms_texts, ms_xys,
-                        foregrounds=wx.Colour(*self.parent.st.SELECTED_FG_COLOR))
+        fg, sel_fg = self.parent.st.LIST_FG_COLOR, self.parent.st.SELECTED_FG_COLOR
+        self.DrawTexts(dc, self.parent.font, n_texts, n_xys, n_grounds, fg)
+        self.DrawTexts(dc, self.parent.font, s_texts, s_xys, s_grounds, sel_fg)
+        self.DrawTexts(dc, mono, m_texts, m_xys, m_grounds, fg)
+        self.DrawTexts(dc, mono, ms_texts, ms_xys, ms_grounds, sel_fg)
         dc.SetFont(self.parent.font)
         color = self.parent.st.LIST_PN_COLOR
         dc.DrawLineList(lines, pens=wx.Pen(color, 0))
@@ -622,7 +764,15 @@ class ListBoxList(RectBox):
             favorites = radio.get_favorite_urls(self.parent)
         elif self.parent.innerList[listIdx].title not in radio.RADIO_TABS:
             favorites = set(library.get_favorite_tracks())
+        # (the rows' stars and rings on one GraphicsContext: get_shared_gc)
+        shared = []
+        self.spinning = False
+        # (the outlines and the waiting rings drawn together after the rows: one path each)
+        outlines, waiting = [], []
+        playing_path = self.parent.parent.PlayBox.cue.path
         for row, item in enumerate(shownItemIdx):
+            if only is not None and item not in only:
+                continue
             for i, col in enumerate(shownColIdx):
                 if col != orderIdx:
                     continue
@@ -638,7 +788,7 @@ class ListBoxList(RectBox):
                     # under the pointer: where a click stars it
                     draw_star(dc, cx, cy, star, macroboxstyle.current().UI.BAR_TEXT_DIM)
                 elif outline is not None:
-                    draw_star_outline(dc, cx + 0.5, cy + 0.5, 5, outline)
+                    outlines.append((cx + 0.5, cy + 0.5))
                 # analyzing status
                 status = self.parent.innerList[listIdx].items[item][statusIdx]
                 # rects = (columns[i].x+1, row_size*row+rect.y-row_offset+1,\
@@ -659,9 +809,16 @@ class ListBoxList(RectBox):
                 # a wider ring round the mark looked off centre)
                 analysing = path in procpath or status == '' or path in taskpath
                 if path in procpath:
-                    draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, True)
+                    draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, True,
+                                       shared=shared)
+                    self.spinning = True
                 elif status == '' or path in taskpath:
-                    draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, False)
+                    if path == playing_path:
+                        # (now: the playing mark goes over it)
+                        draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, False,
+                                           shared=shared)
+                    else:
+                        waiting.append((columns[i].x + self.MARK_X + 4, cy))
                 elif status == 'error':
                     if self.parent.IsHighlightedItem(item):
                         bmp = images.listbox_brokenlink_black.GetBitmap()
@@ -694,7 +851,9 @@ class ListBoxList(RectBox):
                     self.pending.SkipStopIcon = False
                     offset = int((row_size - 8) * 0.5)
                     draw_analysis_icon(dc, column.x + self.MARK_X + 4,
-                                       row_size * row + rect.y - row_offset + offset + 4.5, True)
+                                       row_size * row + rect.y - row_offset + offset + 4.5, True,
+                                       shared=shared)
+                    self.spinning = True
                 elif playbox.IsPlaying() or starting\
                         or self.pending.SkipStopIcon and status != 'error':
                     self.pending.SkipStopIcon = False
@@ -730,6 +889,47 @@ class ListBoxList(RectBox):
                     dc.DrawRectangleList([(x, y, w, h)], pens=(wx.Pen(font_color, 1),),
                                          brushes=(wx.Brush(font_color),))
                 break
+        draw_star_outlines(dc, outlines, 5, outline, shared=shared)
+        draw_waiting_icons(dc, waiting, shared=shared)
+
+    def DrawTexts(self, dc, font, texts, xys, grounds, ink):
+        '''texts at xys: Latin ones at once (DrawTextList), the others each from its picture
+        over its row's ground, made once: GDI looks for a font for every Japanese or Korean
+        title it draws, 4 times a Latin one's (a list of them took 20 ms to draw, 13 now).
+        the picture 2 px wider each side than the text (ClearType's fringe), nothing drawn
+        there before the texts'''
+        dc.SetFont(font)
+        latin = [(text, xy) for text, xy in zip(texts, xys) if text.isascii()]
+        if latin:
+            dc.DrawTextList([v[0] for v in latin], [v[1] for v in latin],
+                            foregrounds=wx.Colour(*ink))
+        others = [(text, xy, ground) for text, xy, ground in zip(texts, xys, grounds)
+                  if not text.isascii()]
+        if not others:
+            return
+        ink = tuple(ink)[:3]
+        desc = font.GetNativeFontInfoDesc()
+        source = wx.MemoryDC()
+        for text, (x, y), ground in others:
+            key = (desc, text, ink, ground)
+            bmp = TEXT_PICTURES.get(key)
+            if bmp is None:
+                if len(TEXT_PICTURES) > 20000:
+                    TEXT_PICTURES.clear()
+                tw, th = dc.GetTextExtent(text)
+                bmp = wx.Bitmap(max(tw, 1) + 4, max(th, 1) + 2)
+                source.SelectObject(bmp)
+                source.SetBackground(wx.Brush(wx.Colour(*ground)))
+                source.Clear()
+                source.SetBackgroundMode(wx.TRANSPARENT)
+                source.SetFont(font)
+                source.SetTextForeground(wx.Colour(*ink))
+                source.DrawText(text, 2, 0)
+                source.SelectObject(wx.NullBitmap)
+                TEXT_PICTURES[key] = bmp
+            source.SelectObject(bmp)
+            dc.Blit(x - 2, y, bmp.GetWidth(), bmp.GetHeight(), source, 0, 0)
+        source.SelectObject(wx.NullBitmap)
 
     # the playing mark's cut-out: its shape a pixel round it, every way
     HALO_STEPS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1))
@@ -930,8 +1130,10 @@ class ListBoxList(RectBox):
     SPIN_INTERVAL = 1.0 / 30
 
     def CATCH_EVT_GLOBAL(self, event):
-        turning = self.parent.parent.MFEATS.GetProcPath()\
-            or self.parent.parent.PlayBox.IsStreamWaiting()
+        # (a turning icon on the rows shown when last drawn: a song analysed out of sight
+        # drew the whole list 30 times a second for nothing; one coming into sight is drawn
+        # by the analysis' own redraw, RequestListRedraw)
+        turning = getattr(self, 'spinning', False)
         if turning and time.time() - getattr(self, 'spin_lap', 0.0) >= self.SPIN_INTERVAL:
             self.spin_lap = time.time()
             self.reInitBuffer = True
@@ -2350,6 +2552,8 @@ class ListBoxSearch(RectBox):
                  self.SearchComboFilter.GetStringSelection())
         if state != self.drawn:
             self.drawn = state
+            # (asked till drawn: a DirectDraw too soon after the last does nothing)
+            self.reInitBuffer = True
             self.DirectDraw()
         if event.LeftDown is False or self.onClient is False:
             return

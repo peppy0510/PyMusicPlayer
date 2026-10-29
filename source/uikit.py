@@ -7,6 +7,7 @@ email: peppy0510@hotmail.com
 '''
 
 
+import functools
 import macroboxstyle
 import math
 import wx
@@ -44,6 +45,9 @@ def colour(value):
     return wx.Colour(*value) if isinstance(value, (tuple, list)) else wx.Colour(value)
 
 
+# (made once a size and weight, as rackbox's: a new one at each draw cost 0.25 ms, and
+# GDI+ took a new one again at each SetFont, 14 times the same one's)
+@functools.lru_cache(maxsize=64)
 def get_font(pixels, bold=False):
     font = wx.Font(wx.Size(0, pixels), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
                    wx.FONTWEIGHT_BOLD if bold else wx.FONTWEIGHT_NORMAL, faceName=FONT_FACE)

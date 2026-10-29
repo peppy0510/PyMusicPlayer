@@ -631,12 +631,13 @@ class ListControl():
                              ignore_case=ignore_case, selectedList=listIdx)
 
     def SetFilterOffAll(self):
-        # drawn again only when a filter was let go: the empty search row asks this at every
-        # global event, and the list drawn each time took the GUI thread from the waveforms
-        # (they moved in jerks, the user)
+        # (asked at every event while the search is empty: drawn again only when a filter
+        # was on, the whole list 30 times a second took half the GUI thread)
         filtered = [listIdx for listIdx in range(len(self.innerList))
                     if self.IsFiltered(listIdx)]
-        if filtered == []:
+        if len(filtered) == 0:
+            # (the search row's hover and focus drawn by its own, HandleEventDrawnControls:
+            # drawn here too at every event it took a list's place in DrawPending)
             return
         for listIdx in filtered:
             self.SetFilterOff(listIdx)
