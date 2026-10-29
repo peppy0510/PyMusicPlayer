@@ -36,7 +36,7 @@ from utilities import get_user_docapp_path
 # names and pictures by their addresses). here: the directory (radio-browser.info, read
 # when the window opens and when a genre, a country or a name is asked for), a stream
 # opened, what it plays now, its waveform as it plays and its picture
-USER_AGENT = 'PyMusicPlayer/1.1.1 +https://github.com/peppy0510/PyMusicPlayer'
+USER_AGENT = 'PyMusicPlayer/1.2.2 +https://github.com/peppy0510/PyMusicPlayer'
 DIRECTORY = 'https://all.api.radio-browser.info/json'
 TIMEOUT = 15
 LISTS_SECONDS = 60 * 60 * 24
