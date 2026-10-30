@@ -191,7 +191,10 @@ def draw_button(dc, rect, label=None, icon=None, on=False, down=False, hover=Fal
         return
     gc.SetAntialiasMode(wx.ANTIALIAS_DEFAULT)
     pressed = down
-    draw_face(gc, (x, y, w, h), face, pressed=pressed, flat=disabled, corners=corners)
+    # a lit key's edge an unlit one's: its own darkened accent read as the face, the key a
+    # pixel larger each way than its neighbours
+    seat = colour(ui().CONTROL_BG) if on or warn else None
+    draw_face(gc, (x, y, w, h), face, pressed=pressed, flat=disabled, corners=corners, seat=seat)
     # pressed, the ink a pixel down as a key pushed in
     sink = 1 if pressed else 0
     if icon is not None:
@@ -276,14 +279,14 @@ def draw_meter(gc, x, y, width, height, share, ground, low=-48.0, high=0.0, tone
         gc.ResetClip()
 
 
-def draw_face(gc, rect, face, pressed=False, flat=False, corners='all'):
+def draw_face(gc, rect, face, pressed=False, flat=False, corners='all', seat=None):
     # a hardware key's matte face: one even colour (no shine, no bulge), seated in the panel
-    # by a darker edge; pressed, the face a shade darker; disabled, the same without its
-    # edge darkened as much
+    # by a darker edge (seat: the colour it is darkened from, else the face's); pressed, the
+    # face a shade darker; disabled, the same without its edge darkened as much
     x, y, w, h = rect
     if pressed:
         face = mix(face, (0, 0, 0), 0.18)
-    edge = mix(face, (0, 0, 0), 0.3 if flat else 0.5)
+    edge = mix(seat or face, (0, 0, 0), 0.3 if flat else 0.5)
     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(edge).Width(1)))
     gc.SetBrush(gc.CreateBrush(wx.Brush(face)))
     # the renderer draws a shape's lines half a pixel down and right: from (x, y), w - 1
