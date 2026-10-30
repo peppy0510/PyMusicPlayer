@@ -191,8 +191,7 @@ def draw_button(dc, rect, label=None, icon=None, on=False, down=False, hover=Fal
         return
     gc.SetAntialiasMode(wx.ANTIALIAS_DEFAULT)
     pressed = down
-    # a lit key's edge an unlit one's: its own darkened accent read as the face, the key a
-    # pixel larger each way than its neighbours
+    # an unlit key's edge: a darkened accent edge reads as face, the key a pixel larger
     seat = colour(ui().CONTROL_BG) if on or warn else None
     draw_face(gc, (x, y, w, h), face, pressed=pressed, flat=disabled, corners=corners, seat=seat)
     # pressed, the ink a pixel down as a key pushed in
