@@ -3013,8 +3013,8 @@ class CoverField(wx.Window):
         if self.chosen is not None or self.remove:
             # NEW or REMOVE (not saved yet) in a chip at its top left, not the edge's
             # colour alone; REMOVE in the warning's (orange)
-            chip, face, ink = ('NEW', ui.ACCENT, wx.WHITE) if self.chosen is not None\
-                else ('REMOVE', ui.WARN, uikit.colour(ui.WARN_FG))
+            chip, face, ink = ('NEW', ui.ACCENT, uikit.colour(ui.ACCENT_FG)) \
+                if self.chosen is not None else ('REMOVE', ui.WARN, uikit.colour(ui.WARN_FG))
             uikit.set_font(gc, uikit.get_font(uikit.MICRO, bold=True), ink)
             tw, th = gc.GetTextExtent(chip)[:2]
             gc.SetPen(wx.NullGraphicsPen)

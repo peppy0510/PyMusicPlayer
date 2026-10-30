@@ -20,7 +20,7 @@ ACCENT_TOKENS = (('UI', ('ACCENT', 'FIELD_FOCUS')),
                  ('EDITBOX', ('SELECTED_BG_COLOR', 'SELECTED_BAR_COLOR',
                               'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')))
 # (dark, light): the accent, and the selected rows' muted one
-RED = {True: ('#D8383F', '#5E1F27'), False: ('#C8303A', '#F4CDD1')}
+RED = {True: ('#FF6B6B', '#5E1F27'), False: ('#C8303A', '#F4CDD1')}
 accent_originals = dict()
 VERSION = 0
 # the style loaded last (load): the dialogs and the standard controls take its UI colours
@@ -121,8 +121,9 @@ class Default():
         CONTROL_FG = '#BDBDBD'
         # a control on, the busy and the warned: blue and orange, apart for red-green
         # colour blindness and by brightness too (never by hue alone)
-        ACCENT = '#2F7BEA'
-        ACCENT_FG = '#FFFFFF'
+        # dark: a light accent with dark text on it
+        ACCENT = '#4C9AFF'
+        ACCENT_FG = '#101215'
         WARN = '#F0A030'
         WARN_FG = '#000000'
 
