@@ -11,6 +11,7 @@ import audio
 import collections
 import io
 import mfeats
+import math
 import mutagen
 import mutagen.flac
 import mutagen.id3
@@ -23,6 +24,8 @@ import threading
 import wx
 
 from PIL import Image
+from PIL import ImageOps
+from PIL import ImageStat
 from utilities import get_user_docapp_path
 
 
@@ -225,6 +228,62 @@ def crop_square(data):
         return None
     kind = picture.format
     picture = picture.crop(get_square_box(*picture.size))
+    out = io.BytesIO()
+    if kind == 'PNG':
+        picture.save(out, 'PNG')
+    else:
+        picture.convert('RGB').save(out, 'JPEG', quality=92)
+    return out.getvalue()
+
+
+# auto brightness: a picture darker than the first (its mean lightness, 0-255) lifted to it,
+# one lighter than the second brought down to it, the rest left; by a gamma (black and
+# white kept, nothing clipped: a factor dimmed every light cover to grey, whites blown out
+# lifting the dark ones), at most these
+BRIGHTNESS_RANGE = (100, 185)
+GAMMA_MOST = (0.55, 1.4)
+# auto color: how far the channels' means are brought together (gray world), 0-1
+COLOR_PULL = 0.6
+
+
+def adjust_cover(data, square=False, contrast=False, brightness=False, color=False):
+    '''the picture made ready to write as Look Up Cover asks: cut square on its middle,
+    its levels stretched (1% cut at each end, its hues kept), its mean lightness evened,
+    its colour cast taken off; PNG kept PNG, any other made a JPEG; data itself when
+    nothing is asked or it is not a picture'''
+    if not (square or contrast or brightness or color):
+        return data
+    try:
+        picture = Image.open(io.BytesIO(data))
+        picture.load()
+    except Exception:
+        return data
+    kind = picture.format
+    if square:
+        picture = picture.crop(get_square_box(*picture.size))
+    if contrast or brightness or color:
+        alpha = picture.getchannel('A') if picture.mode in ('RGBA', 'LA') else None
+        picture = picture.convert('RGB')
+        if color:
+            means = ImageStat.Stat(picture).mean
+            gray = sum(means) / 3.0
+            gains = [1 + COLOR_PULL * (gray / max(v, 1) - 1) for v in means]
+            bands = [band.point(lambda v, g=g: min(255, int(v * g + 0.5)))
+                     for band, g in zip(picture.split(), gains)]
+            picture = Image.merge('RGB', bands)
+        if contrast:
+            picture = ImageOps.autocontrast(picture, cutoff=1, preserve_tone=True)
+        if brightness:
+            mean = ImageStat.Stat(picture.convert('L')).mean[0]
+            low, high = BRIGHTNESS_RANGE
+            aim = low if mean < low else high if mean > high else None
+            if aim is not None and 0 < mean < 255:
+                least, most = GAMMA_MOST
+                gamma = min(max(math.log(aim / 255.0) / math.log(mean / 255.0), least), most)
+                table = [int(255 * (v / 255.0) ** gamma + 0.5) for v in range(256)]
+                picture = picture.point(table * 3)
+        if alpha is not None and kind == 'PNG':
+            picture.putalpha(alpha)
     out = io.BytesIO()
     if kind == 'PNG':
         picture.save(out, 'PNG')

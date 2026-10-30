@@ -270,6 +270,17 @@ class PlayBox(RectBox, PlayBoxControl):
         # TEMPO and KEY
         return getattr(self, 'control_rows', 1) == 2
 
+    def LookUpCover(self):
+        # (listbox imports this module's users: imported here)
+        import listbox
+        path = self.cue.path
+        if self.IsStreamTrack() or not path:
+            return
+        tags = audio.get_id3(path, [u'TPE1', u'TIT2']) or dict()
+        listbox.look_up_cover_for(self.parent.ListBox, [dict(
+            path=path, mdx=getattr(self.cue, 'mdx', None), artist=tags.get(u'TPE1', ''),
+            title=tags.get(u'TIT2', ''), label=os.path.basename(path))])
+
     def OpenTrackEditor(self):
         # the tag editor (the list's Track Information Editor) on the song playing: its tab
         # shown and it selected there first, as the editor edits the list's selection
@@ -344,6 +355,9 @@ class PlayBox(RectBox, PlayBoxControl):
             menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(
                 wx.GetTopLevelParent(self).OnFindInLibrary, None,
                 song=(self.GetPlayingTempo(), self.GetPlayingKey())), find)
+            # its cover chosen from cards (the list's Look Up Cover, for this song)
+            cover = menu.Append(wx.ID_ANY, 'Look Up Cover...')
+            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.LookUpCover), cover)
             self.parent.SetPopupMenu(menu, (event.x, event.y))
 
     def CheckControlRows(self):

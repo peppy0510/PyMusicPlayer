@@ -26,6 +26,7 @@ from macroboxlib import InnerList
 from macroboxlib import MakeMusicFileItem
 from macroboxlib import SUPPORTED_PLAYLIST_TYPE
 from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import SetPreference
 from operator import itemgetter
 from utilities import Struct
 
@@ -874,7 +875,19 @@ class ListControl():
     def SetSelectedList(self, idx):
         self.selectedList = idx
         # self.parent.PlayBox.FocusPlayingItem()
-        self.DirectDraw()
+        # the rows, the header and the bars drawn together, the new tab's in one frame
+        # (each on its own idle, they had come a frame or more apart: the user)
+        parts = [getattr(self, name, None) for name in ('List', 'Header', 'SliderH', 'SliderV')]
+        if None in parts or self.IsDrawable() is False:
+            self.DirectDraw()
+            return
+        # (the list box first: its drawing asks its parts again, theirs then answer it)
+        self.Freeze()
+        for part in [self] + parts:
+            part.InitBuffer()
+            part.Refresh(False)
+        self.Thaw()
+        self.Update()
 
     def AddInnerList(self, title=None):
         if hasattr(self, 'innerList') is False:
@@ -1091,27 +1104,39 @@ class ListControl():
     def CloneColumnsDefinitionToAll(self, selectedList=None):
         if selectedList is None:
             selectedList = self.selectedList
-        columns = copy.deepcopy(self.innerList[selectedList].columns)
+        source = self.innerList[selectedList].columns
+        keys = [v.key for v in source]
         for listIdx in range(len(self.innerList)):
             if listIdx == selectedList:
                 continue
+            inner = self.innerList[listIdx]
             # the radio's tabs keep a station's columns (radio.ensure_station_columns)
-            if self.innerList[listIdx].title in radio.RADIO_TABS:
+            if inner.title in radio.RADIO_TABS:
                 continue
-            columnsIdx = [self.GetColumnKeyToIdx(v.key, listIdx) for v in columns]
-            # need to debug columns and columnsIdx
-            # print [v.key for v in columns]
-            # print columnsIdx
-            for itemIdx in range(len(self.innerList[listIdx].items)):
-                newItem = [self.innerList[listIdx].items[itemIdx][columnIdx]
-                           for columnIdx in columnsIdx]
-                self.innerList[listIdx].items[itemIdx] = tuple(newItem)
-            if self.IsFiltered(listIdx):
-                for cacheIdx in range(len(self.innerList[listIdx].filterCache)):
-                    newItem = [self.innerList[listIdx].filterCache
-                               [cacheIdx][columnIdx] for columnIdx in columnsIdx]
-                    self.innerList[listIdx].filterCache[cacheIdx] = tuple(newItem)
-            self.innerList[listIdx].columns = columns
+            listKeys = [v.key for v in inner.columns]
+            if sorted(listKeys) != sorted(keys):
+                continue
+            # each tab its own copy: a later shuffle in one tab moves only its own rows
+            columns = copy.deepcopy(source)
+            if listKeys != keys:
+                columnsIdx = [listKeys.index(key) for key in keys]
+                for itemIdx in range(len(inner.items)):
+                    inner.items[itemIdx] = tuple(
+                        inner.items[itemIdx][columnIdx] for columnIdx in columnsIdx)
+                if self.IsFiltered(listIdx):
+                    for cacheIdx in range(len(inner.filterCache)):
+                        inner.filterCache[cacheIdx] = tuple(
+                            inner.filterCache[cacheIdx][columnIdx] for columnIdx in columnsIdx)
+                if inner.lastSortedColumn[0] is not None:
+                    inner.lastSortedColumn[0] = keys.index(listKeys[inner.lastSortedColumn[0]])
+            inner.columns = columns
+
+    def SyncColumnsToAll(self):
+        # a column shown, hidden, moved or resized: the same in every tab, and in new tabs
+        if self.innerList[self.selectedList].title in radio.RADIO_TABS:
+            return
+        self.CloneColumnsDefinitionToAll()
+        SetPreference('columns', self.innerList[self.selectedList].columns)
 
     # Virtual Position Control
 
@@ -1475,7 +1500,7 @@ class ListControl():
         if selectedList is None:
             selectedList = self.selectedList
         self.innerList[selectedList].selectedItems\
-            = range(0, self.GetItemsLength(selectedList))
+            = list(range(0, self.GetItemsLength(selectedList)))
         self.reInitBuffer = True
 
     def UnSelectItemAll(self, selectedList=None):
@@ -1546,7 +1571,10 @@ class ListControl():
             self.innerList[self.selectedList].selectedItems.append(item)
         self.FocusItem(item)
 
-    def ShiftSelectItems(self, item):
+    def ShiftSelectItems(self, item, add=False):
+        # the rows from the anchor (focus.shift: the last clicked without Shift) to item;
+        # add (Ctrl with Shift) keeping those selected besides. a list, not a range: a Ctrl
+        # click after a Shift one added to it or took from it, and did nothing (the user)
         if item < 0:
             item = 0
         itemsLength = self.GetItemsLength()
@@ -1557,11 +1585,14 @@ class ListControl():
             self.SelectAndFocusItem(item, shift=item)
             return
         if shift < item:
-            items = range(shift, item + 1)
+            items = list(range(shift, item + 1))
         elif shift > item:
-            items = range(shift, item - 1, -1)
+            items = list(range(shift, item - 1, -1))
         else:
             items = [item]
+        if add:
+            spanned = set(items)
+            items = [v for v in self.GetSelectedItems() if v not in spanned] + items
         self.innerList[self.selectedList].selectedItems = items
         self.FocusItem(item, shift=shift, align=None)
 

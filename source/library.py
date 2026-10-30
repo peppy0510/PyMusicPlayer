@@ -235,13 +235,13 @@ def show_recent(listbox):
     return show_paths(listbox, RECENT_TITLE, GetPreference('recent_tracks') or [])
 
 
-def show_favorites(listbox):
+def show_favorites(listbox, select=True):
     '''the starred songs in their tab, in the order starred: their rows as in the playlists
     they are in (a song in none read from its file)'''
-    return show_paths(listbox, FAVORITES_TITLE, get_favorite_tracks())
+    return show_paths(listbox, FAVORITES_TITLE, get_favorite_tracks(), select)
 
 
-def show_paths(listbox, title, paths):
+def show_paths(listbox, title, paths, select=True):
     # the songs at paths in the tab named title, in that order (show_favorites)
     from macroboxlib import ListBoxColumn
     from macroboxlib import MakeMusicFileItem
@@ -256,11 +256,12 @@ def show_paths(listbox, title, paths):
                 continue
             song = Struct(path=path, values=dict(zip(keys, item)))
         found.append(song)
-    return show_results(listbox, title, found)
+    return show_results(listbox, title, found, select)
 
 
-def show_results(listbox, title, songs):
-    # the found songs in the tab named title (made, or emptied and filled), in their order
+def show_results(listbox, title, songs, select=True):
+    # the found songs in the tab named title (made, or emptied and filled), in their order;
+    # that tab chosen, or (select False, its tab kept open) the one chosen left as it is
     index = [i for i, v in enumerate(listbox.innerList) if v.title == title]
     if index == []:
         listbox.AddInnerList(title)
@@ -280,5 +281,6 @@ def show_results(listbox, title, songs):
     inner.selectedItems = []
     orderIdx = keys.index('order') if 'order' in keys else None
     inner.lastSortedColumn = [orderIdx, 1]
-    listbox.SetSelectedList(index)
+    if select:
+        listbox.SetSelectedList(index)
     return index
