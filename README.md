@@ -66,7 +66,6 @@
 ## Supported platforms
 
 * Microsoft Windows 10, Windows 11
-* Other versions of Windows have not been tested yet.
 * With some modifications, it can also work on macOS.
 
 ## TODO
