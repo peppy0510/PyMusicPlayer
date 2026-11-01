@@ -2986,23 +2986,27 @@ class CoverField(wx.Window):
         remove = menu.Append(wx.ID_ANY, 'Remove Cover')
         remove.Enable(bool(self.data) and not self.remove or self.chosen is not None)
         menu.Bind(wx.EVT_MENU, lambda e: self.SetRemove(), remove)
-        # the cover shown (the song's or the one chosen) cut to a square on its middle, a
+        # the cover shown (the song's or the one chosen) as a scan fixed (straightened, its
+        # edge trimmed) or cut to a square on its subject (listimages.cut_cover), each a
         # change like a chosen one (NEW, taken back by Undo)
-        crop = menu.Append(wx.ID_ANY, 'Crop to Square')
         shown = self.chosen if self.chosen is not None else None if self.remove else self.data
-        crop.Enable(bool(shown) and listimages.is_square(shown) is False)
-        menu.Bind(wx.EVT_MENU, lambda e: self.CropSquare(shown), crop)
+        square = bool(shown) and listimages.is_square(shown) is False
+        for label, asked, enable in (('Fix Scan', dict(scan=True), bool(shown)),
+                                     ('Crop to Square', dict(square=True), square)):
+            item = menu.Append(wx.ID_ANY, label)
+            item.Enable(enable)
+            menu.Bind(wx.EVT_MENU, lambda e, asked=asked: self.CutCover(shown, asked), item)
         # back to the song's own, the change not saved
         undo = menu.Append(wx.ID_ANY, 'Undo Cover Change')
         undo.Enable(self.HasChange() and self.path is not None)
         menu.Bind(wx.EVT_MENU, lambda e: self.SetSong(self.path), undo)
 
-    def CropSquare(self, data):
-        square = listimages.crop_square(data)
-        if square is None:
+    def CutCover(self, data, asked):
+        cut = listimages.cut_cover(data, **asked)
+        if cut is None:
             self.SetNote('Not an image')
             return
-        self.SetChosen(square)
+        self.SetChosen(cut)
 
     def ChooseFile(self, path):
         try:
@@ -5240,12 +5244,17 @@ class CoverLookUpBox(DialogBox):
             _, used = make_check(self, name, (x, top + 5), self.adjust[key],
                                  lambda value, key=key: self.SetAdjust(key, value))
             x += used + DIALOG_PAD
-        # the files' modified date kept as they were (the editor's KEEP, the same setting,
-        # here too: it was kept unseen, by the editor's); the checks a PAD apart, all
-        self.keep = GetPreference('item_editor_keep_modified') is not False
-        make_check(self, 'Keep modified date', (x, top + 5), self.keep, self.SetKeep)
         self.checks = [(v, v.GetPosition().y - top) for v in self.GetChildren()
                        if v not in made]
+        # the files' modified date kept as they were (the editor's KEEP, the same setting,
+        # here too: it was kept unseen, by the editor's); how the files are written, not the
+        # picture, so by the buttons, apart from the picture's checks
+        self.keep = GetPreference('item_editor_keep_modified') is not False
+        made = set(self.GetChildren())
+        _, self.keep_width = make_check(self, 'Keep modified date', (0, top + 5), self.keep,
+                                        self.SetKeep)
+        self.keep_check = [(v, v.GetPosition().x, v.GetPosition().y - top)
+                           for v in self.GetChildren() if v not in made]
         # one cover for every track (an album's songs), under the chosen one's details: a
         # card chosen chosen for them all; off for one track
         self.same = False
@@ -5277,7 +5286,7 @@ class CoverLookUpBox(DialogBox):
 
     DETAILS = 230
     # what the chosen picture is made into (listimages.adjust_cover), square alone at first
-    ADJUSTS = (('square', 'Square'), ('contrast', 'Auto contrast'),
+    ADJUSTS = (('scan', 'Fix scan'), ('square', 'Square'), ('contrast', 'Auto contrast'),
                ('brightness', 'Auto brightness'), ('color', 'Auto color'))
 
     def GetButtons(self):
@@ -5463,7 +5472,7 @@ class CoverLookUpBox(DialogBox):
             data, size, done = self.GetOutput(url)
             ground = wx.Colour(macroboxstyle.current().UI.RAISED_BG).Get()[:3]
             preview, _ = fit_picture(data, self.DETAILS - CoverDetails.GUTTER, ground)
-            if size and 'Square' in done:
+            if size and ('Square' in done or 'Fix scan' in done):
                 cover = f'{cover} to {format_picture_size(size)}'
         self.Details.loading = url not in self.notes
         self.Details.SetPreview(preview)
@@ -5582,6 +5591,10 @@ class CoverLookUpBox(DialogBox):
         top = self.PlaceButtons(right=self.GetButtons())
         for window, below in self.checks:
             window.SetPosition((window.GetPosition().x, top + below))
+        # (KEEP two PADs left of the buttons)
+        x = self.PageButton.GetPosition().x - DIALOG_PAD * 2 - self.keep_width
+        for window, offset, below in self.keep_check:
+            window.SetPosition((x + offset, top + below))
 
     def SetKeep(self, value):
         self.keep = value
@@ -5595,12 +5608,14 @@ class CoverLookUpBox(DialogBox):
 
     def GetOutput(self, url):
         # the picture to write: the fetched one as the checks make it (a square one not
-        # cut again); (bytes, its size, what was done), kept till a check changes
+        # cut square again, unless its scan fixed first); (bytes, its size, what was
+        # done), kept till a check changes
         if url in self.outputs:
             return self.outputs[url]
         data = self.data[url]
         asked = dict(self.adjust)
-        asked['square'] = asked['square'] and listimages.is_square(data) is False
+        asked['square'] = asked['square'] and (
+            asked['scan'] or listimages.is_square(data) is False)
         done = [name.replace('Auto ', '') for key, name in self.ADJUSTS if asked[key]]
         data = listimages.adjust_cover(data, **asked)
         try:

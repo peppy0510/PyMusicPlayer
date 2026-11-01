@@ -218,16 +218,176 @@ def is_square(data):
     return width == height
 
 
-def crop_square(data):
-    '''the picture cut to a square on its middle, its shorter side's size (the tag editor's
-    cover menu); PNG kept PNG, any other made a JPEG; None if not a picture'''
+# straighten: a scan or a photo turned back level, its tilt found as the angle (at most the
+# first, to the second) its edges line up best along the rows and the columns; left as it
+# is when not this much better there than level; the corners the turn leaves cut off
+TILT_MOST = 5.0
+TILT_STEP = 0.1
+TILT_GAIN = 1.08
+# (found on the picture made this small: smaller was off by half a degree)
+TILT_SIZE = 400
+# trim: a scan's or a photo's edge (the scanner's lid, a shadow, a torn rim) cut off: the
+# lines from each side most of whose pixels are unlike the picture just inside, at most
+# the first share of its side, and the second share more past them
+TRIM_MOST = 0.06
+TRIM_EXTRA = 0.01
+TRIM_UNLIKE = 32
+TRIM_SHARE = 0.75
+# square: the square cut from a picture not square slid along its longer side to where it
+# is most like its mirror (a disc's ring, a logo, a face); on the middle when the mirror is
+# not this much better there
+CENTER_GAIN = 0.85
+# (all found on the picture made this small)
+FIND_SIZE = 240
+# (a picture narrower is no scan: its edge found in no lines, Look Up's details died on one)
+SCAN_LEAST = 32
+
+
+def find_tilt(picture):
+    # the degrees to turn the picture by (PIL's rotate, counter-clockwise) to level it
+    small = picture.convert('L')
+    small.thumbnail((TILT_SIZE, TILT_SIZE))
+    pixels = numpy.asarray(small, dtype=numpy.float32)
+    edges = numpy.abs(numpy.diff(pixels, axis=0))[:, :-1] + \
+        numpy.abs(numpy.diff(pixels, axis=1))[:-1, :]
+    # (the scan's own rim, level, left out: it outvoted a turned cover inside it)
+    down, across = (int(v * TRIM_MOST) + 1 for v in edges.shape)
+    edges = edges[down:-down, across:-across]
+    # (each pixel counted at a point anywhere in it, not at its middle: on the pixels' own
+    # rows level summed them whole, every other angle across two, and level always won)
+    jitter = numpy.random.RandomState(0).random_sample((2,) + edges.shape) - 0.5
+    ys, xs = numpy.indices(edges.shape) + jitter
+    ys = (ys - edges.shape[0] / 2.0).ravel()
+    xs = (xs - edges.shape[1] / 2.0).ravel()
+    # (the strong edges counted the most: a cover's rim and its lines, not its texture)
+    weights = (edges ** 2).ravel()
+    reach = int(math.hypot(*edges.shape)) + 1
+
+    def score(angle):
+        # the edges summed along the lines the angle turns the rows and the columns to,
+        # their sums' squares the larger the more they line up (counted, not the picture
+        # turned: a turn's blur made level win)
+        sine, cosine = math.sin(math.radians(angle)), math.cos(math.radians(angle))
+        rows = numpy.bincount(numpy.rint(ys * cosine - xs * sine).astype(int) + reach,
+                              weights=weights)
+        columns = numpy.bincount(numpy.rint(xs * cosine + ys * sine).astype(int) + reach,
+                                 weights=weights)
+        return (rows ** 2).sum() + (columns ** 2).sum()
+
+    # (in steps of five first, then the steps around the best of them)
+    count = int(TILT_MOST / TILT_STEP)
+    scores = dict((k, score(k * TILT_STEP)) for k in range(-count, count + 1, 5))
+    near = max(scores, key=scores.get)
+    for k in range(max(near - 4, -count), min(near + 4, count) + 1):
+        if k not in scores:
+            scores[k] = score(k * TILT_STEP)
+    best = max(scores, key=scores.get)
+    # (not >: a picture of one colour, all its scores 0, was turned the most)
+    if not scores[best] > scores[0] * TILT_GAIN:
+        return 0.0
+    return best * TILT_STEP
+
+
+def straighten(picture, angle):
+    # the picture turned by the angle, cut to the largest of its shape left whole
+    if angle == 0:
+        return picture
+    width, height = picture.size
+    sine, cosine = abs(math.sin(math.radians(angle))), math.cos(math.radians(angle))
+    scale = min(width / (width * cosine + height * sine),
+                height / (width * sine + height * cosine))
+    turned = picture.rotate(angle, Image.BICUBIC)
+    across, down = int(width * scale), int(height * scale)
+    left, top = (width - across) // 2, (height - down) // 2
+    return turned.crop((left, top, left + across, top + down))
+
+
+def find_trim_box(picture):
+    # (left, top, right, bottom) of the picture without its edge
+    width, height = picture.size
+    small = picture.convert('RGB')
+    small.thumbnail((FIND_SIZE, FIND_SIZE))
+    pixels = numpy.asarray(small, dtype=numpy.float32)
+
+    def side(lines):
+        # (lines from the edge in, each a row of pixels) the share of them cut: the last
+        # one whose pixels are most unlike those just inside the most cut
+        depth = len(lines)
+        most = max(1, int(depth * TRIM_MOST))
+        inside = numpy.median(lines[most:most + max(2, int(depth * 0.04))], axis=0)
+        cut = 0
+        for i in range(most):
+            unlike = numpy.abs(lines[i] - inside).mean(axis=1) > TRIM_UNLIKE
+            if unlike.mean() >= TRIM_SHARE:
+                cut = i + 1
+        return cut / float(depth) + TRIM_EXTRA
+
+    across = pixels.transpose(1, 0, 2)
+    left, right = side(across), side(across[::-1])
+    top, bottom = side(pixels), side(pixels[::-1])
+    return (int(round(width * left)), int(round(height * top)),
+            width - int(round(width * right)), height - int(round(height * bottom)))
+
+
+def find_square_middle(picture):
+    # where along its longer side the square cut from the picture is most like its mirror;
+    # its middle where not much more
+    width, height = picture.size
+    long, side = max(width, height), min(width, height)
+    small = picture.convert('L')
+    small.thumbnail((FIND_SIZE, FIND_SIZE))
+    pixels = numpy.asarray(small, dtype=numpy.float32)
+    axis = 1 if width >= height else 0
+    count = pixels.shape[axis]
+    window = max(1, int(round(side * count / float(long))))
+    scores = dict()
+    # (twice the middle, so one between two pixels too)
+    for double in range(window, 2 * count - window + 1):
+        length = window - (window - double) % 2
+        first = (double - length) // 2
+        part = numpy.take(pixels, range(first, first + length), axis=axis)
+        scores[double] = numpy.abs(part - numpy.flip(part, axis=axis)).mean()
+    if count not in scores:
+        return long / 2.0
+    best = min(scores, key=scores.get)
+    if scores[best] > scores[count] * CENTER_GAIN:
+        best = count
+    return long * best / (2.0 * count)
+
+
+def get_subject_square_box(picture):
+    # (left, top, right, bottom) of the square of its shorter side, slid along its longer
+    # side to the found subject (its middle when none)
+    width, height = picture.size
+    side = min(width, height)
+    middle = find_square_middle(picture)
+    start = min(max(int(round(middle - side / 2.0)), 0), max(width, height) - side)
+    if width >= height:
+        return (start, 0, start + side, side)
+    return (0, start, side, start + side)
+
+
+def cut_picture(picture, scan=False, square=False):
+    '''the picture as asked: a scan straightened and its edge cut off (scan; not one a few
+    pixels across, SCAN_LEAST), cut to a square on its subject (square)'''
+    if scan and min(picture.size) >= SCAN_LEAST:
+        picture = straighten(picture, find_tilt(picture))
+        picture = picture.crop(find_trim_box(picture))
+    if square and picture.size[0] != picture.size[1]:
+        picture = picture.crop(get_subject_square_box(picture))
+    return picture
+
+
+def cut_cover(data, scan=False, square=False):
+    '''the picture cut as cut_picture (the tag editor's cover menu); PNG kept PNG, any
+    other made a JPEG; None if not a picture'''
     try:
         picture = Image.open(io.BytesIO(data))
         picture.load()
     except Exception:
         return None
     kind = picture.format
-    picture = picture.crop(get_square_box(*picture.size))
+    picture = cut_picture(picture, scan, square)
     out = io.BytesIO()
     if kind == 'PNG':
         picture.save(out, 'PNG')
@@ -246,12 +406,14 @@ GAMMA_MOST = (0.55, 1.4)
 COLOR_PULL = 0.6
 
 
-def adjust_cover(data, square=False, contrast=False, brightness=False, color=False):
-    '''the picture made ready to write as Look Up Cover asks: cut square on its middle,
-    its levels stretched (1% cut at each end, its hues kept), its mean lightness evened,
-    its colour cast taken off; PNG kept PNG, any other made a JPEG; data itself when
-    nothing is asked or it is not a picture'''
-    if not (square or contrast or brightness or color):
+def adjust_cover(data, scan=False, square=False, contrast=False, brightness=False,
+                 color=False):
+    '''the picture made ready to write as Look Up Cover asks: a scan straightened and its
+    edge cut off, cut square on its subject (cut_picture), its levels stretched (1% cut at
+    each end, its hues kept), its mean lightness evened, its colour cast taken off; PNG
+    kept PNG, any other made a JPEG; data itself when nothing is asked or it is not a
+    picture'''
+    if not (scan or square or contrast or brightness or color):
         return data
     try:
         picture = Image.open(io.BytesIO(data))
@@ -259,8 +421,7 @@ def adjust_cover(data, square=False, contrast=False, brightness=False, color=Fal
     except Exception:
         return data
     kind = picture.format
-    if square:
-        picture = picture.crop(get_square_box(*picture.size))
+    picture = cut_picture(picture, scan, square)
     if contrast or brightness or color:
         alpha = picture.getchannel('A') if picture.mode in ('RGBA', 'LA') else None
         picture = picture.convert('RGB')
