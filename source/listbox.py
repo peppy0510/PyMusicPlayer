@@ -1449,6 +1449,10 @@ class ListBoxList(RectBox):
         if namespace == 'open_id3tageditor':
             self.OpenItemEditBox(event)
 
+        if namespace == 'look_up_cover':
+            # the selection's, as its menu's Look Up Cover
+            look_up_cover(self.parent)
+
         if namespace == 'open_scripteditor':
             self.OpenScriptEditBox(event)
 
@@ -4373,7 +4377,8 @@ class WebInfoBox(DialogBox):
         if isinstance(kept, tuple) and len(kept) == 2:
             self.SetClientSize((max(kept[0], least.width - 300), max(kept[1], least.height)))
         # (Cover: none -, fetching ..., failed Failed)
-        columns = (('Source', 72, False), ('Cover', 118, False), ('Artist', 120, True),
+        # (Cover as wide as a picture's size and ratio beside its thumbnail)
+        columns = (('Source', 72, False), ('Cover', 160, False), ('Artist', 120, True),
                    ('Title', 130, True), ('Album', 110, True), ('Release', 170, True),
                    ('Genre', 90, False), ('Length', 64, False), ('Year', 62, False),
                    ('Score', 64, False))
@@ -4384,8 +4389,10 @@ class WebInfoBox(DialogBox):
         self.order = list(range(len(candidates)))
         self.sort_column = None
         self.sort_ascending = True
-        # the Cover column's text by address, for a row a sort has moved
+        # the Cover column's text by address, for a row a sort has moved; its picture's
+        # size, sorted by
         self.cover_cells = dict()
+        self.cover_sizes = dict()
         self.List.SetCount(len(candidates))
         self.List.on_sort = self.OnColumnClick
         self.List.on_activate = lambda row: self.OnApply(None)
@@ -4507,12 +4514,10 @@ class WebInfoBox(DialogBox):
             return int(v['year'][:4]) if v['year'][:4].isdigit() else None
         if column == 9:
             return v['score']
-        text = self.GetRowValues(k)[column]
         if column == 1:
-            if ' x ' not in text:
-                return None
-            w, h = text.split(' x ')
-            return int(w) * int(h)
+            size = self.cover_sizes.get(v['image'])
+            return size[0] * size[1] if size else None
+        text = self.GetRowValues(k)[column]
         return text.casefold() if text else None
 
     def OnColumnClick(self, column):
@@ -4688,7 +4693,10 @@ class WebInfoBox(DialogBox):
         bitmap, size = self.MakeCover(data)
         self.covers[url] = (bitmap, label or (format_picture_size(size) if size else 'Not an image'))
         # its rows told (the same cover may be several releases')
-        self.cover_cells[url] = f'{size[0]} x {size[1]}' if size else 'Failed'
+        # (its ratio told as Look Up Cover's cards tell it)
+        self.cover_cells[url] = format_picture_size(size) if size else 'Failed'
+        if size:
+            self.cover_sizes[url] = size
         if size:
             self.thumbs[url] = self.MakeThumb(data)
         self.FillRows()

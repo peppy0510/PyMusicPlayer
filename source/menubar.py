@@ -216,10 +216,23 @@ class KeymapPreset():
         if preset is None:
             self.keymap_preset = default_preset
         else:
-            self.keymap_preset = preset
+            self.keymap_preset = self.MergeKeymap(preset, default_preset)
 
-        if len(preset or []) != len(default_preset):
-            self.keymap_preset = default_preset
+    def MergeKeymap(self, preset, default_preset):
+        # the saved keys by their names, in the default's order: a name new since then with
+        # its default key, none when that key is taken (all the defaults before, whenever
+        # their count changed: the user's own keys lost)
+        saved = {v[0]: tuple(v) for v in preset}
+        taken = [(v[1], v[3], v[4]) for v in saved.values() if v[2] is not None]
+        merged = list()
+        for v in default_preset:
+            if v[0] in saved:
+                merged.append(saved[v[0]])
+            elif (v[1], v[3], v[4]) in taken:
+                merged.append((v[0], '', None, False, False))
+            else:
+                merged.append(v)
+        return merged
 
     def GetNameSpaceByRawKeyFlag(self, keyflag, ctrl=False, shift=False):
         vv = [v for v in self.keymap_preset if v[2] is not None and (
@@ -249,11 +262,14 @@ class KeymapPreset():
             ('fast_backward', 'S'),
             ('loop_toggle', 'R'),
             ('loud_toggle', 'T'),
+            # (highlight_*: the mode key's now, HIGHLIGHT or SHORT; their names kept, as saved)
             ('highlight_toggle', 'Q'),
+            ('mode_switch', 'Shift + Q'),
             ('highlight_decrease', '1'),
             ('highlight_increase', '2'),
             ('playlist_toggle', 'A'),
-            ('open_id3tageditor', '`')
+            ('open_id3tageditor', '`'),
+            ('look_up_cover', 'C')
         )
 
         keymap_preset = list()
@@ -282,11 +298,13 @@ class KeymapPreset():
             'Loop toggle',
             # (as the player names them now: LOUD is MASTER, the ID3 editor the tag editor)
             'Master toggle',
-            'Highlight toggle',
-            'Highlight duration -',
-            'Highlight duration +',
+            'Highlight / Short toggle',
+            'Switch Highlight / Short',
+            'Play length -',
+            'Play length +',
             'Playlist toggle',
-            'Open tag editor'
+            'Open tag editor',
+            'Look Up Cover'
         )
         return keymap_labels
 
@@ -385,6 +403,8 @@ class KeymapPreset():
 
 class ShortcutKeyPanel(DialogPanel, KeymapPreset):
 
+    RESERVED_KEYS = ('Ctrl + A', 'Ctrl + T')
+
     def __init__(self, parent):
         DialogPanel.__init__(self, parent)
         KeymapPreset.__init__(self)
@@ -397,9 +417,11 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         self.UserInput = list()
         idx = 1
         # the dialogs' spacing: two columns PAD apart, each a name (right-aligned, NAME
-        # wide) and its field GAP past it, rows GAP apart; Default PAD under them
+        # wide) and its field GAP past it, rows GAP apart; Default PAD under them (the
+        # left column the longer: its rows' offset left for it)
         name, field = 130, 100
-        for column, part in enumerate((labels[:6], labels[6:])):
+        half = (len(labels) + 1) // 2
+        for column, part in enumerate((labels[:half], labels[half:])):
             x = DIALOG_PAD + column * (name + DIALOG_GAP + field + DIALOG_PAD)
             offset = DIALOG_PAD
             for label in part:
@@ -412,6 +434,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
                 self.UserInput[-1].Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
                 offset += DIALOG_ROW + DIALOG_GAP
                 idx += 1
+        offset = DIALOG_PAD + half * (DIALOG_ROW + DIALOG_GAP)
         offset += DIALOG_PAD - DIALOG_GAP
         self.DefaultButton = Button(self, label=u'Default')
         self.DefaultButton.SetPosition((DIALOG_PAD + name + DIALOG_GAP, offset))
@@ -465,7 +488,9 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         if shift:
             value = ' + '.join(('Shift', value))
         value = value.replace('  ', ' ')
-        if value in ('Ctrl + A'):
+        # the keys the player keeps (the list's select all, Always On Top's); ('Ctrl + A')
+        # was a string, A and C in it refused too
+        if value in self.RESERVED_KEYS:
             return
         self.UserInput[idx].SetValue(value)
         for i in range(len(self.UserInput)):
@@ -2424,29 +2449,34 @@ class MenuBar(wx.MenuBar):
 
         self.menuOption.AppendSeparator()
 
+        # Play Length: HIGHLIGHT's and SHORT's lengths in one list, as the mode key's menu
+        # (PlayBoxControlButton.PopupMode), chosen its mode on with it; HIGHLIGHT's first
+        # (MenuItems[0 to 4] read as theirs)
+        playbox = self.parent.MainPanel.PlayBox
         self.itemHighlightDurationMenu = wx.Menu()
         self.highlightDurationItems = [8, 16, 32, 48, 64]
+        self.playLengthItems = []
         for i, item in enumerate(self.highlightDurationItems):
-            title = f'{int(item * 2 / 4):2d}bar (Approx {int(item):2d}seconds)'
+            title = playbox.ControlButton.GetLengthLabel('highlight', item)
             self.itemHighlightDurationMenu.Append(wx.MenuItem(
                 self.itemHighlightDurationMenu, 200 + i + 1, title, wx.EmptyString, wx.ITEM_CHECK))
-            self.parent.Bind(wx.EVT_MENU, self.parent.OnHighlightDuration,
-                             self.itemHighlightDurationMenu.MenuItems[i])
-        # value = self.parent.MainPanel.PlayBox.GetHighlightStaticPeriodTime()
-        # idx = [i for i, v in enumerate(self.highlightDurationItems) if value == v][0]
-        self.menuOption.Append(wx.ID_ANY, u'Highlight Duration', self.itemHighlightDurationMenu)
-
-        # SHORT's lengths, HIGHLIGHT's pair (the mode key's menu had them alone)
-        playbox = self.parent.MainPanel.PlayBox
-        self.itemShortLengthMenu = wx.Menu()
-        self.shortLengthItems = []
+            self.playLengthItems.append(
+                (self.itemHighlightDurationMenu.MenuItems[i], 'highlight', item))
+        self.itemHighlightDurationMenu.AppendSeparator()
         for length, label in playbox.RADIO_EDIT_LENGTHS:
-            item = self.itemShortLengthMenu.AppendCheckItem(wx.ID_ANY, label)
-            item.Check(length == playbox.GetRadioEditLength())
-            self.shortLengthItems.append((item, length))
-            self.parent.Bind(wx.EVT_MENU, lambda e, length=length:
-                             self.parent.MainPanel.PlayBox.SetRadioEditLength(length), item)
-        self.menuOption.Append(wx.ID_ANY, u'Short Length', self.itemShortLengthMenu)
+            item = self.itemHighlightDurationMenu.AppendCheckItem(
+                wx.ID_ANY, playbox.ControlButton.GetLengthLabel('short', length))
+            self.playLengthItems.append((item, 'short', length))
+        for item, kind, length in self.playLengthItems:
+            self.parent.Bind(wx.EVT_MENU, lambda e, kind=kind, length=length:
+                             self.parent.MainPanel.PlayBox.ControlButton.ChooseLength(
+                                 kind, length), item)
+        self.itemMixSet = self.itemHighlightDurationMenu.AppendCheckItem(
+            wx.ID_ANY, playbox.ControlButton.MIX_SET_LABEL)
+        self.itemMixSet.Enable(False)
+        self.menuOption.Append(wx.ID_ANY, u'Play Length', self.itemHighlightDurationMenu)
+        # its checks as the mode key's at its opening (the keys, the mode key change them)
+        self.parent.Bind(wx.EVT_MENU_OPEN, self.OnPlayLengthOpen)
 
         self.itemSkipSilence = wx.MenuItem(
             self.menuOption, wx.ID_ANY, u'Skip Silence', wx.EmptyString, wx.ITEM_CHECK)
@@ -2484,6 +2514,14 @@ class MenuBar(wx.MenuBar):
         self.menuOption.Append(self.itemPreference)
 
         self.Append(self.menuOption, u"Option")
+
+    def OnPlayLengthOpen(self, event):
+        # (any of its menus: a few checks, and the submenu's own event not sure on every wx)
+        event.Skip()
+        button = self.parent.MainPanel.PlayBox.ControlButton
+        for item, kind, length in self.playLengthItems:
+            item.Check(button.IsLengthChecked(kind, length))
+        self.itemMixSet.Check(button.kind == 'short' and button.parent.IsMixSet())
 
     def InitMenuHelp(self):
         self.menuHelp = wx.Menu()

@@ -568,12 +568,14 @@ class PlayBox(RectBox, PlayBoxControl):
             return
 
         if namespace == 'highlight_toggle' and self.cache.oneshotkey is False:
+            # the mode key's press: its mode on or off (HIGHLIGHT's alone before, SHORT
+            # turned to HIGHLIGHT by it)
             self.cache.oneshotkey = True
-            if self.IsHighlightOn():
-                self.SetHighlightOff()
-            else:
-                self.SetHighlightOn()
-                self.GotoTrackOffsetTime()
+            self.ControlButton.ToggleMode()
+
+        if namespace == 'mode_switch' and self.cache.oneshotkey is False:
+            self.cache.oneshotkey = True
+            self.ControlButton.SwitchMode()
 
         if namespace == 'play_toggle' and self.cache.oneshotkey is False:
             self.cache.oneshotkey = True
@@ -620,23 +622,18 @@ class PlayBox(RectBox, PlayBoxControl):
 
         # if isSPKD is False and event.KeyCode in (49, 50, 51, 52, 53): # 1 2 3 4 5
         if namespace == 'highlight_increase' or namespace == 'highlight_decrease':
-            dutaionTypeId = self.GetHighlightDurationTypeId()
-            if namespace == 'highlight_increase':
-                dutaionTypeId += 1
-            if namespace == 'highlight_decrease':
-                dutaionTypeId -= 1
-            if dutaionTypeId > 4:
+            # the mode key's mode's lengths, a step shorter or longer (it turned on with them)
+            step = 1 if namespace == 'highlight_increase' else -1
+            if self.ControlButton.kind == 'short':
+                lengths = [v[0] for v in self.RADIO_EDIT_LENGTHS]
+                index = lengths.index(self.GetRadioEditLength()) + step
+                if 0 <= index < len(lengths):
+                    self.ControlButton.ChooseLength('short', lengths[index])
                 return
-            if dutaionTypeId < 0:
-                return
-            value = self.parent.parent.MenuBar.highlightDurationItems[dutaionTypeId]
-            # value = (8, 16, 32, 48, 64)[dutaionTypeId]
-            self.ChangeHighlightLength(value, turn_on=True)
-            for i in range(len(self.parent.parent.MenuBar.highlightDurationItems)):
-                if i == dutaionTypeId:
-                    self.parent.parent.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check()
-                else:
-                    self.parent.parent.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check(False)
+            dutaionTypeId = self.GetHighlightDurationTypeId() + step
+            items = self.parent.parent.MenuBar.highlightDurationItems
+            if 0 <= dutaionTypeId < len(items):
+                self.ControlButton.ChooseLength('highlight', items[dutaionTypeId])
 
     def CATCH_EVT_MOUSEWHEEL(self, event):
 
@@ -1068,30 +1065,74 @@ class PlayBoxControlButton(RectBox):
             self.parent.SetHighlightOff()
         self.reInitBuffer = True
 
+    def IsModeOn(self):
+        if self.kind == 'short':
+            return self.parent.IsRadioEditOn()
+        return self.parent.IsHighlightOn()
+
+    def ToggleMode(self):
+        self.SetMode(self.kind, not self.IsModeOn())
+
+    def SwitchMode(self):
+        # the other mode the key's, playing so when this one was on
+        self.SetMode('highlight' if self.kind == 'short' else 'short', self.IsModeOn())
+
+    # SHORT on a mix set (PlayBox.MIX_SET_SECONDS): its edit, not a length
+    MIX_SET_LABEL = 'Short on a mix set: Edit (intro, outro, breakdowns)'
+
+    @staticmethod
+    def GetLengthLabel(kind, length):
+        if kind == 'short':
+            return f'Short {int(length // 60)}:{int(length % 60):02d}'
+        return f'Highlight {int(length // 2)} bars (about {int(length)} s)'
+
+    def GetLengths(self):
+        # [(kind, length)]: the two modes' lengths in one list, HIGHLIGHT's (the main menu's
+        # seconds) then SHORT's (PlayBox.RADIO_EDIT_LENGTHS)
+        frame = self.parent.parent.parent
+        return [('highlight', v) for v in frame.MenuBar.highlightDurationItems]\
+            + [('short', v[0]) for v in self.parent.RADIO_EDIT_LENGTHS]
+
+    def IsLengthChecked(self, kind, length):
+        # the mode the key plays and its length (none of SHORT's on a mix set)
+        if kind != self.kind:
+            return False
+        if kind == 'short':
+            return length == self.parent.GetRadioEditLength() and not self.parent.IsMixSet()
+        return length == self.parent.GetHighlightStaticPeriodTime()
+
+    def ChooseLength(self, kind, length):
+        # a length chosen (the menus, the 1 and 2 keys): its mode on with it
+        if kind == 'short':
+            self.parent.SetRadioEditLength(length)
+            if self.parent.IsRadioEditOn() is False:
+                self.SetMode('short', True)
+            return
+        self.kind = kind
+        SetPreference('play_mode_kind', kind)
+        self.parent.ChangeHighlightLength(length, turn_on=True)
+        frame = self.parent.parent.parent
+        SetPreference('highlight_duration_type',
+                      frame.MenuBar.highlightDurationItems.index(length))
+        self.reInitBuffer = True
+
     def PopupMode(self):
-        # under the mode key, from its face: the mode (chosen, it plays so), then the
-        # mode's lengths (HIGHLIGHT's as the main menu's, SHORT's PlayBox.RADIO_EDIT_LENGTHS)
+        # under the mode key, from its face: the two modes' lengths, chosen it plays so;
+        # a mix set's line under SHORT's while one plays
         menu = wx.Menu()
-        for kind, label in (('highlight', 'Highlight'), ('short', 'Short')):
-            item = menu.AppendCheckItem(wx.ID_ANY, label)
-            item.Check(kind == self.kind)
-            menu.Bind(wx.EVT_MENU, lambda e, kind=kind: self.SetMode(kind, True), item)
-        menu.AppendSeparator()
-        if self.kind == 'highlight':
-            frame = self.parent.parent.parent
-            current = self.parent.GetHighlightStaticPeriodTime()
-            for i, seconds in enumerate(frame.MenuBar.highlightDurationItems):
-                item = menu.AppendCheckItem(wx.ID_ANY, f'{int(seconds // 2)} bars (about '
-                                                       f'{int(seconds)} s)')
-                item.Check(seconds == current)
-                menu.Bind(wx.EVT_MENU, lambda e, i=i: self.ChooseHighlightLength(i), item)
-        else:
-            current = self.parent.GetRadioEditLength()
-            for length, label in self.parent.RADIO_EDIT_LENGTHS:
-                item = menu.AppendCheckItem(wx.ID_ANY, label)
-                item.Check(length == current)
-                menu.Bind(wx.EVT_MENU,
-                          lambda e, length=length: self.parent.SetRadioEditLength(length), item)
+        previous = None
+        for kind, length in self.GetLengths():
+            if previous is not None and kind != previous:
+                menu.AppendSeparator()
+            previous = kind
+            item = menu.AppendCheckItem(wx.ID_ANY, self.GetLengthLabel(kind, length))
+            item.Check(self.IsLengthChecked(kind, length))
+            menu.Bind(wx.EVT_MENU, lambda e, kind=kind, length=length:
+                      self.ChooseLength(kind, length), item)
+        if self.parent.IsMixSet():
+            item = menu.AppendCheckItem(wx.ID_ANY, self.MIX_SET_LABEL)
+            item.Check(self.kind == 'short')
+            item.Enable(False)
         x, y, w, h = self.rects[0]
         self.menu_open = 8
         self.DirectDraw()
@@ -1101,15 +1142,6 @@ class PlayBoxControlButton(RectBox):
     def MenuClosed(self):
         self.menu_open = None
         self.reInitBuffer = True
-
-    def ChooseHighlightLength(self, index):
-        # as the main menu's Highlight Duration (its check moved with it)
-        frame = self.parent.parent.parent
-        items = frame.MenuBar.highlightDurationItems
-        self.parent.ChangeHighlightLength(items[index])
-        for i in range(len(items)):
-            frame.MenuBar.itemHighlightDurationMenu.MenuItems[i].Check(i == index)
-        SetPreference('highlight_duration_type', index)
 
     def SetRectDraw(self, dc):
         # uikit's faces: the toggles (HIGHLIGHT, LOOP, LOUD) on in the accent, play showing

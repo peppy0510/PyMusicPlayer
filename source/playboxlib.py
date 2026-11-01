@@ -660,6 +660,9 @@ class PlayBoxControl():
         self.pending = Struct(dbresp=False, mfeats=False, mdx=False, wave=False, early=False,
                               dbresp_lap=0.0, wave_since=0.0, grid=0.0, grid_since=time.time())
         self.failed_count = 0
+        # (path, direction) of the last move to the song before or after: a song that does
+        # not open passed by the same way (back to the one played, prev went nowhere)
+        self.cue_around = (None, 1)
         # the tempo control: a rate kept from song to song (1.0 at every start), the
         # key lock and the slider's range (percent) kept
         self.tempo_rate = 1.0
@@ -848,7 +851,8 @@ class PlayBoxControl():
             self.failed_count = 0
             self.OnPause(endoflist=True)
             return True
-        result = self.PlayAndFocusCueFileAround(1)
+        path, direction = self.cue_around
+        result = self.PlayAndFocusCueFileAround(direction if path == self.cue.path else 1)
         if result is False:
             self.failed_count = 0
             self.OnPause(endoflist=True)
@@ -1626,28 +1630,29 @@ class PlayBoxControl():
         self.cue.edit_skip = False
         self.ApplyRadioEdit(goto=True)
 
-    # SHORT's lengths (radio_edit_length): the edit as found (0), or about so many seconds
-    # (the edit's own jumps, its start and end brought in to a part's, the highlight held:
-    # mfeats.window_edit)
-    RADIO_EDIT_LENGTHS = ((0, 'Edit (intro, outro, breakdowns)'), (180, 'About 3 min'),
-                          (120, 'About 2 min'))
+    # SHORT's lengths (radio_edit_length): about so many seconds (the edit's own jumps, its
+    # start and end brought in to a part's, the highlight held: mfeats.window_edit), short
+    # to long as HIGHLIGHT's; the edit as found (0, the menu's before) only for a mix set
+    RADIO_EDIT_LENGTHS = ((120, '2:00'), (150, '2:30'), (180, '3:00'))
+    # a mix set (a DJ's, longer than this): played as its edit whatever the length (3 min
+    # of an hour's set is not its short)
+    MIX_SET_SECONDS = 15 * 60
 
     def GetRadioEditLength(self):
         # read once and kept (asked many times a frame: the settings' file opened each time
-        # held the window still)
+        # held the window still); 3 min for the edit's 0 saved before
         if getattr(self, 'radio_edit_length', None) is None:
             length = GetPreference('radio_edit_length')
             self.radio_edit_length = length if length in [
-                v[0] for v in self.RADIO_EDIT_LENGTHS] else 0
+                v[0] for v in self.RADIO_EDIT_LENGTHS] else 180
         return self.radio_edit_length
+
+    def IsMixSet(self):
+        return self.IsStreamTrack() is False and self.GetDurationTime() > self.MIX_SET_SECONDS
 
     def SetRadioEditLength(self, length):
         self.radio_edit_length = length
         SetPreference('radio_edit_length', length)
-        # Option > Short Length's check with it (set from the mode key's menu too)
-        for item, value in getattr(getattr(self.parent.parent, 'MenuBar', None),
-                                   'shortLengthItems', ()):
-            item.Check(value == length)
         self.cue.edit_skip = False
         # (now in a part it cuts: on to the next it plays, as when it is turned on)
         self.ApplyRadioEdit(goto=True)
@@ -1663,8 +1668,9 @@ class PlayBoxControl():
         # the highlight played whole in it (it was left out of most: the user)
         offset, length = self.GetHighlightTime()
         keep = (offset, offset + length) if offset is not None and length else None
+        target = None if duration > self.MIX_SET_SECONDS else self.GetRadioEditLength()
         key = (self.cue.mdx, grid.bpm, self.GetGridPhraseStart(), len(waveform), duration,
-               self.GetRadioEditLength(), keep)
+               target, keep)
         if self.radio_edit_cache is None or self.radio_edit_cache[0] != key:
             COUNTS['radio_edit'] += 1
             COUNTS['radio_edit_key'] = hash(key) % 1000
@@ -2251,6 +2257,7 @@ class PlayBoxControl():
         if path is None:
             return False
         self.cue.path = path
+        self.cue_around = (path, direction)
         self.OnPlay()
         return True
 

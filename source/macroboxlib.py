@@ -770,9 +770,23 @@ class MFEATS_Scheduler(ThreadTimer):
             #     t.start()
 
     def AddMFEATSTasks(self, paths):
+        # rows marked to be analyzed whose songs had nothing left to do: their rows told
+        # so (a song done after FindOutdated's look was marked again by QueueOutdated, and
+        # its waiting ring stayed on with nothing queued)
+        done = [path for path in paths
+                if self.AddMFEATSTask(path, urgent=False, redraw=False) is False]
+        wx.CallAfter(self.UpdateDoneItems, done)
+
+    def UpdateDoneItems(self, paths):
+        if not self.parent:
+            return
         for path in paths:
-            self.AddMFEATSTask(path, urgent=False, redraw=False)
-        wx.CallAfter(self.RequestListRedraw)
+            if os.path.isfile(path) is False:
+                # its broken link shown
+                self.parent.ListBox.CheckItemConsistencyByPathAll(path)
+                continue
+            self.UpdateItemsValue(path)
+        self.RequestListRedraw()
 
     def SetProcsLimit(self, value):
         self.procs_limit = value
@@ -797,13 +811,18 @@ class MFEATS_Scheduler(ThreadTimer):
         # a station's stream has nothing to analyze
         if audio.is_stream_path(path):
             return
+        # gone from its folder: nothing to analyze (its row marked so by AddMFEATSTasks; queued,
+        # it waited in the queue at every look)
+        if os.path.isfile(path) is False:
+            return False
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
         # analyzed by an older version: analyzed again; analyzed, its grid not: the grid
         if resp is not None and resp.version == mfeats.MFEATS_VERSION and forced is False:
             if resp.error != 0 or mfeats.is_grid_current(resp.mdx):
-                return
+                # nothing left to do (False: AddMFEATSTasks tells its rows so)
+                return False
         if forced:
             self.forcedpath.add(path)
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
