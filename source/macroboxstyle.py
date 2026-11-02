@@ -13,7 +13,7 @@ STYLE_NAMES = sorted(['Dark Red', 'Dark Black', 'Dark Gray', 'Light Gray', 'Snow
 DEFAULT_NAME = 'Dark Red'
 # red in place of the scheme's blue on these tokens
 ACCENT_NAMES = ('Blue', 'Red')
-DEFAULT_ACCENT = 'Blue'
+DEFAULT_ACCENT = 'Red'
 ACCENT_TOKENS = (('UI', ('ACCENT', 'FIELD_FOCUS')),
                  ('LISTBOX', ('SELECTED_BG_COLOR', 'SELECTED_BAR_COLOR',
                               'INSERTITEM_CURSOR_COLOR', 'INSERTCOLCURSOR_FG_COLOR')),
