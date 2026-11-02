@@ -104,6 +104,16 @@ def send_filepath_to_mainapp(filepath):
     sock.close()
 
 
+def wait_for_previous(pid):
+    # an update restarts the player; the new copy waits for the old one to go (its
+    # instance check would find it and not start)
+    import psutil
+    try:
+        psutil.Process(pid).wait(10)
+    except psutil.Error:
+        pass
+
+
 def main(initfile=None):
     # root = Path(__file__).resolve().parent.parent
     # debug = root.joinpath('log/debug.log')
@@ -120,7 +130,10 @@ def main(initfile=None):
         nargs='?',
         help='filepath',
     )
+    parser.add_argument('--after', type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.after is not None:
+        wait_for_previous(args.after)
     if args.filepath:
         filepath = args.filepath.strip('\'" ')
         if filepath and Path(filepath).exists():

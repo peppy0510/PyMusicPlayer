@@ -26,7 +26,6 @@ from dialogbox import AnalyzerVersionBox
 from dialogbox import CheckItemsConsistencyConfirmBox
 from dialogbox import DialogBox
 from dialogbox import DialogPanel
-from dialogbox import UpdateBox
 from listbox import FileOpenDialog
 from listbox import FileSaveDialog
 from listbox import LibrarySearchBox
@@ -985,9 +984,6 @@ class MacroBoxPreference():
             SetPreference('tutotial_show', True)
         self.MainPanel.OnSize()
         self.MainPanel.ListBox.SetListUnLockAll()
-        auto_check_update = GetPreference('auto_check_update')
-        if auto_check_update is None or auto_check_update:
-            self.OnAutoCheckUpdate(None)
         # if GetPreference('tutotial_show'):
         #   self.OnTutorial(None)
         self.PlayBoxTitleFormat = PlayBoxTitleFormat(self)
@@ -1522,6 +1518,36 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.AccentColor.SetToolTip(wx.ToolTip(
             'The buttons on, the selected tracks and a field\'s focus.'))
 
+        # GitHub's latest release, looked for once a day (updater; the notice over the list)
+        frame = self.parent.parent.parent
+        offset += GROUP
+        StaticText(self, label='Check for Updates', pos=(DIALOG_PAD, offset + 3),
+                   size=(200, -1), style=wx.ALIGN_RIGHT)
+        self.CheckUpdates = CheckBox(self)
+        self.CheckUpdates.SetPosition((FIELD, offset + 4))
+        self.CheckUpdates.SetValue(frame.UpdateCheck)
+        self.CheckUpdates.Bind(wx.EVT_CHECKBOX,
+                               lambda event: frame.SetUpdateCheck(event.IsChecked()))
+        self.CheckUpdates.SetToolTip(wx.ToolTip(
+            'Once a day, a notice over the playlist when a new release is out.'))
+
+        offset += ROW
+        StaticText(self, label='Latest Release', pos=(DIALOG_PAD, offset + 3),
+                   size=(200, -1), style=wx.ALIGN_RIGHT)
+        self.CheckNow = Button(self, label='Check Now')
+        self.CheckNow.SetRect((FIELD, offset - 1, 90, 24))
+        self.CheckNow.Bind(wx.EVT_BUTTON, lambda event: frame.OnCheckUpdates())
+        # the last look's result, as wide as its longest (the dialog's width does not
+        # follow it as it changes)
+        self.UpdateResult = StaticText(self, label='', style=wx.ST_NO_AUTORESIZE)
+        self.UpdateResult.reserved = True
+        widest = max(self.UpdateResult.GetTextExtent(text)[0] for text in (
+            'Look for a new release on GitHub', 'Up to date, checked at 00:00',
+            '0.00.00 skipped, checked at 00:00'))
+        self.UpdateResult.SetRect((FIELD + 90 + DIALOG_GAP, offset + 3, widest,
+                                   self.UpdateResult.GetCharHeight() + 2))
+        frame.UpdateStatusView = self
+
         # offset += 10
         # offset += 25
         # label = u'Default Audio Player'
@@ -1542,6 +1568,16 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.GetTopLevelParent().Refresh()
         for window in self.GetTopLevelParent().GetChildren():
             self.parent.parent.parent.RedrawAll(window)
+
+    def ShowUpdateStatus(self):
+        # the frame's last result (MainFrame.SetUpdateStatus), a failure in the warning's
+        # orange
+        text, tone = self.parent.parent.parent.UpdateStatus
+        tokens = macroboxstyle.current().UI
+        self.UpdateResult.SetForegroundColour(tokens.WARN if tone == 'warn'
+                                              else tokens.BAR_TEXT_DIM)
+        self.UpdateResult.SetLabel(text)
+        self.UpdateResult.Refresh()
 
     def OnWaveformMode(self, event):
         mode = self.waveform_modes[self.WaveformMode.GetSelection()][0]
@@ -1854,6 +1890,8 @@ class PreferenceBox(DialogBox):
             if isinstance(child, wx.StaticText):
                 child.SetForegroundColour(dim)
             stack.extend(child.GetChildren())
+        # (the latest release's result in its own tone)
+        self.Notebook.MFEATSPanel.ShowUpdateStatus()
 
         width, height = self.GetClientSize()
         self.CloseButton = Button(self, label='Close', primary=True)
@@ -1879,7 +1917,8 @@ class PreferenceBox(DialogBox):
         # empty at their right); a text by its words, not its box
         def right(c):
             w = c.GetSize().width
-            if isinstance(c, wx.StaticText):
+            # (a text kept as wide as its longest, whatever it says now: its whole width)
+            if isinstance(c, wx.StaticText) and not getattr(c, 'reserved', False):
                 w = min(w, c.GetBestSize().width)
             return c.GetPosition().x + w
         wide = max(max(right(c) for c in p.GetChildren()) for p in pages)
@@ -2258,14 +2297,9 @@ class MacroBoxMenuBar():
     #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnUpdate(self, event):
-        self.DialogBox = UpdateBox(None)
-        x, y, w, h = self.GetRect()
-        width, height = self.DialogBox.GetSize()
-        self.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
-        self.DialogBox.ShowModal()
-        self.DialogBox = None
-        self.MainPanel.ListBox.reInitBuffer = True
+        # GitHub's latest release (updater): its notice over the playlist when newer, the
+        # answer on the status line otherwise
+        self.OnCheckUpdates()
 
     def OnHelp(self, event):
         self.RedirecUrl(PRODUCT_ONLINE_HELP_URL)

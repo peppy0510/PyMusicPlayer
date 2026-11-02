@@ -8,7 +8,7 @@ email: peppy0510@hotmail.com
 
 
 __appname__ = 'PyMusicPlayer'
-__version__ = '1.3.1000'
+__version__ = '1.4.0'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''
@@ -23,13 +23,13 @@ import mfeats
 import multiprocessing
 import os
 import socketserver
+import subprocess
 import sys
 import threading
 import time
 import radio
 import wx
 
-from dialogbox import AutoCheckUpdate
 from listbox import ListBox
 from listbox import ListBoxSash
 from listbox import ListBoxSearch
@@ -39,16 +39,22 @@ from macroboxlib import BorderBoxH
 from macroboxlib import EVENT_Scheduler
 from macroboxlib import EventDistributor
 from macroboxlib import GetPreference
+from macroboxlib import GetPreferences
 from macroboxlib import MFEATS_Network_Scheduler
 from macroboxlib import MFEATS_Scheduler
 from macroboxlib import PopupMenuEventCatcher
 from macroboxlib import RectRect
 from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import SetPreference
+from macroboxlib import SetPreferences
 from menubar import KeymapPreset
 from menubar import MacroBoxMenuBar
 from menubar import MacroBoxPreference
 from playbox import PlayBox
 from pybass import pybass
+from updatebox import UpdateBox
+from updater import Updater
+from updater import restart_source
 from utilities import Struct
 from utilities import kill_existing_instances
 from utilities import kill_self_process
@@ -92,6 +98,8 @@ LIST_TAB_ANIMATION_DURATION = 80
 
 # the search row's height over the list (ListBoxSearch)
 SEARCH_ROW_HEIGHT = 32
+# the preference's Latest Release row before a look this session
+UPDATE_NOTE = 'Look for a new release on GitHub'
 
 
 class ListTabAnimationTimer(wx.Timer):
@@ -132,6 +140,8 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.list_tab_ratio_target = 1.0
         self.list_tab_lap = 0.0
         self.ListTabAnimation = ListTabAnimationTimer(self)
+        # a newer release over the search row (hidden, no room taken, till one is found)
+        self.UpdateBox = UpdateBox(self, parent.OnUpdateAction)
         self.PlayBox = PlayBox(self)
         self.ListBox = ListBox(self)
         self.ListTab = ListBoxTab(self)
@@ -167,6 +177,9 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
     def DistributeEvent(self, event):
         self.EventSkipTimer()
+        # the daily look for a release (nothing more than a clock read till it is due)
+        self.parent.Updater.tick(self.parent.UpdateCheck)
+        self.UpdateBox.CatchEvent(event)
         self.PlayBox.CatchEvent(event)
         self.PlayBox.Wave.CatchEvent(event)
         self.PlayBox.WaveDetail.CatchEvent(event)
@@ -249,6 +262,11 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         list_top = pbh + sph
         # down to the status line (its 27 rows at the window's bottom; the 5 under it gone)
         list_height = h - pbh + sph - (26 + 35) + 26
+        # a newer release's notice first, under the player (0 tall while there is none)
+        notice = self.UpdateBox.GetHeight(w - right_panel_width)
+        self.UpdateBox.SetRect((0, list_top, w - right_panel_width, notice))
+        list_top += notice
+        list_height -= notice
         # the search row across the window (its sidebar key at the left, over the sidebar;
         # a field of its own width whether the sidebar is open or not), the sidebar and the
         # list under it
@@ -303,8 +321,9 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             wx.CallAfter(self.parent.FitLeastHeight)
 
     def GetLeastHeight(self):
-        # the player, the search row and the status line, the list none tall (SetListRects)
-        return self.GetPlayBoxHeight() + 31 + SEARCH_ROW_HEIGHT
+        # the player, a release's notice, the search row and the status line, the list none
+        # tall (SetListRects)
+        return self.GetPlayBoxHeight() + 31 + self.UpdateBox.GetHeight() + SEARCH_ROW_HEIGHT
 
     def OnListTabSize(self):
         self.Freeze()
@@ -463,6 +482,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.SetMaxSize((-1, -1))
         # self.SetMaxSize((800, -1))
         # self.toolbar = self.CreateToolBar()
+        self.InitUpdater()
         self.MainPanel = MainPanel(self)
         self.MainPanel.MFEATS.AutoAnalyzer()
         MacroBoxMenuBar.__init__(self)
@@ -551,10 +571,129 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
             self.MainPanel.OnSize()
         self.Thaw()
 
-    def OnAutoCheckUpdate(self, event):
-        self.AutoCheckUpdate = AutoCheckUpdate(self)
+    def InitUpdater(self):
+        # read once here (a preference read opens the shelve): the panel's tick asks
+        # UpdateCheck every event
+        values = GetPreferences(('update_check', 'update_checked_at', 'update_skipped',
+                                 'auto_check_update'))
+        check, checked_at, skipped, old_check = values
+        # the old update dialog's check box, till this one is set
+        self.UpdateCheck = check if check is not None else old_check is not False
+        self.Updater = Updater({'update_checked_at': checked_at, 'update_skipped': skipped},
+                               self.__version__, self.OnUpdateChecked)
+        self.UpdateRelease = None
+        # the last result, for the preference's Latest Release row (and the row showing it)
+        self.UpdateStatus = (UPDATE_NOTE, 'plain')
+        self.UpdateStatusView = None
+
+    def SetUpdateCheck(self, value):
+        self.UpdateCheck = bool(value)
+        SetPreference('update_check', self.UpdateCheck)
+
+    def SetUpdateStatus(self, text, tone='plain'):
+        self.UpdateStatus = (text, tone)
+        view = self.UpdateStatusView
+        if view:
+            view.ShowUpdateStatus()
+
+    def TellUpdateStatus(self, text, color):
+        # asked from the menu or the preference: the answer on the status line too
+        status = self.MainPanel.StatusBox
+        status.alarm = text
+        status.alarm_color = color
+        status.alarm_timer = 0
+
+    def OnCheckUpdates(self):
+        self.SetUpdateStatus('Checking…')
+        self.Updater.check(forced=True)
+
+    def GetCheckedTime(self):
+        return time.strftime('%H:%M', time.localtime(self.Updater.checked_at))
+
+    def OnUpdateChecked(self, release, result, forced):
+        # a queued call can arrive after close
+        if not self:
+            return
+        if result == 'error':
+            self.SetUpdateStatus('Could not reach GitHub', 'warn')
+            if forced:
+                self.TellUpdateStatus('Could not reach GitHub for updates', 'red')
+            return
+        SetPreferences((('update_checked_at', self.Updater.checked_at),
+                        ('update_skipped', self.Updater.skipped)))
+        if result == 'found':
+            self.SetUpdateStatus(f'{release["version"]} is available')
+            self.ShowUpdate(release)
+            return
+        if result == 'skipped':
+            self.SetUpdateStatus(f'{self.Updater.skipped} skipped, '
+                                 f'checked at {self.GetCheckedTime()}')
+        else:
+            self.SetUpdateStatus(f'Up to date, checked at {self.GetCheckedTime()}')
+        if forced:
+            self.TellUpdateStatus(f'{self.__appname__} {self.__version__} is up to date', 'blue')
+
+    def ShowUpdate(self, release):
+        box = self.MainPanel.UpdateBox
+        # a notice already updating stays as it is
+        if box.IsShown() and box.state == 'busy':
+            return
+        self.UpdateRelease = release
+        box.ShowRelease(release, self.__version__)
+        self.FitLeastHeight()
+
+    def HideUpdate(self):
+        self.MainPanel.UpdateBox.HideRelease()
+        self.MainPanel.OnSize()
+        self.FitLeastHeight()
+
+    def OnUpdateAction(self, key):
+        release = self.UpdateRelease
+        if key == 'skip':
+            self.Updater.skipped = release['version']
+            SetPreference('update_skipped', self.Updater.skipped)
+            self.SetUpdateStatus(f'{release["version"]} skipped')
+            self.HideUpdate()
+        elif key == 'later':
+            self.HideUpdate()
+        elif key == 'cancel':
+            self.Updater.cancel()
+        elif release['kind'] == 'page':
+            # explorer hands the link to the shell (the default browser, not this process's)
+            subprocess.Popen(['explorer', release['page']])
+            self.HideUpdate()
+        else:
+            if release['kind'] == 'installer':
+                self.MainPanel.UpdateBox.SetBusy('Downloading 0%', 0.0)
+            else:
+                self.MainPanel.UpdateBox.SetBusy('Updating…')
+            self.Updater.update(release, self.OnUpdateProgress, self.OnUpdateDone)
+
+    def OnUpdateProgress(self, ratio):
+        box = self.MainPanel.UpdateBox if self else None
+        if not box or box.state != 'busy':
+            return
+        message = f'Downloading {int(ratio * 100)}%'
+        if message != box.message:
+            box.SetBusy(message, ratio)
+
+    def OnUpdateDone(self, error):
+        if not self:
+            return
+        if error is not None:
+            self.MainPanel.UpdateBox.SetFailed(error)
+            return
+        if self.UpdateRelease['kind'] == 'git':
+            try:
+                restart_source()
+            except OSError:
+                self.MainPanel.UpdateBox.SetFailed('Updated, start the player again to use it')
+                return
+        # the installer replaces the player's files once it is gone
+        self.Close()
 
     def OnClose(self, event):
+        self.Updater.cancel()
         self.Hide()
         clear_instance_port()
         self.SavePreferences()

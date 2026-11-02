@@ -10,12 +10,9 @@ email: peppy0510@hotmail.com
 import audio
 import collections
 import images
-import json
 import macroboxstyle
 import mfeats
-import socket
 import threading
-import urllib
 import webbrowser
 import wx
 
@@ -25,21 +22,11 @@ from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
 from macroboxlib import DIALOG_GAP
 from macroboxlib import DIALOG_PAD
-from macroboxlib import make_check
 from macroboxlib import FONT_ITEM
 from macroboxlib import FancyButton
 from macroboxlib import FancyDialogBox
 from macroboxlib import FancyDialogBoxGlobalEvent
-from macroboxlib import GetPreference
-from macroboxlib import MACROBOX_DOWNLOAD_URL
 from macroboxlib import MUTEKLAB_WEB_URL
-from macroboxlib import PRODUCT_BUILD
-from macroboxlib import PRODUCT_EDITION
-from macroboxlib import PRODUCT_NAME
-from macroboxlib import PRODUCT_PLATFORM
-from macroboxlib import PRODUCT_UPDATE_CHECK_URL
-from macroboxlib import PRODUCT_VERSION
-from macroboxlib import SetPreference
 from macroboxlib import StaticText
 # import urllib2
 
@@ -74,9 +61,7 @@ class AboutPanel(DialogPanel):
         text.SetPosition((x, offset))
 
         offset += 28
-        version = self.parent.parent.__version__.split('.')
-        label = (f'{self.parent.parent.__appname__} Version {".".join(version[:2])} '
-                 f'build {version[-1]}')
+        label = f'{self.parent.parent.__appname__} Version {self.parent.parent.__version__}'
         # label = label % (
         #     PRODUCT_NAME, PRODUCT_EDITION, PRODUCT_VERSION, PRODUCT_BUILD)
         text = StaticText(self, label=label)
@@ -330,90 +315,6 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
         self.Destroy()
 
 
-class UpdateCheckThread(threading.Thread):
-
-    def __init__(self, parent):
-        threading.Thread.__init__(self)
-        self.parent = parent
-        self.result = None
-        self.step = 0
-        self.max_step = 6
-
-    def run(self):
-        socket.setdefaulttimeout(5)
-        url = PRODUCT_UPDATE_CHECK_URL
-        # url = 'http://invalid.com/'
-        values = {
-            'platform': PRODUCT_PLATFORM,
-            'name': PRODUCT_NAME,
-            'edition': PRODUCT_EDITION,
-            'version': PRODUCT_VERSION,
-            'build': PRODUCT_BUILD}
-        try:
-            data = urllib.urlencode(values)
-            self.step = 1
-            req = urllib.request(url, data)
-            # req = urllib2.Request(url, data)
-            self.step = 2
-            response = urllib.urlopen(req)
-            # response = urllib2.urlopen(req)
-            self.step = 3
-            result = response.read()
-            self.step = 4
-            result = json.loads(result)
-            self.step = 5
-        except Exception:
-            result = None
-        self.result = result
-        self.step = 6
-        # result = {url, version, build, md5, result}
-
-    def __del__(self):
-        pass
-
-
-class AutoCheckUpdate(wx.Timer):
-
-    def __init__(self, parent):
-        wx.Timer.__init__(self)
-        self.parent = parent
-        self.Thread = UpdateCheckThread(None)
-        self.stop = False
-        self.interval = 50
-        self.Start(self.interval)
-        self.Thread.start()
-
-    def Notify(self):
-        if self.stop:
-            return
-        if self.Thread.step != self.Thread.max_step:
-            return
-        result = self.Thread.result
-        if result is None:
-            self.stop = True
-            self.Destroy()
-            return
-        if result['result'] is False:
-            self.stop = True
-            self.Destroy()
-            return
-        if self.parent.DialogBox is not None:
-            return
-        self.stop = True
-        self.parent.DialogBox = AutoUpdateBox(self.parent.MainPanel, result)
-        x, y, w, h = self.parent.GetRect()
-        width, height = self.parent.DialogBox.GetSize()
-        self.parent.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
-        self.parent.DialogBox.ShowModal()
-        self.parent.DialogBox = None
-        self.parent.MainPanel.ListBox.reInitBuffer = True
-        self.Destroy()
-
-    def OnClose(self, event):
-        self.Destroy()
-
-
 class AnalyzerVersionBox(DialogBox):
 
     '''the playlists' songs analyzed by an older analyzer (or their grid by an older one,
@@ -488,171 +389,4 @@ class AnalyzerVersionBox(DialogBox):
     def OnClose(self, event):
         if self.IsModal():
             self.EndModal(0)
-        self.Destroy()
-
-
-class UpdateBoxCommon(DialogBox):
-
-    def __init__(self, parent, size=(-1, -1), pos=(-1, -1), content=None):
-        # content: its words' (and bar's) height, PAD round them (a progress's at most)
-        DialogBox.__init__(self, parent, size=size, pos=pos)
-        self.parent = parent
-        self.CloseButton = Button(self, label='Close')
-        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
-        self.DownloadButton = Button(self, label='Download', primary=True)
-        self.DownloadButton.Bind(wx.EVT_BUTTON, self.OnDownload)
-        self.DownloadButton.Disable()
-
-        # the words (and a progress's bar) PAD in, the footer under them: the check box at
-        # its left, the buttons at its right (the dialogs' spacing)
-        self.SetClientSize((self.GetClientSize().width,
-                            (content or PROGRESS_HEIGHT) + self.GetFooterHeight()))
-        top = self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
-        preference = GetPreference('auto_check_update')
-        self.AutoCheckUpdate, _ = make_check(self, u'Auto check update on startup',
-                                             (DIALOG_PAD, top + 5), preference is not False,
-                                             self.OnAutoCheckUpdate)
-
-    def OnDownload(self, event):
-        webbrowser.open(MACROBOX_DOWNLOAD_URL)
-
-    def OnAutoCheckUpdate(self, value):
-        SetPreference('auto_check_update', bool(value))
-
-
-class UpdatePanel(wx.Panel):
-
-    def __init__(self, parent):
-        wx.Panel.__init__(self, parent, wx.ID_ANY,
-                          style=wx.CLIP_CHILDREN | wx.FRAME_SHAPED |
-                          wx.NO_FULL_REPAINT_ON_RESIZE | wx.TAB_TRAVERSAL)
-        self.parent = parent
-        self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
-        width, height = self.parent.GetSize()
-        self.SetRect((0, 0, width, 58))
-        self.TextMessage = StaticText(self, label='', pos=(DIALOG_PAD, DIALOG_PAD))
-
-    def OnClose(self, event):
-        self.Destroy()
-
-
-class AutoUpdateBox(UpdateBoxCommon):
-
-    def __init__(self, parent, result):
-        UpdateBoxCommon.__init__(self, parent, size=(400, 130), content=DIALOG_PAD * 2 + 18)
-        self.parent = parent
-        self.result = result
-        self.SetTitle('Update Notify')
-        width, height = self.GetClientSize()
-        self.UpdatePanel = UpdatePanel(self)
-        label = (f'New update are available. (Version {self.result["version"]} Build '
-                 f'{self.result["build"]})')
-        self.UpdatePanel.TextMessage.SetLabelText(label)
-        self.DownloadButton.Enable()
-        self.OnSize(None)
-
-    def OnSize(self, event):
-        self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
-
-    def OnClose(self, event):
-        self.Destroy()
-
-
-class UpdateCheckProgressPanel(DialogPanel):
-
-    def __init__(self, parent):
-        DialogPanel.__init__(self, parent)
-        self.parent = parent
-        width, height = self.GetClientSize()
-        label = u'Check avaliable update.'
-        self.TextMessage = StaticText(self, label=label)
-        self.TextMessage.SetPosition((DIALOG_PAD, DIALOG_PAD))
-        self.ProgressBar = ProgressBar(self, range=self.parent.Thread.max_step)
-        self.Bind(wx.EVT_SIZE, self.OnSize)
-        self.OnSize(None)
-
-    def OnSize(self, event):
-        width, height = self.GetClientSize()
-        self.ProgressBar.SetRect((DIALOG_PAD, DIALOG_PAD + 18 + DIALOG_GAP,
-                                  width - DIALOG_PAD * 2, 10))
-
-    def OnClose(self, event):
-        self.Destroy()
-
-
-class UpdateBoxTimer(wx.Timer):
-
-    def __init__(self, parent):
-        wx.Timer.__init__(self)
-        self.parent = parent
-
-    def Notify(self):
-        self.parent.Notify()
-
-
-class UpdateBox(UpdateBoxCommon):
-
-    def __init__(self, parent):
-        UpdateBoxCommon.__init__(self, parent, size=(400, 155))
-        self.parent = parent
-        self.SetTitle('Update Check')
-        self.Thread = UpdateCheckThread(self)
-        self.ProgressPanel = UpdateCheckProgressPanel(self)
-        self.OnSize(None)
-        self.stop = False
-        self.interval = 20
-        self.Timer = UpdateBoxTimer(self)
-        self.Timer.Start(self.interval)
-        self.Thread.start()
-
-    def Notify(self):
-        if self.stop:
-            return
-        self.UpdateProgress()
-
-    def OnSize(self, event):
-        self.ProgressPanel.OnSize(None)
-        width, height = self.GetClientSize()
-        self.ProgressPanel.SetSize((width, PROGRESS_HEIGHT))
-        self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
-
-    def UpdateProgress(self):
-        if hasattr(self, 'Thread') is False:
-            return
-        if hasattr(self.ProgressPanel, 'ProgressBar') is False:
-            width, height = self.GetSize()
-        label = ('Check avaliable update. (Step '
-                 f'{int(self.Thread.step)}/{int(self.Thread.max_step)})')
-        self.ProgressPanel.TextMessage.SetLabelText(label)
-        self.ProgressPanel.ProgressBar.SetValue(self.Thread.step)
-        if self.Thread.step != self.Thread.max_step:
-            return
-        self.stop = True
-        result = self.Thread.result
-        if result is None:
-            label = u'Please try later. (Server connection error)'
-            self.ProgressPanel.TextMessage.SetLabelText(label)
-            return
-        if result['result'] is False:
-            label = u'No update available. (Current version is the latest)'
-            self.ProgressPanel.TextMessage.SetLabelText(label)
-            return
-        self.DownloadButton.Enable()
-        self.ProgressPanel.Destroy()
-        self.UpdatePanel = UpdatePanel(self)
-        width, height = self.GetSize()
-        self.SetSize((width, 140))
-        width, height = self.GetSize()
-        self.CloseButton.SetPosition((width - 95, height - 68))
-        self.DownloadButton.SetPosition((width - 95 - 80, height - 68))
-        self.AutoCheckUpdate.SetPosition((20, height - 63))
-        label = f'New update are available. (Version {result["version"]} Build {result["build"]})'
-        self.UpdatePanel.TextMessage.SetLabelText(label)
-        self.Refresh()
-
-    def OnClose(self, event):
-        self.stop = True
-        if self.Thread.is_alive():
-            # self.Thread._Thread__stop()
-            self.Thread._stop()
         self.Destroy()

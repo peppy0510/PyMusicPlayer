@@ -30,7 +30,8 @@ class BuildBase():
         icondir = os.path.join('assets', 'icon')
         iconsrc = os.path.join(icondir, 'icon.png')
         icondst = os.path.join(icondir, 'icon.ico')
-        mainsrc = os.path.join('source', 'main.pyw')
+        # __appname__, __version__ (X.Y.Z) and __author__ are read from there into the iss
+        mainsrc = os.path.join('source', 'mainapp.py')
         spec = 'makebuild.spec'
         iss = 'makeinstaller.iss'
         winsxs = 'C:\\Windows\\WinSxS'
