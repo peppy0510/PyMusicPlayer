@@ -140,6 +140,37 @@ def get_caps_ink(font):
     return CAPS_INK[key]
 
 
+# a text's ink across (from where it is drawn, its width), measured once a font and text,
+# the latest TEXT_INK_MOST
+TEXT_INK = {}
+TEXT_INK_MOST = 500
+
+
+def get_text_ink(font, text):
+    # the text drawn by the same renderer, its lit columns found: centred by its advance, a
+    # digit's side bearings left it off its middle (a badge's count, 5 px one side, 7 the other)
+    key = (font.GetPixelSize().height, font.GetWeight(), font.GetFaceName(), text)
+    if key in TEXT_INK:
+        return TEXT_INK[key]
+    height = font.GetPixelSize().height * 2 + 4
+    width = height * (len(text) + 1)
+    bitmap = wx.Bitmap(width, height)
+    dc = wx.MemoryDC(bitmap)
+    dc.SetBackground(wx.Brush(wx.BLACK))
+    dc.Clear()
+    gc = wx.GraphicsContext.Create(dc)
+    gc.SetFont(font, wx.WHITE)
+    gc.DrawText(text, 2, 0)
+    del gc
+    dc.SelectObject(wx.NullBitmap)
+    image = bitmap.ConvertToImage()
+    cols = [x for x in range(width) if any(image.GetRed(x, y) > 128 for y in range(height))]
+    if len(TEXT_INK) >= TEXT_INK_MOST:
+        TEXT_INK.clear()
+    TEXT_INK[key] = (cols[0] - 2, cols[-1] - cols[0] + 1) if cols else (0, 0)
+    return TEXT_INK[key]
+
+
 def get_caps_top(font, top, height):
     # where text in capitals is drawn for its letters' middle on the box's middle (the
     # whole text box, its descent under the capitals, centred them low)
@@ -348,6 +379,25 @@ def draw_icon(gc, icon, rect, ink):
         path.AddLineToPoint(cx, cy + sign * half * 0.36)
         path.AddLineToPoint(cx + half * 0.62, cy - sign * half * 0.28)
         gc.StrokePath(path)
+    elif icon in ('star', 'starred'):
+        # a five-pointed star: outlined, filled while on (the shape tells it, not the face's
+        # colour alone)
+        path = gc.CreatePath()
+        for k in range(10):
+            radius = half * 1.25 if k % 2 == 0 else half * 0.52
+            angle = math.pi / 2 + k * math.pi / 5
+            px, py = cx + radius * math.cos(angle), cy + 0.5 - radius * math.sin(angle)
+            if k == 0:
+                path.MoveToPoint(px, py)
+            else:
+                path.AddLineToPoint(px, py)
+        path.CloseSubpath()
+        if icon == 'starred':
+            gc.FillPath(path)
+        else:
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.2)))
+            gc.SetBrush(wx.NullGraphicsBrush)
+            gc.StrokePath(path)
     elif icon == 'menu':
         # three bars: the sidebar
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.4)))

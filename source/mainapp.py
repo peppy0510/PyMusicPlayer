@@ -8,7 +8,7 @@ email: peppy0510@hotmail.com
 
 
 __appname__ = 'PyMusicPlayer'
-__version__ = '1.4.0'
+__version__ = '1.5.0'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''
@@ -30,6 +30,7 @@ import time
 import radio
 import wx
 
+from dialogbox import UpdateCheckBox
 from listbox import ListBox
 from listbox import ListBoxSash
 from listbox import ListBoxSearch
@@ -593,11 +594,33 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         status.alarm_timer = 0
 
     def OnCheckUpdates(self):
+        # the Update Check dialog (dialogbox.UpdateCheckBox) while GitHub is asked, its
+        # answer there (OnUpdateChecked)
+        if self.DialogBox is not None:
+            return
+        self.DialogBox = self.UpdateCheckDialog = UpdateCheckBox(self)
+        x, y, w, h = self.GetRect()
+        width, height = self.DialogBox.GetSize()
+        self.DialogBox.SetRect((x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.Updater.check(forced=True)
+        self.DialogBox.ShowModal()
+        self.DialogBox = self.UpdateCheckDialog = None
 
     def OnUpdateChecked(self, release, result, forced):
         # a queued call can arrive after close
         if not self:
+            return
+        dialog = getattr(self, 'UpdateCheckDialog', None)
+        if dialog:
+            if result == 'skipped':
+                # (the daily check's, under way when the dialog asked: asked again, a
+                # skipped version shown when asked)
+                self.Updater.check(forced=True)
+                return
+            if result != 'error':
+                SetPreferences((('update_checked_at', self.Updater.checked_at),
+                                ('update_skipped', self.Updater.skipped)))
+            dialog.ShowResult(release, result)
             return
         if result == 'error':
             if forced:

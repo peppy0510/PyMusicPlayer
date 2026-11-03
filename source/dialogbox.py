@@ -10,6 +10,7 @@ email: peppy0510@hotmail.com
 import audio
 import collections
 import images
+import library
 import macroboxstyle
 import mfeats
 import threading
@@ -27,6 +28,7 @@ from macroboxlib import FancyButton
 from macroboxlib import FancyDialogBox
 from macroboxlib import FancyDialogBoxGlobalEvent
 from macroboxlib import MUTEKLAB_WEB_URL
+from macroboxlib import make_check
 from macroboxlib import StaticText
 # import urllib2
 
@@ -347,6 +349,9 @@ class AnalyzerVersionBox(DialogBox):
         state = mfeats.get_analysis_versions()
         paths = dict()
         for listIdx in range(len(self.ListBox.innerList)):
+            # (a folder's songs looked through: not the playlists')
+            if self.ListBox.innerList[listIdx].title == library.FOLDER_TITLE:
+                continue
             pathIdx = self.ListBox.GetColumnKeyToIdx('path', listIdx)
             mdxIdx = self.ListBox.GetColumnKeyToIdx('mdx', listIdx)
             for item in self.ListBox.innerList[listIdx].items:
@@ -387,6 +392,95 @@ class AnalyzerVersionBox(DialogBox):
         self.ListBox.reInitBuffer = True
 
     def OnClose(self, event):
+        if self.IsModal():
+            self.EndModal(0)
+        self.Destroy()
+
+
+class UpdateCheckBox(DialogBox):
+
+    '''Help > Check for Updates: the Update Check dialog as it was (its words and the bar
+    under them, its button and Close, the automatic check's box), asking GitHub's latest
+    release (updater, MainFrame.OnCheckUpdates) where it asked muteklab's server. taken
+    away with that server on 11-02 for the status line's one line, unasked: brought back
+    (the user); its words a line of what came of it and one of the versions under it, the
+    version run told in every state (the user)'''
+
+    WIDTH = 460
+    LINE = 18
+    # between the line of what came of it and the versions' line under it
+    LINE_GAP = 4
+
+    def __init__(self, parent):
+        DialogBox.__init__(self, parent, size=(self.WIDTH, 170))
+        self.parent = parent
+        self.release = None
+        self.current = f'{parent.__appname__} {parent.__version__}'
+        self.SetTitle('Check for Updates')
+        content = DIALOG_PAD * 2 + self.LINE * 2 + self.LINE_GAP + DIALOG_GAP + 10
+        self.SetClientSize((self.GetClientSize().width, content + self.GetFooterHeight()))
+        width = self.GetClientSize().width
+        self.Headline = StaticText(self, label='', pos=(DIALOG_PAD, DIALOG_PAD))
+        self.Headline.SetInitialSize((width - DIALOG_PAD * 2, self.LINE))
+        top = DIALOG_PAD + self.LINE + self.LINE_GAP
+        self.Detail = StaticText(self, label='', pos=(DIALOG_PAD, top))
+        self.Detail.SetInitialSize((width - DIALOG_PAD * 2, self.LINE))
+        self.Detail.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+        self.ProgressBar = ProgressBar(self, range=100)
+        self.ProgressBar.SetRect((DIALOG_PAD, top + self.LINE + DIALOG_GAP,
+                                  width - DIALOG_PAD * 2, 10))
+        self.CloseButton = Button(self, label='Close')
+        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+        self.DownloadButton = Button(self, label='Update Now', primary=True, size=(100, 26))
+        self.DownloadButton.Bind(wx.EVT_BUTTON, self.OnDownload)
+        self.DownloadButton.Disable()
+        top = self.PlaceButtons(right=(self.DownloadButton, self.CloseButton))
+        self.AutoCheckUpdate, _ = make_check(self, 'Check for updates automatically',
+                                             (DIALOG_PAD, top + 5), self.parent.UpdateCheck,
+                                             self.parent.SetUpdateCheck)
+        self.Tell('Checking for updates\u2026', f'Current version: {self.current}')
+        # the bar going on while the answer is awaited (one request: no steps to count),
+        # slower as it nears the end
+        self.Timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.OnTimer, self.Timer)
+        self.Timer.Start(20)
+
+    def Tell(self, headline, detail):
+        self.Headline.SetLabelText(headline)
+        self.Detail.SetLabelText(detail)
+
+    def OnTimer(self, event):
+        value = self.ProgressBar.GetValue()
+        self.ProgressBar.SetValue(value + max((90 - value) * 0.04, 0))
+
+    def ShowResult(self, release, result):
+        # the answer: none to be had, the latest already, or a newer one (its button)
+        self.Timer.Stop()
+        self.ProgressBar.SetValue(100)
+        if result == 'error':
+            self.Tell('Couldn\'t check for updates',
+                      f'GitHub couldn\'t be reached. Current version: {self.current}')
+        elif release is None:
+            self.Tell('You\'re up to date', f'{self.current} is the latest version.')
+        else:
+            self.release = release
+            self.Tell(f'Version {release["version"]} is available',
+                      f'Current version: {self.current}')
+            # a copy that can neither download nor pull opens the release's page (updater)
+            if release['kind'] == 'page':
+                self.DownloadButton.SetLabel('View Release')
+            self.DownloadButton.Enable()
+            self.DownloadButton.SetFocus()
+
+    def OnDownload(self, event):
+        # the update as the notice's Update now does it (its progress on the notice)
+        release = self.release
+        self.OnClose(None)
+        self.parent.ShowUpdate(release)
+        self.parent.OnUpdateAction('update')
+
+    def OnClose(self, event):
+        self.Timer.Stop()
         if self.IsModal():
             self.EndModal(0)
         self.Destroy()

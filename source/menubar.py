@@ -2242,7 +2242,7 @@ class MacroBoxMenuBar():
         x, y, w, h = self.GetRect()
         width, height = self.DialogBox.GetSize()
         self.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
+            (x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.DialogBox.ShowModal()
         self.DialogBox = None
         self.MainPanel.ListBox.reInitBuffer = True
@@ -2252,7 +2252,7 @@ class MacroBoxMenuBar():
         x, y, w, h = self.GetRect()
         width, height = self.DialogBox.GetSize()
         self.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
+            (x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.DialogBox.ShowModal()
         self.DialogBox = None
         self.MainPanel.ListBox.reInitBuffer = True
@@ -2268,8 +2268,7 @@ class MacroBoxMenuBar():
     #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnUpdate(self, event):
-        # GitHub's latest release (updater): its notice over the playlist when newer, the
-        # answer on the status line otherwise
+        # GitHub's latest release (updater), asked in the Update Check dialog
         self.OnCheckUpdates()
 
     def OnHelp(self, event):
@@ -2346,7 +2345,7 @@ class MacroBoxMenuBar():
         self.DialogBox = CheckItemsConsistencyConfirmBox(self)
         x, y, w, h = self.GetRect()
         width, height = self.DialogBox.GetSize()
-        self.DialogBox.SetRect((x + (w - width) / 2, y + (h - height) / 2, width, height))
+        self.DialogBox.SetRect((x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.DialogBox.ShowModal()
         self.DialogBox = None
         self.MainPanel.ListBox.reInitBuffer = True

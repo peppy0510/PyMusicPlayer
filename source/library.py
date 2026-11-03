@@ -28,6 +28,8 @@ FAVORITES_TITLE = 'Favorite tracks'
 # the songs played lately (recent_tracks: their paths, the latest first), as the starred
 RECENT_TITLE = 'Recent tracks'
 RECENT_LIMIT = 200
+# a folder's songs, opened in the sidebar's folders (folders.py): no songs of the library
+FOLDER_TITLE = 'Folder view'
 TEXT_KEYS = ('filename', 'artist', 'title', 'album', 'genre')
 FEATURES = dict()
 FEATURES_LOCK = threading.Lock()
@@ -73,7 +75,7 @@ def get_grid_tempi():
 
 
 def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE,
-                                  RECENT_TITLE)):
+                                  RECENT_TITLE, FOLDER_TITLE)):
     '''[Struct] of the library's songs, the first row of each file'''
     tempi = get_grid_tempi()
     songs = list()
@@ -89,10 +91,15 @@ def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE,
             if not path or path in seen or audio.is_stream_path(path):
                 continue
             seen.add(path)
-            tempo = tempi.get(values.get('mdx'), to_float(values.get('tempo')))
-            songs.append(Struct(path=path, mdx=values.get('mdx'), values=values,
-                                tempo=tempo, key=values.get('key', '')))
+            songs.append(make_song(values, tempi))
     return songs
+
+
+def make_song(values, tempi):
+    # a row's song as the library holds it (its grid's tempo when it has one: tempi)
+    return Struct(path=values.get('path'), mdx=values.get('mdx'), values=values,
+                  tempo=tempi.get(values.get('mdx'), to_float(values.get('tempo'))),
+                  key=values.get('key', ''))
 
 
 def is_tempo_in(tempo, low, high, octave):
@@ -217,6 +224,22 @@ def toggle_favorite_tracks(paths):
     FAVORITES = list(kept)
     SetPreference('favorite_tracks', kept)
     return starring
+
+
+def star_tracks(paths):
+    '''the paths starred, those not yet, after the starred in their order (a drop on the
+    Favorite tracks: none let go, as a toggle would): how many were'''
+    from macroboxlib import SetPreference
+    kept = get_favorite_tracks()
+    known = set(kept)
+    new = [v for v in dict.fromkeys(paths)
+           if v and not audio.is_stream_path(v) and v not in known]
+    if not new:
+        return 0
+    global FAVORITES
+    FAVORITES = kept + new
+    SetPreference('favorite_tracks', FAVORITES)
+    return len(new)
 
 
 def note_recent(path):

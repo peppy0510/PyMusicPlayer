@@ -591,6 +591,7 @@ class PopupMenuEventCatcher():
         y = self.pending_popup_event.y - y
         uikit.mark_menu_checks(self.pending_popup_event.object)
         self.PopupMenu(self.pending_popup_event.object, (x, y))
+        refresh_pointer_inside()
         self.pending_popup_event.object.Destroy()
         closed = getattr(self.pending_popup_event, 'closed', None)
         self.pending_popup_event = None
@@ -614,9 +615,21 @@ class PopupMenuEventCatcher():
         for item in self.pending_item_drag.paths:
             data.AddFile(item)
 
-        dropSource = wx.DropSource(None)
+        # what is dragged shown over the pointer, its covers stacked and how many (the
+        # Explorer's way: the pointer alone before, the user); the drag goes on without it
+        # when it cannot be made
+        import dragimage
+        try:
+            image = dragimage.DragImage(self.pending_item_drag.paths)
+        except Exception:
+            image = None
+        dropSource = dragimage.DragSource(image)
         dropSource.SetData(data)
-        dropSource.DoDragDrop(False)
+        try:
+            dropSource.DoDragDrop(False)
+        finally:
+            if image is not None:
+                image.Close()
 
         if self.pending_item_drag.del_source:
             for item in self.pending_item_drag.paths:
@@ -727,17 +740,36 @@ class MFEATS_Scheduler(ThreadTimer):
     def FindOutdated(self):
         try:
             done = mfeats.get_done_mdx()
+            known = set(mfeats.get_analysis_versions())
         except Exception:
-            done = None
-        wx.CallAfter(self.QueueOutdated, done)
+            done = known = None
+        wx.CallAfter(self.QueueOutdated, done, known=known)
 
-    def QueueOutdated(self, done, asked=False):
-        # asked: by Check Analyzer Versions, the auto analyzer on or not
+    def QueueOutdated(self, done, asked=False, known=None):
+        # asked: by Check Analyzer Versions, the auto analyzer on or not; known: the songs
+        # with an analysis of any version (FindOutdated)
         if not self.parent or (self.IsAutoAnalyzerOn() is False and asked is False):
             return
+        import folders
         lists = self.parent.ListBox.innerList
+        # a folder's songs looked through (the sidebar's folders) analyzed when played only,
+        # but under a root chosen for it
+        browsed = [i for i in range(len(lists)) if folders.is_browsed_only(lists[i])]
+        # those analyzed before brought up to date though (an older analysis, no grid yet),
+        # as a playlist's: left as they were, they showed old in the folder (the user)
+        if done is not None and known is not None:
+            for listIdx in browsed:
+                pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
+                mdxIdx = self.parent.ListBox.GetColumnKeyToIdx('mdx', listIdx)
+                paths = [v[pathIdx] for v in lists[listIdx].items
+                         if v[mdxIdx] in known and v[mdxIdx] not in done]
+                if paths:
+                    threading.Thread(target=self.AddMFEATSTasks, args=(paths,),
+                                     daemon=True).start()
         if done is not None:
             for listIdx in range(len(lists)):
+                if listIdx in browsed:
+                    continue
                 statusIdx = self.parent.ListBox.GetColumnKeyToIdx('status', listIdx)
                 mdxIdx = self.parent.ListBox.GetColumnKeyToIdx('mdx', listIdx)
                 items = lists[listIdx].items
@@ -748,6 +780,8 @@ class MFEATS_Scheduler(ThreadTimer):
                         item[statusIdx] = ''
                         items[i] = tuple(item)
         for listIdx in range(len(lists)):
+            if listIdx in browsed:
+                continue
             itemsIdx = self.parent.ListBox\
                 .GetItemsIdxByColumnKeyValue('status', '', listIdx)
             if itemsIdx == []:
@@ -1145,7 +1179,10 @@ class MFEATS_Network_Scheduler(wx.Timer):
     def AutoAnalyzer(self):
         if self.IsAutoAnalyzerOn() is False:
             return
+        import folders
         for listIdx in range(len(self.parent.ListBox.innerList)):
+            if folders.is_browsed_only(self.parent.ListBox.innerList[listIdx]):
+                continue
             itemsIdx = self.parent.ListBox\
                 .GetItemsIdxByColumnKeyValue('status', '', listIdx)
             if itemsIdx == []:
@@ -1361,6 +1398,31 @@ def is_pointer_covered(x, y, window):
     return bool(root) and root != main
 
 
+def pointer_window():
+    # the window right under the pointer (its handle), None when it cannot be told
+    if user32 is None:
+        return None
+    x, y = wx.GetMousePosition()
+    try:
+        return user32.WindowFromPoint(ctypes.wintypes.POINT(x, y)) or None
+    except Exception:
+        return None
+
+
+def refresh_pointer_inside():
+    '''every box told again whether the pointer is on it, as it is now: a menu shown takes
+    the pointer (the box under it told it left), and Windows tells it came back only when it
+    moves; a right click on the next row before that was taken for one off the list and
+    every other one opened no menu (the user; a log of 12: 6). BOXES is defined further down
+    and filled as the boxes are made'''
+    under = pointer_window()
+    if under is None:
+        return
+    for box in list(BOXES):
+        if box and hasattr(box, 'onClient'):
+            box.onClient = bool(under) and box.GetHandle() == under
+
+
 class PressFilter(wx.EventFilter):
 
     '''the player's own presses (wx's events, any window of it): told to the mouse's poll
@@ -1379,6 +1441,10 @@ class PressFilter(wx.EventFilter):
         button = self.TYPES.get(event.GetEventType())
         if button is not None:
             self.scheduler.NotePress(button)
+            # (the window pressed is the one under the pointer, told or not that it came in)
+            window = event.GetEventObject()
+            if window is not None and hasattr(window, 'onClient'):
+                window.onClient = True
         return self.Event_Skip
 
 
@@ -1387,6 +1453,8 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
     # a press told by PressFilter: taken as down at the next read when the read finds it
     # let go already, if it is this new (seconds; older: the read saw it itself)
     PRESS_FRESH = 0.4
+    # Windows' own (SM_CXDRAG)
+    DRAG_LEAST = 4
 
     def __init__(self, parent):
         wx.Timer.__init__(self)
@@ -1533,7 +1601,11 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
             event.LeftIsDrag = True
         elif event.LeftIsDown:
             event.LeftIsDrag = self.cache.LeftIsDrag
-        if (event.RightIsDown and self.cache.RightIsDown) and isMoved:
+        # (the right button's a drag once it has gone DRAG_LEAST from where it was pressed:
+        # a pixel's shake of the hand took a right click for a drag, its menu not opened)
+        rightMoved = isMoved and event.down.x is not None\
+            and max(abs(event.x - event.down.x), abs(event.y - event.down.y)) >= self.DRAG_LEAST
+        if (event.RightIsDown and self.cache.RightIsDown) and rightMoved:
             event.RightIsDrag = True
         elif event.RightIsDown:
             event.RightIsDrag = self.cache.RightIsDrag
@@ -1696,7 +1768,11 @@ class EventDistributor():
     def DistributeKeyHookEvent(self, event):
         arrowkeyflags = (21692417, 1095434241, 21823489, 1095565313,
                          21495809, 1095237633, 22020097, 1095761921, 3735553, 1077477377)
-        if event.GetRawKeyFlags() in arrowkeyflags:
+        # Enter too (the window's navigation takes it as the arrows: no key down came for
+        # it), not from a text field (its own: the search, a row's name edited)
+        enter = event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)\
+            and isinstance(wx.Window.FindFocus(), wx.TextCtrl) is False
+        if event.GetRawKeyFlags() in arrowkeyflags or enter:
             self.DistributeEvent(event)
         event.Skip()
 
@@ -2259,6 +2335,21 @@ DIALOG_ROW = 22
 DIALOG_BUTTON_HEIGHT = 26
 
 
+def centre_over_owner(dialog):
+    '''a dialog on the middle of the window it was opened from (its parent's top window:
+    the player, or the dialog it was asked from), in whole pixels. placed by each opener
+    before, some were not placed at all (Windows' own corner, Find in Library and the Look
+    Ups) and some at a half pixel, which wxPython 4.3 takes for no place (About and
+    Preference stayed at the player's corner): every popup a place of its own, the user'''
+    owner = wx.GetTopLevelParent(dialog.GetParent()) if dialog.GetParent() else None
+    if not owner or owner.IsShown() is False or owner.IsIconized():
+        dialog.CentreOnScreen()
+        return
+    x, y, w, h = owner.GetRect()
+    width, height = dialog.GetSize()
+    dialog.SetPosition((x + (w - width) // 2, y + (h - height) // 2))
+
+
 class DialogBox(wx.Dialog):
 
     # the footer: its line PAD over the buttons, the buttons PAD from the bottom and the
@@ -2302,6 +2393,17 @@ class DialogBox(wx.Dialog):
 
     def OnSize(self, event):
         pass
+
+    def ShowModal(self):
+        centre_over_owner(self)
+        return wx.Dialog.ShowModal(self)
+
+    def Show(self, show=True):
+        # (one left open, Find in Library: placed when first shown, where it is moved kept)
+        if show and getattr(self, 'placed', False) is False:
+            centre_over_owner(self)
+            self.placed = True
+        return wx.Dialog.Show(self, show)
 
     def OnDialogPaint(self, event):
         # the footer: a line over the buttons along the dialog's bottom (its actions
@@ -2418,6 +2520,11 @@ class FancyDialogBox(wx.Dialog):
 
     def OnSize(self, event):
         pass
+
+    def ShowModal(self):
+        # (as DialogBox's)
+        centre_over_owner(self)
+        return wx.Dialog.ShowModal(self)
 
     def OnClose(self, event):
         if self.IsModal():

@@ -7,6 +7,7 @@
 
 import audio
 import ctypes
+import folders
 import glob
 import images
 import io
@@ -32,6 +33,7 @@ from listboxlib import FileOpenDialog
 from listboxlib import FileSaveDialog
 from listboxlib import ListBoxListDnD
 from listboxlib import ListControl
+from listboxtab import ListBoxPopupFolder
 from listboxtab import ListBoxPopupTab
 from listboxtab import ListBoxPopupTabAdd
 from listboxtab import ListBoxTab
@@ -410,6 +412,27 @@ def draw_star_outlines(dc, points, r, colour, shared=None):
         gc.Flush()
 
 
+def draw_folder_icons(dc, points, colour, shared=None):
+    '''a folder (its tab on the left of its top), 11 px across, at points [(cx, cy)] in one
+    path: the folder's tab's folders, where a song's star is'''
+    if not points:
+        return
+    gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
+    if gc is None:
+        return
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour).Width(1.2)))
+    gc.SetBrush(wx.NullGraphicsBrush)
+    path = gc.CreatePath()
+    for cx, cy in points:
+        path.MoveToPoint(cx - 5.5, cy - 4)
+        for x, y in ((-1.5, -4), (0, -2.5), (5.5, -2.5), (5.5, 4), (-5.5, 4)):
+            path.AddLineToPoint(cx + x, cy + y)
+        path.CloseSubpath()
+    gc.StrokePath(path)
+    if shared is not None:
+        gc.Flush()
+
+
 def draw_star(dc, cx, cy, r, colour):
     # a five-pointed star, filled (a favorite station)
     points = []
@@ -453,7 +476,23 @@ class ListBoxList(RectBox):
         self.bmp = Struct(playing=Struct())
         self.bmp.playing.black = images.listbox_playing_black.GetBitmap()
         self.bmp.playing.white = images.listbox_playing_white.GetBitmap()
+        # (half see-through on the row's ground, by white or not: a folder's mark while its
+        # song is not sounding, the sidebar's dimmed one's half way)
+        self.bmp.playing.dimmed = {
+            light: wx.Bitmap(bmp.ConvertToImage().AdjustChannels(1.0, 1.0, 1.0, 0.5))
+            for light, bmp in ((True, self.bmp.playing.white),
+                               (False, self.bmp.playing.black))}
         self.InitBuffer()
+        # the mouse's back button (its first side button): the folder's tab's parent opened,
+        # as Backspace (a second press soon after comes as a double click)
+        self.Bind(wx.EVT_MOUSE_AUX1_DOWN, self.OnBackButton)
+        self.Bind(wx.EVT_MOUSE_AUX1_DCLICK, self.OnBackButton)
+
+    def OnBackButton(self, event):
+        if folders.is_folder_view(self.parent) is False:
+            event.Skip()
+            return
+        folders.go_up(self.parent.parent)
 
     # Draw ListBoxList
 
@@ -503,6 +542,11 @@ class ListBoxList(RectBox):
                  getattr(self, 'star_down', None), tuple(mfeats.GetProcPath()),
                  frozenset(mfeats.GetTaskPath()))
         pathIdx = lb.GetColumnKeyToIdx('path')
+        # (the folder's tab's alone: a station's tab has no status)
+        browsing = inner.title == library.FOLDER_TITLE
+        if browsing:
+            statusIdx = lb.GetColumnKeyToIdx('status')
+            nameIdx = lb.GetColumnKeyToIdx('filename')
         cue = playbox.cue
         here = cue.listId == inner.Id or audio.is_stream_path(cue.path)
         rows = {}
@@ -517,6 +561,11 @@ class ListBoxList(RectBox):
                 playing = (playbox.IsStreamWaiting(), playbox.IsPlaying(),
                            playbox.AudioControl.pending, playbox.GetStreamConnecting(),
                            self.pending.SkipStopIcon)
+            elif browsing and here and cue.path and row[statusIdx] == folders.FOLDER_STATUS\
+                    and row[nameIdx] != folders.PARENT_NAME\
+                    and folders.is_under(cue.path, row[pathIdx]):
+                # (a folder's mark: DrawFolderPlayingMark)
+                playing = (playbox.IsPlaying(), playbox.AudioControl.pending)
             rows[item] = (id(row), item in selected, playing)
         return whole, lb.GetVirtualPositionY(), rows
 
@@ -655,6 +704,7 @@ class ListBoxList(RectBox):
         # each text's ground (its row's), for its kept picture (DrawTexts)
         n_grounds, s_grounds, m_grounds, ms_grounds = [], [], [], []
         selected_ground = tuple(self.parent.st.SELECTED_BG_COLOR)[:3]
+        browsing_folder = self.parent.innerList[listIdx].title == library.FOLDER_TITLE
         for row, item in enumerate(shownItemIdx):
             if only is not None and item not in only:
                 continue
@@ -664,8 +714,11 @@ class ListBoxList(RectBox):
                 column = columns[i]
                 if item > len(self.parent.innerList[listIdx].items):
                     continue
-                # a cover or a waveform: drawn after the text, over the row's ground
+                # a cover or a waveform: drawn after the text, over the row's ground (none
+                # for a folder's row)
                 if listColumns[col].key in ('cover', 'wave'):
+                    if browsing_folder and folders.is_folder_item(self.parent, item, listIdx):
+                        continue
                     pictures.append((listColumns[col].key, row, item, column))
                     continue
 
@@ -781,6 +834,11 @@ class ListBoxList(RectBox):
         # (the outlines and the waiting rings drawn together after the rows: one path each)
         outlines, waiting = [], []
         playing_path = self.parent.parent.PlayBox.cue.path
+        # a folder's songs (the sidebar's folders) not queued: no waiting ring for one not
+        # analyzed, only for one queued (its root chosen for the analysis: as a playlist's)
+        browsed = folders.is_browsed_only(self.parent.innerList[listIdx])
+        # the folder's tab's folders: a folder where a song's star is, nothing else of a song
+        folder_marks = []
         for row, item in enumerate(shownItemIdx):
             if only is not None and item not in only:
                 continue
@@ -793,6 +851,13 @@ class ListBoxList(RectBox):
                 # +1, high at -1)
                 cy = row_size * row + rect.y - row_offset + row_size // 2
                 star = 4 if item == getattr(self, 'star_down', None) else 5
+                if self.parent.innerList[listIdx].items[item][statusIdx]\
+                        == folders.FOLDER_STATUS:
+                    folder_marks.append((cx + 0.5, cy + 0.5))
+                    self.DrawFolderPlayingMark(dc, listIdx, item, columns[i].x + self.MARK_X,
+                                               row_size * row + rect.y - row_offset
+                                               + int((row_size - 8) * 0.5))
+                    continue
                 if self.parent.innerList[listIdx].items[item][pathIdx] in favorites:
                     draw_star(dc, cx, cy, star, macroboxstyle.current().UI.WARN)
                 elif item == getattr(self, 'star_hover', None):
@@ -818,12 +883,13 @@ class ListBoxList(RectBox):
                 cy = row_size * row + rect.y - row_offset + int((row_size - 8) * 0.5) + 4.5
                 # (the playing row's its own size, the playing mark half see-through over it:
                 # a wider ring round the mark looked off centre)
-                analysing = path in procpath or status == '' or path in taskpath
+                unanalyzed = status == '' and browsed is False
+                analysing = path in procpath or unanalyzed or path in taskpath
                 if path in procpath:
                     draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, True,
                                        shared=shared)
                     self.spinning = True
-                elif status == '' or path in taskpath:
+                elif unanalyzed or path in taskpath:
                     if path == playing_path:
                         # (now: the playing mark goes over it)
                         draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, False,
@@ -901,6 +967,8 @@ class ListBoxList(RectBox):
                                          brushes=(wx.Brush(font_color),))
                 break
         draw_star_outlines(dc, outlines, 5, outline, shared=shared)
+        draw_folder_icons(dc, folder_marks, macroboxstyle.current().UI.BAR_TEXT_DIM,
+                          shared=shared)
         draw_waiting_icons(dc, waiting, shared=shared)
 
     def DrawTexts(self, dc, font, texts, xys, grounds, ink):
@@ -941,6 +1009,28 @@ class ListBoxList(RectBox):
             source.SelectObject(bmp)
             dc.Blit(x - 2, y, bmp.GetWidth(), bmp.GetHeight(), source, 0, 0)
         source.SelectObject(wx.NullBitmap)
+
+    def DrawFolderPlayingMark(self, dc, listIdx, item, x, y):
+        # a subfolder the playing song is in, played from this tab: the song's play mark
+        # where a song's goes, dimmed while it is not sounding (as the sidebar's root's: the
+        # way back to it told); never on '..' (every song here is under it)
+        inner = self.parent.innerList[listIdx]
+        playbox = self.parent.parent.PlayBox
+        path = playbox.cue.path
+        if playbox.cue.listId != inner.Id or not path or audio.is_stream_path(path):
+            return
+        row = inner.items[item]
+        if row[self.parent.GetColumnKeyToIdx('filename', listIdx)] == folders.PARENT_NAME:
+            return
+        if folders.is_under(path, row[self.parent.GetColumnKeyToIdx('path', listIdx)]) is False:
+            return
+        font_color = self.parent.st.SELECTED_FG_COLOR if self.parent.IsHighlightedItem(item)\
+            else self.parent.st.LIST_FG_COLOR
+        bmp = self.bmp.playing.white if sum(font_color[:3]) / 3.0 > 125\
+            else self.bmp.playing.black
+        if (playbox.IsPlaying() or playbox.AudioControl.pending) is False:
+            bmp = self.bmp.playing.dimmed[bmp is self.bmp.playing.white]
+        dc.DrawBitmap(bmp, x, y, useMask=False)
 
     # the playing mark's cut-out: its shape a pixel round it, every way
     HALO_STEPS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1))
@@ -1122,6 +1212,9 @@ class ListBoxList(RectBox):
         item = self.parent.PosY2Item(event.Y)
         if item < 0 or item >= self.parent.GetItemsLength():
             return None
+        # (a folder's row starred never)
+        if folders.is_folder_view(self.parent) and folders.is_folder_item(self.parent, item):
+            return None
         return item
 
     def HandleEventStar(self, event):
@@ -1232,6 +1325,9 @@ class ListBoxList(RectBox):
         selected = self.parent.GetSelectedItemsKeyValue('path')
         if selected is None:
             return
+        selected = folders.get_drag_paths(self.parent, selected)
+        if not selected:
+            return
         self.parent.parent.SetItemDrag(selected)
 
     def HandleEventFileDropFinish(self, event):
@@ -1250,6 +1346,10 @@ class ListBoxList(RectBox):
 
     def HandleEventFileDropPending(self, event):
         if self.parent.IsFilteredAll():
+            return
+        # the folder's tab takes nothing dropped: no line where it would go
+        if folders.is_folder_view(self.parent):
+            self.FileDrop.insertItemIdx = None
             return
         if event.insertItemIdx is None:
             return
@@ -1368,8 +1468,47 @@ class ListBoxList(RectBox):
             return
         if event.drag.rectIdx is not None:
             return
+        self.ShowItemMenu(event.itemIdx, (event.x, event.y))
+
+    def ShowItemMenu(self, item, xy):
+        '''the row's menu at xy (the screen's): a right click's, the context menu key's.
+        in the folder's tab a folder's row its own menu (it alone selected); on a song's
+        the folders let go from the selection (the songs' menu is a file's)'''
+        if folders.is_folder_view(self.parent):
+            inner = self.parent.innerList[self.parent.selectedList]
+            if folders.is_folder_item(self.parent, item):
+                self.parent.SelectAndFocusItem(item)
+                path = self.parent.GetItemValueByColumnKey(item, 'path')
+                parent = self.parent.GetItemValueByColumnKey(item, 'filename')\
+                    == folders.PARENT_NAME
+                entry = Struct(kind='row', item=item, path=path, parent=parent)
+                self.DirectDraw()
+                self.parent.parent.SetPopupMenu(ListBoxPopupFolder(self.parent.parent, entry),
+                                                xy)
+                return
+            inner.selectedItems = [v for v in inner.selectedItems
+                                   if folders.is_folder_item(self.parent, v) is False]
         self.DirectDraw()
-        self.parent.parent.SetPopupMenu(ListBoxPopupItem(self), (event.x, event.y))
+        self.parent.parent.SetPopupMenu(ListBoxPopupItem(self), xy)
+
+    def ShowSelectedItemMenu(self):
+        # the context menu key's: the menu under the selected row (the focused one when it
+        # is selected, else the last chosen), scrolled into sight first
+        listbox = self.parent
+        selected = listbox.GetSelectedItems()
+        if not selected:
+            return
+        focused = listbox.GetFocusedItem()
+        item = focused if focused in selected else selected[-1]
+        if item < 0 or item >= listbox.GetItemsLength():
+            return
+        if listbox.IsItemInViewRange(item) is False:
+            listbox.FocusItem(item)
+        row = listbox.GetRowsHeight()
+        # under the row, past the star and the number (where a click on its name would be)
+        y = listbox.GetVirtualPositionY() + 1 + (item + 1) * row
+        x = min(self.STAR_X + 48, self.GetClientSize().width - 1)
+        self.ShowItemMenu(item, tuple(self.ClientToScreen((x, y))))
 
     def CATCH_EVT_KEY_UP(self, event):
         return
@@ -1443,6 +1582,25 @@ class ListBoxList(RectBox):
         namespace = self.parent.parent.parent.GetNameSpaceByRawKeyFlag(
             event.RawKeyFlags, ctrl, event.ShiftDown)
 
+        # the context menu key, or Shift+F10 (Windows' own for it), bound to nothing: the
+        # selected row's menu, as a right click on it (not from a text field: its own menu)
+        menu_key = event.KeyCode == wx.WXK_WINDOWS_MENU\
+            or (event.ShiftDown and event.KeyCode == wx.WXK_F10)
+        if menu_key and namespace is None and self.TextEdit is None\
+                and isinstance(wx.Window.FindFocus(), wx.TextCtrl) is False:
+            self.ShowSelectedItemMenu()
+
+        # in the folder's tab: Enter (bound to nothing) the selected folder opened or song
+        # played, Backspace its parent opened; a song's keys (its tags, its cover, a web
+        # search) not for a selection with folders in it
+        if folders.is_folder_view(self.parent):
+            if event.KeyCode in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and namespace is None:
+                self.parent.LeftDoubleClick(None)
+            if event.KeyCode == wx.WXK_BACK and namespace is None:
+                folders.go_up(self.parent.parent)
+            if namespace in self.SONG_KEYS and folders.get_selected_folders(self.parent):
+                namespace = None
+
         if namespace == 'playlist_toggle':
             self.parent.parent.parent.ToggleListTabShow()
 
@@ -1468,6 +1626,9 @@ class ListBoxList(RectBox):
             weblink = OpenWebLinkHandler(self)
             weblink.OnWebLink(None, idx=2)
 
+    SONG_KEYS = ('open_id3tageditor', 'look_up_cover', 'open_websearch_1', 'open_websearch_2',
+                 'open_websearch_3')
+
     def OpenScriptEditBox(self, event):
         self.parent.parent.parent.OnScriptEditor(event)
 
@@ -1476,7 +1637,7 @@ class ListBoxList(RectBox):
         x, y, w, h = self.parent.parent.parent.GetRect()
         width, height = self.parent.parent.parent.DialogBox.GetSize()
         self.parent.parent.parent.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
+            (x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.parent.parent.parent.DialogBox.ShowModal()
         self.parent.parent.parent.DialogBox.Destroy()
         self.parent.parent.parent.DialogBox = None
@@ -2186,6 +2347,9 @@ class ListBoxSearch(RectBox):
         self.SearchComboFilter.Hide()
         self.field_rect = self.clear_rect = self.chooser_rect = wx.Rect(0, 0, 0, 0)
         self.sidebar_rect = wx.Rect(0, 0, 0, 0)
+        # the star: the starred songs alone (ToggleStarred), for this playing session
+        self.star_rect = wx.Rect(0, 0, 0, 0)
+        self.starred = False
         self.scope_rects = []
         self.chooser_width = 96
         self.drawn = None
@@ -2275,6 +2439,8 @@ class ListBoxSearch(RectBox):
         title = listbox.innerList[listbox.selectedList].title
         if title == radio.BROWSE_TITLE:
             return 'browse'
+        if title == library.FOLDER_TITLE:
+            return 'folder'
         if title in (radio.RADIO_TITLE, radio.RECENT_TITLE):
             return 'favorites'
         return 'playlist'
@@ -2315,6 +2481,18 @@ class ListBoxSearch(RectBox):
             combo.Set([label for label, _ in self.FAVORITE_KEYS])
             combo.SetSelection(0)
             self.query_columnKey = self.FAVORITE_KEYS[0][1]
+            self.chooser_width = 96
+        elif mode == 'folder':
+            # the open folder named in the hint (its way shown nowhere else), filtered as a
+            # playlist is (no library scope)
+            path = folders.get_current() or ''
+            self.SetHints(f'Filter {path}' if path else 'Filter this folder',
+                          f'Filter {folders.get_name(path)}' if path else 'Filter')
+            self.query_columnKey = getattr(self, 'playlist_key', 'filename')
+            combo.Set(list(combo.choices))
+            combo.SetStringSelection(self.query_columnKey.capitalize()
+                                     if self.query_columnKey.capitalize() in combo.choices
+                                     else combo.choices[0])
             self.chooser_width = 96
         elif self.scope == 'library':
             self.SetHints('Search all playlists (found in the Search tab)',
@@ -2390,11 +2568,34 @@ class ListBoxSearch(RectBox):
         self.HandleEventFilterQuery(event)
         self.HandleEventButtonColor(event)
         value = self.SearchText.GetValue()
-        if len(value) > 0:
+        if len(value) > 0 or self.starred:
+            if self.parent.ListBox.IsFilteredAll() is False:
+                # (turned on: its rows filtered at the next event, the text the same as when
+                # it was turned off or not)
+                self.last_query = None
             self.parent.ListBox.SetFilterOnAll()
         elif len(value) == 0:
             self.parent.ListBox.SetFilterOffAll()
         # self.HandleEventSearchPopup(event)
+
+    def ToggleStarred(self):
+        # the starred songs alone, with the text's filter or without (ListControl.FilterItems),
+        # filtered anew at once
+        self.starred = not self.starred
+        listbox = self.parent.ListBox
+        listbox.filter_starred = self.starred
+        value = self.SearchText.GetValue()
+        if self.starred or value:
+            listbox.SetFilterOnAll()
+            listbox.FilterItemsAll(self.query_columnKey, value)
+            self.last_query = value
+        else:
+            listbox.SetFilterOffAll()
+        listbox.reInitBuffer = True
+        listbox.List.reInitBuffer = True
+        listbox.SliderV.reInitBuffer = True
+        self.reInitBuffer = True
+        radio.tell(self.parent, 'Starred tracks only' if self.starred else 'All tracks')
 
     def HandleEventSearchPopup(self, event):
         if event.RightUp is False and event.LeftUp is False:
@@ -2459,10 +2660,17 @@ class ListBoxSearch(RectBox):
         if gc is None:
             return
         x, y, w, h = self.field_rect
-        gc.SetPen(wx.Pen(tokens.ACCENT, 1) if self.SearchText.onClient else wx.NullGraphicsPen)
+        # its ground on its h rows with the focus or not (the keys' corners: uikit.RADIUS, one
+        # for every box; 6 before); the accent's edge on its outer rows, on whole pixels as
+        # the dialogs' fields' (draw_field): at the half the edge took two rows, half lit,
+        # and the text box over the inner one left the top's a row thinner over it (the user)
+        gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateBrush(wx.Brush(tokens.CONTROL_BG)))
-        # (the keys' corners: uikit.RADIUS, one for every box; 6 before)
-        gc.DrawRoundedRectangle(x + 0.5, y + 0.5, w - 1, h - 1, uikit.RADIUS)
+        gc.DrawRoundedRectangle(x, y, w, h, uikit.RADIUS)
+        if self.SearchText.onClient:
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(tokens.ACCENT)).Width(1)))
+            gc.SetBrush(wx.NullGraphicsBrush)
+            gc.DrawRoundedRectangle(x, y, w - 1, h - 1, uikit.RADIUS)
         ink = wx.Colour(tokens.BAR_TEXT_DIM)
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.4)))
         gc.SetBrush(wx.NullGraphicsBrush)
@@ -2488,6 +2696,10 @@ class ListBoxSearch(RectBox):
         uikit.draw_button(dc, self.sidebar_rect, icon='menu',
                           on=self.parent.parent.IsListTabShowOn(),
                           hover=self.IsInRect(self.sidebar_rect, pointer))
+        # (off in the library's scope: the library's search is not filtered)
+        uikit.draw_button(dc, self.star_rect, icon='starred' if self.starred else 'star',
+                          on=self.starred, disabled=self.IsLibraryScope(),
+                          hover=self.IsInRect(self.star_rect, pointer))
         # the playlist's scope: this list or the library, the one searched lit
         # the lit one drawn last: the edge they share its own
         order = sorted(enumerate(self.scope_rects), key=lambda v: v[1][0] == self.scope)
@@ -2503,14 +2715,15 @@ class ListBoxSearch(RectBox):
         w, h = self.GetClientSize()
         self.rects = ((3, 3, w - 6, h - 1), (3, 3, w - 6, h - 1))
         chooser = self.chooser_width
-        right = w - 8
         # the keys 21 rows tall (odd: 22 left the capitals' 7 rows half a row high, measured
         # 5 over and 6 under)
-        # 6 rows over them and 6 under, to the list's frame (5 and 7 they were, measured)
-        top = 6
+        # 6 rows over them and 6 under, to the list's frame (5 and 7 they were, measured);
+        # as many at the row's ends and between them (8 there, it read uneven: the user)
+        top = gap = 6
+        right = w - gap
         self.chooser_rect = wx.Rect(right - chooser, top, chooser, h - 11)
         if chooser:
-            right -= chooser + 8
+            right -= chooser + gap
         # the scope switch left of the chooser, for a playlist
         self.scope_rects = []
         if self.mode == 'playlist':
@@ -2519,14 +2732,20 @@ class ListBoxSearch(RectBox):
                 right -= width
                 self.scope_rects.insert(0, (key, wx.Rect(right, top, width, h - 11), label))
                 # joined, their edge shared (a segmented switch: the row's only gap that
-                # was not 8, 2 px)
+                # is not one, 2 px)
                 right += 1
-            right -= 1 + 8
-        # the sidebar's key at the row's left (the status line's before), the field after it
-        self.sidebar_rect = wx.Rect(8, top, 26, h - 11)
+            right -= 1 + gap
+        # the sidebar's key at the row's left (the status line's before), the star's after it
+        # (a playlist's and the folder's), the field after them
+        self.sidebar_rect = wx.Rect(gap, top, 26, h - 11)
+        left = gap + 26 + gap
+        self.star_rect = wx.Rect(0, 0, 0, 0)
+        if self.mode in ('playlist', 'folder'):
+            self.star_rect = wx.Rect(left, top, 26, h - 11)
+            left += 26 + gap
         # as tall as the keys and on their rows (24 rows from 4 before: 3 taller, half a row
         # lower, measured)
-        self.field_rect = wx.Rect(8 + 26 + 8, top, max(0, right - 8 - 26 - 8), h - 11)
+        self.field_rect = wx.Rect(left, top, max(0, right - left), h - 11)
         x, y, fw, fh = self.field_rect
         # inside it FIELD_PAD apart, either side alike: its edge, the magnifier, the text,
         # the clear mark, its edge (the text ran on to the mark, 11 px from the magnifier
@@ -2541,7 +2760,11 @@ class ListBoxSearch(RectBox):
         th = min(self.SearchText.GetBestSize().height, fh - 2)
         left = self.FIELD_PAD + self.MAGNIFIER + self.FIELD_PAD
         right = self.FIELD_PAD + self.MARK + self.FIELD_PAD
-        self.SearchText.SetRect((x + left, y + (fh - th) // 2, max(0, fw - left - right), th))
+        # a row higher than its box's middle: the text's capitals then on the magnifier's
+        # rows, 4 over them and 5 under in the field (a row lower, the hint read low: the
+        # user; 19 rows round 10 have no middle, measured)
+        self.SearchText.SetRect((x + left, y + (fh - th) // 2 - 1, max(0, fw - left - right),
+                                 th))
         self.FitHint()
         self.text_best = self.SearchText.GetBestSize().height
         self.text_xys = ((10, 5),)
@@ -2581,6 +2804,7 @@ class ListBoxSearch(RectBox):
         state = (self.IsInRect(self.chooser_rect, point) and self.onClient,
                  self.IsInRect(self.sidebar_rect, point) and self.onClient,
                  self.parent.parent.IsListTabShowOn(),
+                 self.IsInRect(self.star_rect, point) and self.onClient, self.starred,
                  [self.IsInRect(rect, point) and self.onClient for _, rect, _ in
                   self.scope_rects], self.scope,
                  self.SearchText.onClient, bool(self.SearchText.GetValue()),
@@ -2594,6 +2818,10 @@ class ListBoxSearch(RectBox):
             return
         if self.IsInRect(self.sidebar_rect, point):
             self.parent.parent.ToggleListTabShow()
+            return
+        if self.IsInRect(self.star_rect, point):
+            if self.IsLibraryScope() is False:
+                self.ToggleStarred()
             return
         for key, rect, _ in self.scope_rects:
             if self.IsInRect(rect, point):
@@ -6047,7 +6275,11 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         songs = library.collect(listbox)
         target = [v for v in songs if v.path == path]
         if target == []:
-            return
+            # a song in no playlist (the folder's tab's): its row the song looked for (it
+            # did nothing, told nothing, the user)
+            inner = listbox.innerList[listbox.selectedList]
+            values = dict(zip([v.key for v in inner.columns], inner.items[selected[0]]))
+            target = [library.make_song(values, library.get_grid_tempi())]
         mainpanel.StatusBox.alarm = f'Finding songs like {os.path.basename(path)} ...'
         mainpanel.StatusBox.alarm_timer = 0
 
@@ -6067,7 +6299,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         x, y, w, h = self.parent.parent.parent.parent.GetRect()
         width, height = self.parent.parent.parent.DialogBox.GetSize()
         self.parent.parent.parent.DialogBox.SetRect(
-            (x + (w - width) / 2, y + (h - height) / 2, width, height))
+            (x + (w - width) // 2, y + (h - height) // 2, width, height))
         self.parent.parent.parent.DialogBox.ShowModal()
         self.parent.parent.parent.DialogBox.Destroy()
         self.parent.parent.parent.DialogBox = None

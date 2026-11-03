@@ -29,6 +29,7 @@ from macroboxlib import COUNTS
 from macroboxlib import FONT_PLAYINFO
 from macroboxlib import GetPreference
 from macroboxlib import SetPreference
+from macroboxlib import pointer_window
 from macroboxlib import DrawPending
 from macroboxlib import PaintUnpainted
 from macroboxlib import RectBox
@@ -339,14 +340,31 @@ class PlayBox(RectBox, PlayBoxControl):
             file.write(data)
         return cover
 
-    def HandleTrackEditor(self, event):
-        # the title's or the cover's double-click, or their menu, opens the tag editor
-        if event.rectIdx is None or self.parent.HasToSkipEvent() or self.IsStreamTrack():
+    def IsClickedOn(self, box, event):
+        '''a right click's press and let-go both on box, anywhere on it, not dragged between
+        and nothing over the player there (the title's text alone took it: a click on the
+        folder's line, past the title's end, on the info's cells or between them opened
+        nothing, 34 of 63, the user)'''
+        if getattr(event, 'covered', False) or box.onClient is False\
+                or event.down.X is None or event.drag.x is not None:
+            return False
+        w, h = box.GetClientSize()
+        if not (0 <= event.X < w and 0 <= event.Y < h
+                and 0 <= event.down.X < w and 0 <= event.down.Y < h):
+            return False
+        # the window right under the pointer alone (the header's room took a click on the
+        # title too, the title's in it: the menu asked twice a click, measured)
+        return pointer_window() in (None, box.GetHandle())
+
+    def HandleTrackEditor(self, event, box=None, menu_only=False):
+        # the title's or the cover's double-click, or their menu (the info's too, and the
+        # header's room between them: menu_only), opens the tag editor
+        if self.parent.HasToSkipEvent() or self.IsStreamTrack():
             return
-        if event.LeftDClick:
+        if event.LeftDClick and event.rectIdx is not None and menu_only is False:
             # (after the event: the editor is modal)
             wx.CallAfter(self.OpenTrackEditor)
-        elif event.RightUp and event.down.rectIdx is not None:
+        elif event.RightUp and box is not None and self.IsClickedOn(box, event):
             menu = wx.Menu()
             item = menu.Append(wx.ID_ANY, 'Edit Track Info...')
             menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.OpenTrackEditor), item)
@@ -534,6 +552,11 @@ class PlayBox(RectBox, PlayBoxControl):
 
         self.AudioEvent(event)
         self.HandleLiveMessage()
+        # the header's room between the cover, the title and the info (on none of them):
+        # their menu too
+        top = self.GetHeaderTop()
+        if top <= event.Y < top + self.GetHeaderHeight():
+            self.HandleTrackEditor(event, self, menu_only=True)
 
     def OnIdle(self, event):
         if self.reInitBuffer is False:
@@ -1931,7 +1954,7 @@ class PlayBoxTitle(RectBox):
         # if self.parent.parent.HasToSkipEvent(): return
         # self.HandleItemDrag(event)
         self.HandleTitleChange(event)
-        self.parent.HandleTrackEditor(event)
+        self.parent.HandleTrackEditor(event, self)
         self.parent.HandleDragOut(self, event, 'file')
 
     def HandleTitleChange(self, event):
@@ -2016,7 +2039,7 @@ class PlayBoxInfo(RectBox):
         # (index, name, value[, the value it is as wide as]): the tempo, the key, the time
         # played or left (to where the song moves on: its end, a highlight's or the edit's)
         # of the length, as wide either way (its row not changed by a click); a status
-        # (Connecting) in the accent, index 3
+        # (Connecting) in the accent's ink, index 3
         segments = list(self.segments) + [''] * (5 - len(self.segments))
         tempo, key, position, duration, remain = segments[:5]
         # the key as wide as its longest (C#m: the monospace's three), so the cells do not
@@ -2151,10 +2174,10 @@ class PlayBoxInfo(RectBox):
             self.cell_rects[index] = wx.Rect(int(x), int(y), int(w), self.CELL_HEIGHT)
             face, edge, ink = st.LCD_BG_COLOR, st.RACK_EDGE_COLOR, st.LCD_TEXT_COLOR
             if index == 3:
-                # connecting in the accent, not connected warned (orange)
-                face, ink = (tokens.WARN, tokens.WARN_FG) if failed else\
-                    (tokens.ACCENT, tokens.ACCENT_FG)
-                edge = face
+                # connecting in the accent's ink, not connected in the warning's (orange): a
+                # cell as the others are (filled in the accent it outshone the title, the
+                # user), its words saying which
+                ink = tokens.WARN if failed else tokens.ACCENT
             gc.SetPen(wx.Pen(wx.Colour(edge), 1))
             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(face))))
             # (every box's corners uikit.RADIUS: the cells' were 2, the keys' 3)
@@ -2175,6 +2198,7 @@ class PlayBoxInfo(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         self.HandleTimeClick(event)
         self.HandleInfoChange(event)
+        self.parent.HandleTrackEditor(event, self, menu_only=True)
         self.parent.HandleDragOut(self, event, 'file')
 
     def HandleTimeClick(self, event):
@@ -2407,7 +2431,7 @@ class PlayBoxApic(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         self.HandleApicChange()
         self.HandlePreview()
-        self.parent.HandleTrackEditor(event)
+        self.parent.HandleTrackEditor(event, self)
         self.parent.HandleDragOut(self, event, 'cover')
         # self.HandleSizeChange()
 

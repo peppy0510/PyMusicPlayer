@@ -10,6 +10,7 @@ import audio
 import collections
 import ctypes
 import ctypes.wintypes
+import folders
 import gc
 import library
 import master
@@ -2276,12 +2277,19 @@ class PlayBoxControl():
         listIdx, itemIdx = listItemIdx
         targetItemIdx = itemIdx + direction
         count = len(self.parent.ListBox.innerList[listIdx].items)
-        if self.IsLoopListOn() and count:
-            # the list looped: its first after its last, its last before its first
-            targetItemIdx %= count
-        if targetItemIdx == -1:
-            return None
-        if targetItemIdx >= count:
+        # the folder's tab's folders passed over (a song's neighbour is a song)
+        for _ in range(max(count, 1)):
+            if self.IsLoopListOn() and count:
+                # the list looped: its first after its last, its last before its first
+                targetItemIdx %= count
+            if targetItemIdx < 0:
+                return None
+            if targetItemIdx >= count:
+                return None
+            if folders.is_folder_item(self.parent.ListBox, targetItemIdx, listIdx) is False:
+                break
+            targetItemIdx += direction
+        else:
             return None
         targetPath = self.parent.ListBox\
             .GetItemValueByColumnKey(targetItemIdx, 'path', listIdx)

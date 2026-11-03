@@ -9,8 +9,10 @@ email: peppy0510@hotmail.com
 
 import audio
 import copy
+import folders
 import gc
 import glob
+import library
 import math
 import mfeats
 import mutagen
@@ -48,7 +50,7 @@ class ListBoxListDnD(wx.FileDropTarget):
     def OnEnter(self, x, y, d):
         self.onClient = True
         self.parent.onClient = True
-        return d
+        return self.GetDropResult(d)
 
     def OnLeave(self):
         self.onClient = False
@@ -57,6 +59,12 @@ class ListBoxListDnD(wx.FileDropTarget):
     def OnDragOver(self, x, y, d):
         self.onClient = True
         self.parent.onClient = True
+        return self.GetDropResult(d)
+
+    def GetDropResult(self, d):
+        # the folder's tab takes nothing (OnDropFiles): the pointer told so over it
+        if self.parent.parent.GetListTitle() == library.FOLDER_TITLE:
+            return wx.DragNone
         return d
 
     def OnDropFiles(self, x, y, inpaths):
@@ -72,7 +80,13 @@ class ListBoxListDnD(wx.FileDropTarget):
         isInsertable = self.parent.parent.GetLastSortedColumn()[0] == orderIdx
         if isInsertable and insertItemIdx is None:
             return 0
-        if itemDrag and fileImport is False:
+        if self.parent.parent.GetListTitle() == library.FOLDER_TITLE:
+            # the folder's tab shows its folder: nothing put in nor moved (as ImportFiles
+            # ends)
+            self.itemDrag = False
+            self.insertItemIdx = None
+            self.dropTimer = 0
+        elif itemDrag and fileImport is False:
             self.DropFromInside(insertItemIdx)
         else:
             self.DropFromOutside(inpaths, insertItemIdx)
@@ -142,6 +156,8 @@ class ListBoxListDnD(wx.FileDropTarget):
         if selectedList is None:
             selectedList = self.parent.parent.selectedList
         isLocked = False
+        # (its tab by its id: the tabs may be moved meanwhile)
+        listId = self.parent.parent.innerList[selectedList].Id
 
         try:
             extended_paths = []
@@ -263,6 +279,10 @@ class ListBoxListDnD(wx.FileDropTarget):
             message = ' / '.join(message)
             self.parent.parent.parent.StatusBox.alarm_timer = 0
             self.parent.parent.parent.StatusBox.alarm = message
+            # its tab's row lit for a moment in the sidebar, the count put in on it (dropped
+            # on the sidebar, nothing told where the songs went: the user)
+            wx.CallAfter(self.parent.parent.parent.ListTab.TabList.FlashTab, listId,
+                         imported_count)
         finally:
             if isLocked:
                 threadListLock.release()
@@ -295,6 +315,10 @@ class ListControl():
     def LeftDoubleClick(self, event):
         item = self.GetSelectedItem()
         if item is None:
+            return
+        # a folder's row (the folder's tab's) opened, not played
+        if folders.is_folder_view(self) and folders.is_folder_item(self, item):
+            folders.open_row(self.parent, item)
             return
         self.parent.PlayBox.OnStop()
         item = self.innerList[self.selectedList].items[item]
@@ -520,6 +544,9 @@ class ListControl():
         oldPath = self.GetItemValueByColumnKey(itemIdx, 'path', selectedList)
         if newPath == oldPath:
             return False
+        # a song's file only (a folder's row, the folder's tab's, is never renamed)
+        if os.path.isdir(oldPath):
+            return False
         try:
             os.rename(oldPath, newPath)
         except Exception:
@@ -552,7 +579,7 @@ class ListControl():
         path = self.GetItemValueByColumnKey(itemIdx, 'path', selectedList)
         oldValue = self.GetItemValueByColumnKey(itemIdx, columnKey, selectedList)
         id3Key = self.innerList[selectedList].columns[columnIdx].id3
-        if newValue == oldValue:
+        if newValue == oldValue or os.path.isdir(path):
             return False
         try:
             mutagen_mp3 = mutagen.mp3.MP3(path)
@@ -584,9 +611,20 @@ class ListControl():
         queryLength = len(query)
         # a list (Python 3's filter is a one-time iterator: the rows could not be drawn
         # from it), each value as text (the order is a number)
-        self.innerList[selectedList].items = [
-            v for v in self.innerList[selectedList].filterCache
-            if len([x for x in query if x in str(v[keyIdx]).lower()]) == queryLength]
+        items = [v for v in self.innerList[selectedList].filterCache
+                 if len([x for x in query if x in str(v[keyIdx]).lower()]) == queryLength]
+        # the starred songs alone (the search row's star, ListBoxSearch.ToggleStarred), the
+        # folder's tab's folders kept ('..' and the subfolders, its way about: hidden, they
+        # were missed, the user); the radio's tabs as they are (their favorites are the
+        # stations')
+        inner = self.innerList[selectedList]
+        if getattr(self, 'filter_starred', False) and inner.title not in radio.RADIO_TABS:
+            favorites = set(library.get_favorite_tracks())
+            keys = [v.key for v in inner.columns]
+            pathIdx, statusIdx = keys.index('path'), keys.index('status')
+            items = [v for v in items
+                     if v[pathIdx] in favorites or v[statusIdx] == folders.FOLDER_STATUS]
+        inner.items = items
 
     def FilterItemsExtended(self, query, ignore_case=True, selectedList=None):
         if selectedList is None:
@@ -1379,6 +1417,16 @@ class ListControl():
             = sorted(self.innerList[self.selectedList].items,
                      key=itemgetter(self.innerList[self.selectedList]
                                     .lastSortedColumn[0]), reverse=reverse)
+        self.KeepFoldersFirst()
+
+    def KeepFoldersFirst(self, selectedList=None):
+        # the folder's tab: '..' and the subfolders over the songs, by any column
+        if selectedList is None:
+            selectedList = self.selectedList
+        inner = self.innerList[selectedList]
+        if inner.title != library.FOLDER_TITLE:
+            return
+        inner.items = folders.arrange(inner.items, [v.key for v in inner.columns])
 
     def GetLastSortedColumn(self, selectedList=None):
         if selectedList is None:
@@ -1675,6 +1723,7 @@ class ListControl():
             self.SetLastSortedColumn([idx, direction], selectedList)
             self.innerList[selectedList].items\
                 = sorted(self.innerList[selectedList].items, key=key, reverse=True)
+        self.KeepFoldersFirst(selectedList)
         self.innerList[selectedList].selectedItems\
             = [i for i in range(self.GetItemsLength(selectedList))
                if self.innerList[selectedList].items[i][orderIdx] in selectedItemsOrder]
