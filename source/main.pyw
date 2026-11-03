@@ -7,6 +7,8 @@ email: peppy0510@hotmail.com
 '''
 
 
+import vcruntime  # noqa # first: stops before wx when the C++ runtime is missing
+
 import argparse
 import faulthandler
 import json
