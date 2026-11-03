@@ -10,6 +10,7 @@ email: peppy0510@hotmail.com
 import vcruntime  # noqa # first: stops before wx when the C++ runtime is missing
 
 import argparse
+import ctypes
 import faulthandler
 import json
 import logging
@@ -42,12 +43,18 @@ numpy.finfo(numpy.dtype('float64'))
 MAIN_SOCKET_PORT = 55755
 
 
+def get_launch_log_path():
+    # a first start fails before the app has made its folder
+    folder = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer')
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, 'launch.log')
+
+
 def write_launch_log(message):
     # why a start showed nothing (pythonw has no console): the reason, in the
     # user's app folder
     try:
-        path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'launch.log')
-        with open(path, 'a', encoding='utf-8') as file:
+        with open(get_launch_log_path(), 'a', encoding='utf-8') as file:
             file.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} pid {os.getpid()}: {message}\n')
     except Exception:
         pass
@@ -58,8 +65,7 @@ def launch(filepath=None):
     # a crash in native code (no Python error) and an error in an event handler
     # (wx goes on, pythonw shows nothing) are written there too
     try:
-        crash_log = open(os.path.join(
-            os.environ.get('LOCALAPPDATA', ''), 'PyMusicPlayer', 'launch.log'), 'a', encoding='utf-8')
+        crash_log = open(get_launch_log_path(), 'a', encoding='utf-8')
         faulthandler.enable(file=crash_log, all_threads=True)
         sys.excepthook = lambda kind, value, trace: write_launch_log(
             'error\n' + ''.join(traceback.format_exception(kind, value, trace)))
@@ -69,8 +75,12 @@ def launch(filepath=None):
         from mainapp import launch_mainapp
         launch_mainapp(filepath)
         write_launch_log('closed')
-    except Exception:
+    except Exception as error:
         write_launch_log('failed\n' + traceback.format_exc())
+        # the log alone left a failed start looking like nothing happened
+        ctypes.windll.user32.MessageBoxW(
+            None, f'PyMusicPlayer could not start.\n\n{type(error).__name__}: {error}\n\n'
+            f'Details: {get_launch_log_path()}', 'PyMusicPlayer', 0x10)
 
 
 def get_mainapp_port():
