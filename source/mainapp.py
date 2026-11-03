@@ -98,8 +98,6 @@ LIST_TAB_ANIMATION_DURATION = 80
 
 # the search row's height over the list (ListBoxSearch)
 SEARCH_ROW_HEIGHT = 32
-# the preference's Latest Release row before a look this session
-UPDATE_NOTE = 'Look for a new release on GitHub'
 
 
 class ListTabAnimationTimer(wx.Timer):
@@ -582,54 +580,34 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.Updater = Updater({'update_checked_at': checked_at, 'update_skipped': skipped},
                                self.__version__, self.OnUpdateChecked)
         self.UpdateRelease = None
-        # the last result, for the preference's Latest Release row (and the row showing it)
-        self.UpdateStatus = (UPDATE_NOTE, 'plain')
-        self.UpdateStatusView = None
 
     def SetUpdateCheck(self, value):
         self.UpdateCheck = bool(value)
         SetPreference('update_check', self.UpdateCheck)
 
-    def SetUpdateStatus(self, text, tone='plain'):
-        self.UpdateStatus = (text, tone)
-        view = self.UpdateStatusView
-        if view:
-            view.ShowUpdateStatus()
-
     def TellUpdateStatus(self, text, color):
-        # asked from the menu or the preference: the answer on the status line too
+        # asked from the menu: the answer on the status line
         status = self.MainPanel.StatusBox
         status.alarm = text
         status.alarm_color = color
         status.alarm_timer = 0
 
     def OnCheckUpdates(self):
-        self.SetUpdateStatus('Checking…')
         self.Updater.check(forced=True)
-
-    def GetCheckedTime(self):
-        return time.strftime('%H:%M', time.localtime(self.Updater.checked_at))
 
     def OnUpdateChecked(self, release, result, forced):
         # a queued call can arrive after close
         if not self:
             return
         if result == 'error':
-            self.SetUpdateStatus('Could not reach GitHub', 'warn')
             if forced:
                 self.TellUpdateStatus('Could not reach GitHub for updates', 'red')
             return
         SetPreferences((('update_checked_at', self.Updater.checked_at),
                         ('update_skipped', self.Updater.skipped)))
         if result == 'found':
-            self.SetUpdateStatus(f'{release["version"]} is available')
             self.ShowUpdate(release)
             return
-        if result == 'skipped':
-            self.SetUpdateStatus(f'{self.Updater.skipped} skipped, '
-                                 f'checked at {self.GetCheckedTime()}')
-        else:
-            self.SetUpdateStatus(f'Up to date, checked at {self.GetCheckedTime()}')
         if forced:
             self.TellUpdateStatus(f'{self.__appname__} {self.__version__} is up to date', 'blue')
 
@@ -652,7 +630,6 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         if key == 'skip':
             self.Updater.skipped = release['version']
             SetPreference('update_skipped', self.Updater.skipped)
-            self.SetUpdateStatus(f'{release["version"]} skipped')
             self.HideUpdate()
         elif key == 'later':
             self.HideUpdate()

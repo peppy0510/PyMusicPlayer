@@ -1531,23 +1531,6 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.CheckUpdates.SetToolTip(wx.ToolTip(
             'Once a day, a notice over the playlist when a new release is out.'))
 
-        offset += ROW
-        StaticText(self, label='Latest Release', pos=(DIALOG_PAD, offset + 3),
-                   size=(200, -1), style=wx.ALIGN_RIGHT)
-        self.CheckNow = Button(self, label='Check Now')
-        self.CheckNow.SetRect((FIELD, offset - 1, 90, 24))
-        self.CheckNow.Bind(wx.EVT_BUTTON, lambda event: frame.OnCheckUpdates())
-        # the last look's result, as wide as its longest (the dialog's width does not
-        # follow it as it changes)
-        self.UpdateResult = StaticText(self, label='', style=wx.ST_NO_AUTORESIZE)
-        self.UpdateResult.reserved = True
-        widest = max(self.UpdateResult.GetTextExtent(text)[0] for text in (
-            'Look for a new release on GitHub', 'Up to date, checked at 00:00',
-            '0.00.00 skipped, checked at 00:00'))
-        self.UpdateResult.SetRect((FIELD + 90 + DIALOG_GAP, offset + 3, widest,
-                                   self.UpdateResult.GetCharHeight() + 2))
-        frame.UpdateStatusView = self
-
         # offset += 10
         # offset += 25
         # label = u'Default Audio Player'
@@ -1568,16 +1551,6 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.GetTopLevelParent().Refresh()
         for window in self.GetTopLevelParent().GetChildren():
             self.parent.parent.parent.RedrawAll(window)
-
-    def ShowUpdateStatus(self):
-        # the frame's last result (MainFrame.SetUpdateStatus), a failure in the warning's
-        # orange
-        text, tone = self.parent.parent.parent.UpdateStatus
-        tokens = macroboxstyle.current().UI
-        self.UpdateResult.SetForegroundColour(tokens.WARN if tone == 'warn'
-                                              else tokens.BAR_TEXT_DIM)
-        self.UpdateResult.SetLabel(text)
-        self.UpdateResult.Refresh()
 
     def OnWaveformMode(self, event):
         mode = self.waveform_modes[self.WaveformMode.GetSelection()][0]
@@ -1890,8 +1863,6 @@ class PreferenceBox(DialogBox):
             if isinstance(child, wx.StaticText):
                 child.SetForegroundColour(dim)
             stack.extend(child.GetChildren())
-        # (the latest release's result in its own tone)
-        self.Notebook.MFEATSPanel.ShowUpdateStatus()
 
         width, height = self.GetClientSize()
         self.CloseButton = Button(self, label='Close', primary=True)
@@ -2570,7 +2541,7 @@ class MenuBar(wx.MenuBar):
         # self.menuHelp.Append(self.itemLicense)
 
         self.itemUpdate = wx.MenuItem(self.menuHelp, wx.ID_ANY,
-                                      u'Check for Update', wx.EmptyString, wx.ITEM_NORMAL)
+                                      u'Check for Updates', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuHelp.Append(self.itemUpdate)
 
         self.menuHelp.AppendSeparator()

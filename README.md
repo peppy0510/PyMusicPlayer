@@ -18,7 +18,7 @@
 * Check File Consistency finds moved or deleted files, and Check Analyzer Versions analyses again the songs an older version analysed.
 * Editable keyboard shortcuts, Always On Top, and a blue or red accent colour.
 * Opening an audio file while the player runs hands it to the running player.
-* Checks GitHub once a day for a new release and shows its notes over the playlist, with Skip this version, Later and Update now. The installed player downloads and runs the new installer; a clean checkout of the main branch pulls it with git. Turn it off in Preference > General, or check now from Help > Check for Update.
+* Checks GitHub once a day for a new release and shows its notes over the playlist, with Skip this version, Later and Update now. The installed player downloads and runs the new installer; a clean checkout of the main branch pulls it with git. Turn it off in Preference > General, or check now from Help > Check for Updates.
 
 ## Screenshot
 
