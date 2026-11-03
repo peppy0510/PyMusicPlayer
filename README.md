@@ -11,7 +11,9 @@
 * A pitch fader for the tempo (±6, 10, 16 or 100%) with a key lock, and a key shift in semitones (View > Tempo Control, Key Control).
 * MASTER: Auto Master (automatic gain, stereo width and a limiter, a VST built from `plugin/`) on songs and radio, with its meters and knobs in the rack over the player.
 * ANALYZER: peak and RMS meters, momentary, short-term and integrated loudness, a goniometer with correlation and balance, a spectrum, an oscilloscope and a spectrogram.
-* Playlists as tabs in a sidebar. The search row filters this list by a column or searches every playlist. Find in Library searches by text, tempo range (with half and double tempo), key (with its compatible keys) and genre; Find Similar ranks the library by tempo, key and sound. Cover and waveform columns, row heights, and columns that are shown, hidden and resized from the header.
+* A sidebar in sections that fold: Playlists (Add Playlist at their end), Library (favorite and recent tracks, search results), Radio and Folders; the list that is playing is marked ▶. The search row filters this list by a column or searches every playlist, and its star shows only the favorite tracks. Find in Library searches by text, tempo range (with half and double tempo), key (with its compatible keys) and genre; Find Similar ranks the library by tempo, key and sound. Cover and waveform columns, row heights, and columns that are shown, hidden and resized from the header.
+* Folders: add a folder to the sidebar and browse it in the list as in a terminal, with `..`, its subfolders and its songs. Enter or a double click opens a folder, Backspace or the mouse's back button goes up, and each folder keeps its scroll and selection; a folder holding the playing song shows ▶. A folder's songs stay out of the library and are analysed as they are played, or all of them when Auto Analyze Folder is checked on its root.
+* Dragged songs show their covers stacked with their count; dropped on Favorite tracks they are starred. The context menu key and Shift+F10 open a row's menu.
 * Track editor for tags and the cover image: choose a file or drop one, remove it, or look it up; Fix scan straightens a scanned cover and trims its rim, and Square crops to the subject. The file's modified date can be kept.
 * Look Up finds tags and covers on Discogs and Last.fm, and identifies a song by its sound with AcoustID (fpcalc is fetched when the player starts). Keys of your own go in Preference > Web Services.
 * Internet radio: Favorites and Browse stations, from the radio-browser.info directory by top votes, genre or country. A station plays as a playlist row and shows the stream's title.
@@ -22,9 +24,9 @@
 
 ## Screenshot
 
-![player](/assets/images/screenshot-8638de06.webp)
+![player](/assets/images/screenshot-03823655.webp)
 
-![master and analyzer](/assets/images/screenshot-dfd242f8.webp)
+![master and analyzer](/assets/images/screenshot-d8ef52a9.webp)
 
 <!--
 ## Demo on YouTube
