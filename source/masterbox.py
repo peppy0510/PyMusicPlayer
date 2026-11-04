@@ -22,21 +22,10 @@ from rackbox import draw_rule
 from rackbox import get_font
 
 
-# MASTER's module in the rack (rackbox), a plug-in's plate: its header (whether it works,
-# A/B) and the plugin's three sections, each its stage's key (on or off), its levels
-# (segmented meters with their readouts) and its controls (LED switches and knobs); the
-# levels apart from their sections before, and the stages' keys in the header ("each its
-# own", the user); shown from the MASTER row's arrow; kept (master_panel)
+# master module in the rack: header, then the plugin's three sections
 CONTROLS = 118
-# its meters, all in a band over the sections (a grid, as PyWinAudio's rack: each on its
-# section's key's row and the stereo's five under its key before, AGC's and LIMITER's
-# sections left with a block empty, "not clean", the user), in the plugin's order: (key,
-# label, low, high, kind): 'gain' (lit from low), 'reduce' (from 0 down to low, in the
-# warning colour), 'bipolar' (from the middle), 'phase' (the delay between the channels,
-# ms), 'band' (a band's width as it came, as filled, and its target, S/M dB); the output's
-# peak the rack bar's OUT
-# (LOUDNESS IN left out: the AGC's gain says it, the target less the input; with AGC off
-# the rack bar's LUFS reads the song as it is)
+# meters band: (key, label, low, high, kind)
+# no loudness in: the agc gain says it
 BAND_METERS = (('agc', 'AGC', -12.0, 18.0, 'gain'),
                ('side', 'WIDTH', -12.0, 0.0, 'reduce'),
                ('balance', 'BALANCE', -6.0, 6.0, 'bipolar'),
@@ -48,8 +37,6 @@ BAND_METERS = (('agc', 'AGC', -12.0, 18.0, 'gain'),
 
 class MasterPanel(RackModule):
 
-    # (MASTER as the rack bar's key, the View menu and the keys call it: AUTO MASTER here
-    # alone, the user)
     TITLE = 'MASTER'
     PREFERENCE = 'master_panel'
     PARTS = (('controls', 'CONTROLS', CONTROLS),)
@@ -59,16 +46,14 @@ class MasterPanel(RackModule):
         self.levels = None
         self.compact = False
         RackModule.__init__(self, parent)
-        # always there, folded or open (its header the rack's bar: the meter, the volume)
+        # always there: folded, its header is the rack bar
         self.shown = True
 
     def Toggle(self):
-        # (hidden no more: folded)
         self.ToggleFold()
 
     def ToggleFold(self):
         RackModule.ToggleFold(self)
-        # (the View menu's Master checked while it is open)
         menu = getattr(wx.GetTopLevelParent(self), 'MenuBar', None)
         item = getattr(menu, 'itemMasterShow', None)
         if item is not None:
@@ -77,10 +62,10 @@ class MasterPanel(RackModule):
     # what it shows
 
     def IsActive(self):
-        # MASTER on (not passed by); not known while the player is being made
+        # not known while the player is being made
         return hasattr(self.parent, 'cue') and self.parent.IsLoudOn()
 
-    # its power key: MASTER on or off, as the rack bar's key
+    # power key: master on or off
     POWER = True
 
     def OnPower(self):
@@ -88,7 +73,7 @@ class MasterPanel(RackModule):
             self.parent.SetLoudOff()
         else:
             self.parent.SetLoudOn()
-        # (drawn again now: stopped, nothing draws it at the next frame)
+        # stopped: nothing redraws it next frame
         self.reInitBuffer = True
 
     def GetVst(self):
@@ -96,7 +81,7 @@ class MasterPanel(RackModule):
         return control.vstHandle if control is not None else 0
 
     def ReadLevels(self):
-        # (nothing sounding: none, its meters at rest; read on, they held their last)
+        # nothing sounding: meters at rest
         if self.parent.IsVisualPlaying() is False:
             return None
         return master.METERS.Read(self.GetVst()) if self.IsActive() else None
@@ -106,21 +91,16 @@ class MasterPanel(RackModule):
             return ('BYPASSED', False)
         if master.METERS.IsCompared():
             return ('A/B: ORIGINAL', True)
-        # its AGC's and limiter's meters small in place of ACTIVE (their numbers alone before,
-        # "a meter, small, would be good", the user)
+        # small agc and limiter meters in place of ACTIVE
         if self.IsSummaryShown():
             return None
         return ('ACTIVE', False)
 
-    # the header's meters: (spec as BAND_METERS'), each its name and a bar (its value too
-    # before: "without the numbers", the user)
-    # (the plugin's three stages, in its order; STEREO's the width it cuts, as WIDTH's in
-    # the band: AGC and LIM alone before, "and the stereo?", the user)
+    # header meters, each its name and a bar
+    # the plugin's three stages in order
     SUMMARY = (('agc', 'AGC', -12.0, 18.0, 'gain'), ('side', 'STEREO', -12.0, 0.0, 'reduce'),
                ('limiter', 'LIM', -12.0, 0.0, 'reduce'))
-    # its bars 40 px, shorter as the window narrows (20 at the least): at the window's
-    # least width (480) all of them and OUT's on one header (OUT left out before, "why was
-    # OUT taken out?", the user)
+    # bar width shrinks with the window
     SUMMARY_BAR = 40
     SUMMARY_LEAST = 18
 
@@ -129,8 +109,6 @@ class MasterPanel(RackModule):
         return int(max(self.SUMMARY_LEAST, min(self.SUMMARY_BAR, (width - 400) / 4.0)))
 
     def IsSummaryShown(self):
-        # open or folded (folded alone before; the header's loudness display in its place
-        # since, "rather AGC and LIM at its left", the user)
         return self.IsActive() and not master.METERS.IsCompared()
 
     def GetSummaryWidth(self, dc):
@@ -159,18 +137,14 @@ class MasterPanel(RackModule):
                              uikit.METER_BAR, share, st.RACK_BG_COLOR, low, high, tone=tone)
             x += bar + 14
 
-    # the header's right: A/B, a line, the output's meter (OUT and a bar), a line, the
-    # volume (VolumeSlider, its child: volume_at); the rack bar's before
+    # header right: A/B, out meter, volume
     OUT_GAP = 8
-    # a small bar, one for both channels (the louder): whether it sounds, the rest
-    # ANALYZER's meters' (two bars 120 px wide before, the same as theirs, the user); as
-    # long as the summary's (GetSummaryBar)
+    # one bar for both channels (the louder)
     METER_LEAST = 18
     METER_LOW = -48.0
 
     def PlaceVolume(self, x, y):
-        # (moved at once: after the event, the header drawn at its new width first, the
-        # volume and its mute key shook as the window was sized, the user)
+        # move at once or the volume shakes while sizing
         if (x, y) != getattr(self, 'volume_at', None):
             self.volume_at = (x, y)
             volume = getattr(self.parent, 'VolumeSlider', None)
@@ -178,8 +152,7 @@ class MasterPanel(RackModule):
                 volume.OnSize()
 
     def Place(self, y, width):
-        # the volume put where the header keeps it as the module is placed, in the same
-        # step (its drawing can wait a frame; shown, it the module's child)
+        # volume placed with the module in the same step
         RackModule.Place(self, y, width)
         volume = getattr(self.parent, 'VolumeSlider', None)
         if volume is not None:
@@ -206,23 +179,15 @@ class MasterPanel(RackModule):
         return right
 
     def DrawOut(self, gc, left, right):
-        '''the output as ANALYZER reads it (its own thread, folded or not): OUT and a small
-        bar, from no further left than left to right; where it starts (right when there is
-        no room)'''
+        '''output meter: OUT and a small bar; returns where it starts'''
         analyzer = getattr(self.parent, 'Analyzer', None)
         if analyzer is None:
             return right
         a = analyzer.analyzer
         st = self.parent.st
-        # (the short-term loudness's display beside it before: ANALYZER's meters have it,
-        # AGC and LIM at the header's left in its room, the user)
         label = get_font(uikit.LABEL, bold=True)
         uikit.set_font(gc, label, colour(st.RACK_LABEL_COLOR))
         lw = gc.GetTextExtent('OUT')[0]
-        # (its room by its name's own width: 34 and 13 more held before, OUT left out of the
-        # least window with room for it)
-        # (as long as AGC's, STEREO's and LIM's at the header's left: 48 at most before, "as
-        # small as the three", the user)
         width = int(max(self.METER_LEAST, min(self.GetSummaryBar(),
                                               right - lw - self.OUT_GAP - left)))
         bx = right - width
@@ -230,7 +195,7 @@ class MasterPanel(RackModule):
             return right
         segment, spacing, bar = uikit.METER_SEGMENT, uikit.METER_GAP, uikit.METER_BAR
         count = int((width + spacing) / (segment + spacing))
-        # on whole pixels, their last against the right
+        # on whole pixels, the last against the right
         bx = int(bx + width - (count * (segment + spacing) - spacing))
         text_y, top = self.GetSmallTextRows(label, uikit.METER_BAR)
         gc.DrawText('OUT', bx - self.OUT_GAP - lw, text_y)
@@ -240,13 +205,11 @@ class MasterPanel(RackModule):
         uikit.draw_meter(gc, bx, top, span, bar, share, st.RACK_BG_COLOR, self.METER_LOW)
         return int(bx - self.OUT_GAP - lw)
 
-    # each section's stage, its key at the section's top (DrawStageKey): a song heard
-    # without one (its loudness as it is without AGC, its stereo without STEREO, its peaks
-    # without LIMITER)
+    # each section's stage key bypasses that stage
     STAGES = dict(AGC='agc', Stereo='stereo', Limiter='limiter')
 
     def GetChips(self):
-        # A/B: the original at the same loudness, warned while it is heard
+        # A/B: the original at the same loudness
         return [('ab', 'A/B', self.IsActive() and master.METERS.IsCompared(), True)]
 
     def IsChipEnabled(self, key):
@@ -259,8 +222,7 @@ class MasterPanel(RackModule):
 
     # drawn
 
-    # narrower than this, its labels and readouts a step smaller (uikit.MICRO): the stereo
-    # section's five switches, the knobs' readouts and the meters' names did not fit at 700
+    # narrower than this, labels and readouts a step smaller
     COMPACT_WIDTH = 860
 
     def LabelFont(self):
@@ -275,63 +237,46 @@ class MasterPanel(RackModule):
             self.levels = self.ReadLevels()
             self.DrawControls(gc, x, y, width)
 
-    # a section (the plugin's: AGC, Stereo, Limiter): its stage's key (its name, on or off)
-    # first in its row of switches, its knobs under them spread over its width; the
-    # sections side by side, each as wide as it needs and the room shared as they need it,
-    # or one under another when they do not fit (GetControlLayout)
+    # sections side by side, or stacked when they do not fit
     SWITCH_ROW = 21
-    # the section's key and switches KEY_TOP under its top, its knobs 13 under them (13
-    # over the switches and 6 under them read the other way: the user)
+    # key and switches KEY_TOP under the section top
     KEY_TOP = 6
     SECTION_TOP = 36
-    # a line over the sections (side by side, one; one under another, over each) and each
-    # this much lower under it (its key 6 px under the line was tight; side by side, none
-    # under the header: the user)
+    # a line over the sections, each this much under it
     STACK_PAD = 6
     SECTION_GAP = 12
     SECTION_BOTTOM = 8
-    # the meters' band: PAD over and under its rows (a row each SWITCH_ROW), its meters
-    # GAP apart in a row, a meter's bar at least BAR_LEAST
+    # meters band: PAD over and under, GAP between meters
     BAND_PAD = 8
     BAND_GAP = 24
     BAR_LEAST = 48
-    # a meter's cell at most (its bar about 100 px): from the left, the rest of a wide
-    # module's row left empty (as wide as the module, the bars ran long: the user)
+    # a meter cell at most
     BAND_CELL_MOST = 240
 
     def GetSections(self):
-        # (its params but its stage's own switch, AGC's or Limiter's: its key now)
+        # params without the stage's own switch
         own = set(indexes[0] for indexes in master.STAGE_SWITCHES.values()
                   if len(indexes) == 1)
         return [(group, [v for v in master.PARAMS if v[2] == group and v[0] not in own])
                 for group in master.GROUPS]
 
     def GetSwitchWidth(self, gc, name, compact):
-        # the LED (6 px) 5 px in, 6 px to the name (4 was cramped), 7 px after it (compact:
-        # 5 after the name, 3 between: the LED's 6 to the name kept)
+        # led 5 px in, 6 px to the name
         uikit.set_font(gc, get_font(uikit.MICRO if compact else uikit.LABEL, bold=True), wx.BLACK)
         return 5 + 6 + 6 + gc.GetTextExtent(name.upper())[0] + (5 if compact else 7)
 
-    # the knobs' least cell (their readouts, -16.0 LUFS, ran into each other under it) and
-    # a row of them
-    # (compact, the readouts a step smaller: 52)
+    # least knob cell so readouts do not overlap
     KNOB_LEAST = 64
     KNOB_LEAST_COMPACT = 52
-    # (a row of knobs under another: 58 put the name under one on the next one's ring)
+    # knob row height
     KNOB_ROW = 70
 
-    # side by side, a section's switches this many a row (Stereo's five three and two: the
-    # same at any width, "always two rows", the user); a knob's cell (its readout and name
-    # under it)
+    # side by side: switches per row; knob cell
     SWITCHES_A_ROW = 3
     KNOB_CELL = 80
 
     def GetControlLayout(self, width):
-        '''(side by side, [(group, params, x, width, its switches a row (0: as many as
-        fit), knobs a row, height, its controls' top, its switches' rows)]) at this inner
-        width: each its switches across it over its knobs (at its left, in one row or two,
-        they changed with the width: "not consistent", the user), the sections side by side
-        their knobs from one line'''
+        '''(side, [(group, params, x, width, a_row, knobs, height, top, rows)])'''
         compact = width < self.COMPACT_WIDTH
         key = (int(width), compact)
         if getattr(self, 'layout_cache', (None,))[0] == key:
@@ -343,12 +288,12 @@ class MasterPanel(RackModule):
         gap = 3 if compact else 4
         sections = []
         for group, params in self.GetSections():
-            # (its key first in its row of switches)
+            # key first in the switch row
             switches = [self.GetSwitchWidth(gc, group, compact)]
             switches += [self.GetSwitchWidth(gc, name, compact)
                          for _, name, _, kind in params if kind == 'switch']
             knobs = len([v for v in params if v[3] == 'knob'])
-            # its widest row of switches, or its knobs at their least
+            # widest switch row, or knobs at their least
             rows = [switches[k:k + self.SWITCHES_A_ROW]
                     for k in range(0, len(switches), self.SWITCHES_A_ROW)]
             across = max([sum(row) + gap * (len(row) - 1) for row in rows] or [0])
@@ -359,20 +304,18 @@ class MasterPanel(RackModule):
         needs = [v[4] for v in sections]
         gaps = self.SECTION_GAP * 2 * (len(sections) - 1)
         side = sum(needs) + gaps <= width
-        # side by side, each as wide as it needs from the left, what is left at the right
-        # (the room shared, their knobs spread over it, it read uneven: "leave the right
-        # of LIMITER empty, to the left", the user)
+        # side by side: each as wide as it needs, rest left empty at right
         widths = needs if side else [width] * len(sections)
         if side and max(needs) * len(needs) + gaps <= width:
-            # as wide as one another when they fit (three even columns)
+            # even columns when they fit
             widths = [max(needs)] * len(needs)
         if side:
             a_row = self.SWITCHES_A_ROW
-            # (their knobs from one line: the most rows of them all)
+            # knobs on one line: the most rows of all
             rows = max(-(-len(switches) // a_row) for _, _, switches, _, _ in sections)
             counts = [rows] * len(sections)
         else:
-            # one under another: as many a row as fit (all five in one, the room there)
+            # stacked: as many a row as fit
             a_row = 0
             counts = [self.CountRows(switches, w, compact)
                       for (_, _, switches, _, _), w in zip(sections, widths)]
@@ -391,7 +334,7 @@ class MasterPanel(RackModule):
         return self.layout_cache[1]
 
     def CountRows(self, widths, room, compact):
-        # the rows switches of these widths take flowing in room
+        # rows these switch widths take in room
         rows, used = 1, 0
         for rw in widths:
             if used and used + rw > room:
@@ -400,13 +343,11 @@ class MasterPanel(RackModule):
         return rows
 
     def GetKnobTop(self, rows, lead):
-        # the knobs' rings' top under its key's and switches' rows, from the section's top
+        # knob ring top under the key and switch rows
         return self.KEY_TOP + rows * self.SWITCH_ROW - 4 + 13 if rows else lead
 
     def GetBandLayout(self, width):
-        '''(meters a row, rows, the names' width, the readouts' width) of the meters' band
-        at this inner width: as many a row as fit at their least, the rows as even as they
-        go (four and four, not five and three)'''
+        '''(per row, rows, name width, readout width) of the meters band'''
         key = (int(width), self.compact)
         if getattr(self, 'band_cache', (None,))[0] == key:
             return self.band_cache[1]
@@ -441,12 +382,9 @@ class MasterPanel(RackModule):
         return self.GetBandHeight(width) + (max(heights) if side else sum(heights))
 
     def DrawControls(self, gc, x, y, width):
-        '''drawn once into a picture, put there at every frame, drawn again when a value,
-        the mouse over it, its width or the theme changes: its names, readouts, knobs and
-        switches drawn at every frame took 220 ms a second (MASTER and ANALYZER open, a
-        click waited up to 60 ms); its meters drawn over it at every frame'''
+        '''cached picture, redrawn on value, hover, width or theme change'''
         values = master.get_values()
-        # (the mouse over the header's chips not one of its own)
+        # hover on the header's chips is not ours
         hovered = self.hovered if isinstance(self.hovered, tuple)\
             and self.hovered[0] in ('switch', 'knob', 'stage') else None
         key = (int(width), tuple(values), hovered, self.compact, uikit.get_style_version())
@@ -473,9 +411,7 @@ class MasterPanel(RackModule):
         self.DrawBand(gc, x, y, width)
 
     def DrawBand(self, gc, x, y, width):
-        # the meters in rows across the module, each its name, its bar from one place
-        # (after the longest name) and its readout on a display at its cell's right; a line
-        # over them, the header's (none: the header read as one with them, the user)
+        # meters in rows: name, bar and readout
         draw_rule(gc, self.parent.st, x, y, width)
         per, rows, names, readout = self.GetBandLayout(width)
         cell = min((width - self.BAND_GAP * (per - 1)) / float(per), self.BAND_CELL_MOST)
@@ -485,8 +421,7 @@ class MasterPanel(RackModule):
                                y + self.BAND_PAD + row * self.SWITCH_ROW, names, cell)
 
     def GetMeterValue(self, spec):
-        # (readout text, the share it is lit from, to, its second tone's (from, to) or None,
-        # its target's share or None) of a meter; None when nothing is read
+        # (text, lit from, to, second tone or None, target or None)
         levels = self.levels
         key, label, low, high, kind = spec
         share = (lambda db: (min(max(db, low), high) - low) / (high - low))
@@ -497,7 +432,7 @@ class MasterPanel(RackModule):
             if not bands:
                 return None
             band = bands[key]
-            # the band's width as it came and as filled (powers added), dB
+            # band width as it came and as filled, dB
             have = 10 ** (band['width'] / 10.0) if band['width'] > -100 else 0.0
             added = 10 ** (band['fill'] / 10.0) if band['fill'] > -100 else 0.0
             out = 10 * math.log10(have + added) if have + added > 1e-12 else -120.0
@@ -509,7 +444,7 @@ class MasterPanel(RackModule):
             return None
         shown = 0.0 if abs(value) < 0.05 else value
         if kind == 'reduce':
-            # (lit from 0 down to low)
+            # lit from 0 down to low
             return (f'{min(0.0, shown):.1f} dB', 0.0, min(max(value / low, 0.0), 1.0),
                     None, None)
         if kind == 'gain':
@@ -526,7 +461,7 @@ class MasterPanel(RackModule):
         label = spec[1]
         uikit.set_font(gc, self.LabelFont(), colour(st.RACK_LABEL_COLOR))
         gc.DrawText(label, x, uikit.get_caps_top(self.LabelFont(), y, 17))
-        # the readout's display at the right, as DrawMeter's
+        # readout display at the right
         uikit.set_font(gc, self.ReadoutFont(), colour(st.LCD_TEXT_COLOR))
         tw = gc.GetTextExtent('+00.0 dB')[0]
         cw = tw + 12
@@ -542,10 +477,9 @@ class MasterPanel(RackModule):
         bw = rx - 8 - bx
         if bw < 12:
             return
-        # on the names' capitals' middle (from (17 - 6) // 2 it sat a pixel over it)
+        # on the capitals' middle
         by = y + (17 - uikit.METER_BAR + 1) // 2
-        # a gain by its dB, a reduction in the warning's orange, the rest in a neutral tone
-        # (amounts, not levels near the top)
+        # gain by dB, reduction in warning orange, the rest neutral
         key, label, low, high, kind = spec
         tone = None if kind == 'gain' else uikit.METER_TONES[1][1] if kind == 'reduce'\
             else uikit.METER_TONES[-1][1]
@@ -557,10 +491,10 @@ class MasterPanel(RackModule):
         uikit.draw_meter(gc, bx, by, bw, uikit.METER_BAR, share, st.RACK_BG_COLOR, low, high,
                          tone=tone, start=start)
         if second is not None:
-            # what the fill added to the band, in the accent
+            # what the fill added, in the accent
             uikit.draw_meter(gc, bx, by, bw, uikit.METER_BAR, second[1], st.RACK_BG_COLOR,
                              tone=uikit.ui().ACCENT, start=second[0], unlit=False)
-        # a mark: the bipolar's middle, a band's target
+        # mark: bipolar middle, band target
         if kind not in ('bipolar', 'phase', 'band'):
             return
         mark = start if kind != 'band' else target
@@ -572,15 +506,13 @@ class MasterPanel(RackModule):
             gc.DrawRectangle(mx, by - 2, 1, uikit.METER_BAR + 4)
 
     def GetSectionPen(self, gc):
-        # the lines between the plugin's sections a step fainter than those between the
-        # module's parts (the same lines, the smaller division read as the larger), as long
-        # (8 px shorter at each end, they looked cut short)
+        # section lines a step fainter than the module's
         edge = colour(self.parent.st.RACK_EDGE_COLOR)
         return gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(edge.Red(), edge.Green(),
                                                          edge.Blue(), 120)).Width(1))
 
     def DrawSections(self, gc, x, y, width, values):
-        # the plugin's sections (GetControlLayout), a faint line between them
+        # sections with a faint line between
         side, layout = self.GetControlLayout(width)
         height = max(v[6] for v in layout)
         top = y
@@ -597,8 +529,7 @@ class MasterPanel(RackModule):
                 top += sh
 
     def DrawSection(self, gc, group, params, values, x, y, width, a_row, per, lead, rows):
-        # its key first in its row of switches (a_row a row, 0: as many as fit), its knobs
-        # under them from its left (rows: the sections' most, their knobs on one line)
+        # key first in the switch row, knobs under from the left
         key = self.DrawStageKey(gc, group, values, x, y + self.KEY_TOP)
         self.DrawSwitches(gc, params, values, x, y + self.KEY_TOP, width, a_row,
                           first=key + (3 if self.compact else 4))
@@ -611,8 +542,7 @@ class MasterPanel(RackModule):
             self.DrawKnobCell(gc, index, name, values, cx, cy, cell)
 
     def DrawStageKey(self, gc, group, values, x, y):
-        # the section's stage on or off (master.toggle_stage: Stereo's five switches as one),
-        # an LED and its name on a key as its switches
+        # stage on or off, drawn as a switch
         st = self.parent.st
         stage = self.STAGES[group]
         on = master.is_stage_on(stage, values)
@@ -635,8 +565,7 @@ class MasterPanel(RackModule):
         return rw
 
     def DrawSwitches(self, gc, params, values, x, y, width, a_row=0, first=0):
-        # a section's switches: an LED (lit, or a ring) and its name on a key, rows of them
-        # in width (first: the room its key takes at the first row's start)
+        # switches: led and name on a key, in rows
         st = self.parent.st
         tokens = uikit.ui()
         sx, sy = x + first, y
@@ -649,11 +578,11 @@ class MasterPanel(RackModule):
             size = 6
             rw = self.GetSwitchWidth(gc, name, self.compact)
             if sx > x and (sx + rw > x + width or a_row and in_row >= a_row):
-                # a row more (one a row in a section: GetControlLayout counted them)
+                # next row
                 sx, sy, in_row = x, sy + self.SWITCH_ROW, 0
             on = master.is_on(values[index])
             hovered = self.hovered == ('switch', index)
-            # a hardware key (uikit.draw_face), lighter under the mouse
+            # hardware key, lighter on hover
             face = colour(st.KNOB_RING_COLOR if hovered else st.KNOB_FACE_COLOR)
             uikit.draw_face(gc, (sx, sy, rw, 17), face)
             if on:
@@ -662,9 +591,7 @@ class MasterPanel(RackModule):
             else:
                 gc.SetPen(wx.Pen(colour(st.RACK_LABEL_COLOR), 1))
                 gc.SetBrush(wx.NullGraphicsBrush)
-            # the LED's middle on the chip's 17 rows (16 and its border), where the capitals'
-            # is: drawn from a whole row (the renderer puts shapes half a pixel down, so from
-            # half a row it was lit heavier at the bottom: measured 97 against 54)
+            # from a whole row: the renderer puts shapes half a pixel down
             gc.DrawEllipse(sx + 5, sy + 5, size, size)
             uikit.set_font(gc, font, colour(st.RACK_TEXT_COLOR if on else st.RACK_LABEL_COLOR))
             gc.DrawText(label, sx + 5 + size + 6, uikit.get_caps_top(font, sy, 17))
@@ -674,8 +601,7 @@ class MasterPanel(RackModule):
         return (sy - y) // self.SWITCH_ROW + 1
 
     def DrawKnobCell(self, gc, index, name, values, cx, cy, cell):
-        # a knob: a ring of the range, the value's arc in the accent, its readout and name
-        # under it
+        # knob: range ring, value arc, readout and name
         st = self.parent.st
         self.DrawKnob(gc, cx, cy, values[index], self.hovered == ('knob', index))
         text = master.PROBE.Text(index, values[index])
@@ -699,7 +625,7 @@ class MasterPanel(RackModule):
         return self.drag is not None
 
     def HandleDrag(self, event):
-        # a knob turned by an up or down drag until the button is let go
+        # knob turned by vertical drag until release
         if self.drag is None:
             return False
         if event.LeftIsDown:
@@ -712,10 +638,10 @@ class MasterPanel(RackModule):
     def HandleHit(self, event, hit):
         kind, key = hit
         if event.LeftDClick and kind == 'knob':
-            # its first value back
+            # double click resets
             self.SetValue(key, master.DEFAULTS[key])
             return
-        # (a quick second click: a double click only, pressed as the first was)
+        # a quick second click counts as a double click only
         if event.LeftDown is False and event.LeftDClick is False:
             return
         if kind == 'stage':

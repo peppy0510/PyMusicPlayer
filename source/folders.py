@@ -24,30 +24,21 @@ from macroboxlib import SetPreference
 from utilities import Struct
 
 
-# the sidebar's folders: roots of the user's choosing (folder_roots) as its rows, one folder
-# of them open at a time (folder_current) in a tab of its own (library.FOLDER_TITLE) as a
-# terminal lists one: '..' (but at its root), its subfolders, then its songs; a folder's row
-# opened by a double click or Enter, its parent by Backspace. its songs not analyzed yet are
-# not queued for the analysis, a song is analyzed when played, but under the roots chosen for
-# it (folder_analyzed, by a root's menu: an opened folder's songs queued as a playlist's);
-# those analyzed before are brought up to date as a playlist's (MFEATS.QueueOutdated)
-# (read once and kept: the sidebar asks at every drawing, the settings' file opened each time)
+# the sidebar's folders: roots as rows, one folder open at a time in its tab
+# cached: the sidebar asks at every drawing, GetPreference opens the file
 STATE = None
-# the folder's reading and its rows' filling: a newer one (another folder opened) stops it
+# a newer folder read stops the one before
 JOB = [0]
-# the folder whose rows are in the tab, and each folder left: (its scroll, its selected row's
-# path), found as it was when come back to (as a terminal's file manager keeps them), the
-# latest PLACES_MOST
+# the folder shown, and each folder left: (scroll, selected path)
 SHOWN = [None]
-# the folder open when the player was last closed (its rows in the tab as saved)
+# the folder open when the player was last closed
 STARTED = [None]
 PLACES = dict()
 PLACES_MOST = 500
 HIDDEN = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
-# the rows filled in at a time (from their files: their tags, length and analysis)
+# rows filled in from their files at a time
 FILL_BATCH = 25
-# a folder's row: its status (no song's: never played, analyzed, starred or edited), and the
-# parent's name
+# a folder row's status, and the parent's name
 FOLDER_STATUS = 'folder'
 PARENT_NAME = '..'
 
@@ -86,13 +77,12 @@ def get_name(path):
 
 
 def sort_key(path):
-    # by name as the Explorer sorts: the numbers in them by value (2 before 10)
+    # as the Explorer sorts: numbers by value (2 before 10)
     return [int(v) if v.isdigit() else v for v in re.split(r'(\d+)', get_name(path).lower())]
 
 
 def read_dir(path):
-    '''(subfolders, songs as (path, size)) of a folder, by name: the hidden and the system's
-    left out (a drive's recycle bin); None when it cannot be read'''
+    '''(subfolders, songs as (path, size)), hidden and system left out, or None'''
     folders, songs = [], []
     try:
         with os.scandir(path) as entries:
@@ -114,7 +104,7 @@ def read_dir(path):
 
 
 def get_owner(path):
-    # the root path is shown under: the nearest one (a root in another)
+    # the nearest root (a root may be in another)
     roots = [v for v in get_state().roots if is_under(path, v)]
     return max(roots, key=lambda v: len(get_key(v))) if roots else None
 
@@ -126,14 +116,12 @@ def is_analyzed(path):
 
 
 def is_browsed_only(inner):
-    '''a tab whose songs are not queued for the analysis: the folder's, its root not chosen
-    for it'''
+    '''the folder's tab, its root not chosen for the analysis'''
     return inner.title == library.FOLDER_TITLE and is_analyzed(get_state().current) is False
 
 
 def toggle_analyzed(mainpanel, root):
-    '''the root's opened folders' songs queued for the analysis (as a playlist's), or no more
-    (the queued ones under it let go, but the playing song's): True when queued'''
+    '''the root's songs queued for the analysis, or no more: True when queued'''
     state = get_state()
     on = any(is_same(v, root) for v in state.analyzed) is False
     state.analyzed = [v for v in state.analyzed if is_same(v, root) is False]
@@ -145,7 +133,7 @@ def toggle_analyzed(mainpanel, root):
         playing = mainpanel.PlayBox.cue.path
         scheduler.taskpath = [v for v in scheduler.taskpath
                               if v == playing or is_under(v, root) is False]
-    # (off: the playlists' songs let go with them queued again)
+    # off: the playlists' songs let go with them queued again
     scheduler.AutoAnalyzer()
     if scheduler.IsAutoAnalyzerOn() is False:
         radio.tell(mainpanel, 'Auto Analyze is off (Option menu)', warn=True)
@@ -153,8 +141,7 @@ def toggle_analyzed(mainpanel, root):
 
 
 def get_entries():
-    '''the sidebar's folder rows, Struct(path, name, kind): each root ('root'), then the row
-    adding a root ('add')'''
+    '''the sidebar's folder rows, Struct(path, name, kind)'''
     entries = [Struct(path=root, name=get_name(root), kind='root')
                for root in get_state().roots]
     entries.append(Struct(path=None, name='Add Folder...', kind='add'))
@@ -177,7 +164,7 @@ def add_root(path):
 
 
 def remove_root(path):
-    # the folder left on its drive: only its row taken off the sidebar
+    # only its row taken off the sidebar, the folder left
     state = get_state()
     state.roots = [v for v in state.roots if is_same(v, path) is False]
     state.analyzed = [v for v in state.analyzed if is_same(v, path) is False]
@@ -212,9 +199,7 @@ def open_in_explorer(path):
 
 
 def open_folder(mainpanel, path, focus=None):
-    '''the folder opened in the folder's tab (made when it is not there), that tab chosen:
-    its subfolders' rows and its songs' at once (focus: the row of that path selected), the
-    songs' tags, length and analysis filled in after'''
+    '''rows at once from the names, the songs' tags filled in after'''
     state = get_state()
     state.current = path
     SetPreference('folder_current', path)
@@ -234,9 +219,7 @@ def open_folder(mainpanel, path, focus=None):
 
 
 def open_root(mainpanel, root):
-    '''a root's row clicked: the folder open under it shown again (read again, as it was
-    left) when another tab was chosen meanwhile; in the folder's tab, or another root's
-    folder open, the root itself (a terminal's cd ~)'''
+    '''the folder open under root shown again, else the root itself'''
     current = get_state().current
     owner = get_owner(current) if current is not None else None
     if is_folder_view(mainpanel.ListBox) is False and is_same(owner, root):
@@ -246,8 +229,7 @@ def open_root(mainpanel, root):
 
 
 def go_up(mainpanel):
-    '''the open folder's parent opened (not over its root), the folder come from selected:
-    False when there is none'''
+    '''the parent opened, not over its root: False when there is none'''
     current = get_state().current
     owner = get_owner(current) if current is not None else None
     if owner is None or is_same(owner, current):
@@ -257,7 +239,6 @@ def go_up(mainpanel):
 
 
 def open_row(mainpanel, item):
-    # a folder's row opened: '..' its parent's, a subfolder its own
     listbox = mainpanel.ListBox
     if listbox.GetItemValueByColumnKey(item, 'filename') == PARENT_NAME:
         go_up(mainpanel)
@@ -270,8 +251,7 @@ def is_folder_view(listbox):
 
 
 def is_folder_item(listbox, item, listIdx=None):
-    # the row at item a folder's (the folder's tab's '..' and subfolders; another tab's
-    # columns may have no status, a station's)
+    # another tab's columns may have no status (a station's)
     inner = listbox.innerList[listbox.selectedList if listIdx is None else listIdx]
     if inner.title != library.FOLDER_TITLE:
         return False
@@ -282,14 +262,13 @@ def is_folder_item(listbox, item, listIdx=None):
 
 
 def get_selected_folders(listbox):
-    # the selected rows that are folders' (in the folder's tab)
     if is_folder_view(listbox) is False:
         return []
     return [v for v in listbox.GetSelectedItems() if is_folder_item(listbox, v)]
 
 
 def get_drag_paths(listbox, paths):
-    # the selection's paths dragged out: the subfolders' (put in a playlist whole), not '..'
+    # subfolders dragged whole, not '..'
     if is_folder_view(listbox) is False:
         return paths
     parents = set(listbox.GetItemValueByColumnKey(v, 'path')
@@ -299,8 +278,7 @@ def get_drag_paths(listbox, paths):
 
 
 def arrange(items, keys):
-    # the folder's tab's rows: '..' first, the subfolders, the songs, each as they were
-    # (sorted by a column)
+    # '..' first, the subfolders, the songs, each kept in its order
     statusIdx, nameIdx = keys.index('status'), keys.index('filename')
 
     def rank(row):
@@ -316,7 +294,7 @@ def make_folder_row(path, name, order, keys):
 
 
 def make_quick_row(path, size, order, keys):
-    # a song's row from its name alone (MakeMusicFileItem's, read from its file, after)
+    # from its name alone, its file read after
     values = dict(status='', order=order, path=path, mdx=audio.makemdx(path) or '',
                   filename=os.path.splitext(os.path.basename(path))[0],
                   size=f'{size / 1024.0 ** 2:.2f} MB')
@@ -324,7 +302,6 @@ def make_quick_row(path, size, order, keys):
 
 
 def get_tab(listbox):
-    # the folder's tab's index, made when it is not there
     index = [i for i, v in enumerate(listbox.innerList) if v.title == library.FOLDER_TITLE]
     if index:
         return index[0]
@@ -336,7 +313,7 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
     if not mainpanel or JOB[0] != job:
         return
     listbox = mainpanel.ListBox
-    # the filter let go (as a terminal's cd: another folder's rows all shown)
+    # the filter let go
     search = mainpanel.ListSearch
     if search.SearchText.GetValue():
         search.SearchText.ChangeValue('')
@@ -345,7 +322,7 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
     inner = listbox.innerList[index]
     keys = [v.key for v in inner.columns]
     pathIdx = keys.index('path')
-    # (the tab's rows as saved, first shown since: the folder open when the player closed)
+    # first shown: the rows saved are the folder open when the player closed
     previous = SHOWN[0] if SHOWN[0] is not None or not inner.items else STARTED[0]
     if previous is not None:
         selected = inner.focus.item
@@ -372,22 +349,20 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
     inner.rects.offset.y = offset
     SHOWN[0] = path
     listbox.SetSelectedList(index)
-    # (its rows fewer since: the scroll kept in them)
+    # rows may be fewer now: the scroll kept in them
     listbox.SetVirtualPositionY(listbox.GetVirtualPositionY())
-    # a row selected for the keys (Enter, Backspace, the arrows): the folder come from, else
-    # the one selected when it was left, else the first (one in sight not scrolled to)
+    # the folder come from, else the row selected when left, else the first
     focus = focus if focus is not None else cursor
     found = [i for i, row in enumerate(rows)
              if focus is not None and is_same(row[pathIdx], focus)]
-    # (come back to: the scroll as it was left, the selected row not scrolled to, it may
-    # have been scrolled away from)
+    # come back to: the scroll as left, the selected row not scrolled to
     if rows and place is not None:
         item = found[0] if found else 0
         inner.selectedItems = [item]
         inner.focus.item = inner.focus.shift = item
     elif rows:
         listbox.SelectAndFocusItem(found[0] if found else 0)
-    # its way named in the search field's hint
+    # the search field's hint
     search.SetMode(search.GetMode(), force=True)
     if readable is False:
         radio.tell(mainpanel, f'{path} cannot be read', warn=True)
@@ -399,8 +374,7 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
 
 
 def fill_rows(mainpanel, paths, job):
-    # the rows read from their files (MakeMusicFileItem: tags, length, the analysis kept),
-    # put in by their paths in batches on the GUI thread
+    # read from their files, put in by path in batches on the GUI thread
     columns = ListBoxColumn()
     keys = [v.key for v in columns]
     found = dict()
@@ -416,14 +390,11 @@ def fill_rows(mainpanel, paths, job):
             found = dict()
     if found:
         wx.CallAfter(put_rows, mainpanel, found, job)
-    # read whole: those analyzed before and out of date queued, those not analyzed yet too
-    # under a root chosen for it
     wx.CallAfter(queue_rows, mainpanel, job)
 
 
 def queue_rows(mainpanel, job):
-    # (its songs analyzed before brought up to date, all of them under a root chosen for
-    # it: MFEATS_Scheduler.QueueOutdated)
+    # out of date songs queued, all under a root chosen for the analysis
     if not mainpanel or JOB[0] != job:
         return
     mainpanel.MFEATS.AutoAnalyzer()

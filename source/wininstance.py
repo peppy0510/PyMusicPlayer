@@ -72,7 +72,7 @@ def has_running_instance():
             # if cpcwd == get_real_cwd(p):
             if [True for v in p.cmdline() if v.startswith(cpcwd)]:
                 print(cpcwd)
-                # which process it was (main.pyw logs it): truthy as before
+                # which process it was (main.pyw logs it)
                 return f'pid {p.pid} {" ".join(p.cmdline())}'
 
     return False
@@ -132,8 +132,7 @@ def clear_instance_port():
         pass
 
 
-# a test's launch (TEST_PLACE set in its environment: the agent's restarts): its window on
-# the second virtual desktop, in the leftmost monitor's lower half, out of the user's way
+# test launch (TEST_PLACE set): second virtual desktop, leftmost monitor's lower half
 
 TEST_PLACE = 'PYMP_TEST_PLACE'
 TEST_DESKTOP = 2
@@ -143,8 +142,7 @@ DESKTOP_MANAGER = '{aa509086-5ca9-4c25-8f95-589d3c07b48a}'
 DESKTOP_MANAGER_IID = '{a5cd92ff-29be-454c-8d04-d82879fb3f1b}'
 
 
-# a launch put on a virtual desktop (its number) where it would be anyway (the user's
-# place): the agent's last restart, its tests done, back on the user's desktop
+# virtual desktop number a launch is put on
 HOME_DESKTOP = 'PYMP_DESKTOP'
 
 
@@ -160,8 +158,7 @@ def get_launch_desktop():
 
 
 def move_to_virtual_desktop(hwnd, number):
-    '''a window of this process onto a virtual desktop (1 the first, as the task view
-    numbers them); False when there is no such desktop or it could not'''
+    '''move a window of this process to a virtual desktop (1 the first)'''
     import ctypes
     import winreg
     from ctypes import wintypes

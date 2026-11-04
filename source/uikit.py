@@ -14,14 +14,9 @@ import math
 import wx
 
 
-# the controls drawn in one way (the control strip, VOL, TEMPO): a rounded face, a vector
-# icon or a label, its state by its face. on is the accent's face with its own text: told
-# from off by brightness as well as hue (red-green colour blindness), not by colour alone
+# one control look: rounded face, icon or label, state by face
 RADIUS = 3
-# a level meter's look, every meter's (OUT, MASTER's, ANALYZER's: PyWinAudio's): a segment
-# 1 px wide, 2 apart, a channel this tall; light blue under -9 dB, orange to -3, red-orange
-# over; unlit ones the same, faint on their ground (draw_meter; 3, 1 and 4 px, the accent
-# and the warning's orange, before: two looks at once, ANALYZER's PyWinAudio's)
+# level meter look: 1 px segments 2 apart; blue, orange, red-orange
 METER_SEGMENT = 1
 METER_GAP = 2
 METER_BAR = 6
@@ -29,8 +24,7 @@ METER_TONES = ((-3.0, '#ff8e52'), (-9.0, '#ffc47a'), (None, '#d2e6ff'))
 METER_DIM = 0.84
 METER_STRIPS = {}
 FONT_FACE = 'Segoe UI'
-# the type's four steps (pixels): a title, the body, a readout (in the monospace), a label
-# (in capitals, bold); graphs' scales MICRO
+# type steps in pixels: title, body, readout, label; MICRO for graph scales
 TITLE = 16
 BODY = 12
 READOUT = 11
@@ -84,7 +78,7 @@ def mark_menu_checks(menu):
 
 
 def get_style_version():
-    # the style's classes stay the same objects when the accent changes
+    # style classes stay the same objects when the accent changes
     return macroboxstyle.VERSION
 
 
@@ -92,8 +86,7 @@ def colour(value):
     return wx.Colour(*value) if isinstance(value, (tuple, list)) else wx.Colour(value)
 
 
-# (made once a size and weight, as rackbox's: a new one at each draw cost 0.25 ms, and
-# GDI+ took a new one again at each SetFont, 14 times the same one's)
+# cached per size and weight: GDI+ makes a new one at each SetFont
 @functools.lru_cache(maxsize=64)
 def get_font(pixels, bold=False):
     font = wx.Font(wx.Size(0, pixels), wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL,
@@ -101,8 +94,7 @@ def get_font(pixels, bold=False):
     return font
 
 
-# the renderer's fonts made once, by the font and its colour: gc.SetFont(font, colour) made
-# one at every call (0.44 ms, dozens a frame: most of the player's drawing, measured)
+# renderer fonts cached by font and colour: gc.SetFont makes one per call
 GRAPHICS_FONTS = {}
 
 
@@ -115,12 +107,12 @@ def set_font(gc, font, ink):
     gc.SetFont(made)
 
 
-# a font's capitals' ink (from the top the text is drawn at, their height), measured once
+# capitals' ink (top offset, height), cached per font
 CAPS_INK = {}
 
 
 def get_caps_ink(font):
-    # a capital H drawn by the same renderer, its lit rows found
+    # draw a capital H, find its lit rows
     key = (font.GetPixelSize().height, font.GetWeight(), font.GetFaceName())
     if key in CAPS_INK:
         return CAPS_INK[key]
@@ -140,15 +132,13 @@ def get_caps_ink(font):
     return CAPS_INK[key]
 
 
-# a text's ink across (from where it is drawn, its width), measured once a font and text,
-# the latest TEXT_INK_MOST
+# text ink across (offset, width), cached per font and text
 TEXT_INK = {}
 TEXT_INK_MOST = 500
 
 
 def get_text_ink(font, text):
-    # the text drawn by the same renderer, its lit columns found: centred by its advance, a
-    # digit's side bearings left it off its middle (a badge's count, 5 px one side, 7 the other)
+    # lit columns: side bearings keep digits off their middle
     key = (font.GetPixelSize().height, font.GetWeight(), font.GetFaceName(), text)
     if key in TEXT_INK:
         return TEXT_INK[key]
@@ -172,22 +162,20 @@ def get_text_ink(font, text):
 
 
 def get_caps_top(font, top, height):
-    # where text in capitals is drawn for its letters' middle on the box's middle (the
-    # whole text box, its descent under the capitals, centred them low)
+    # y for capitals centred on the box, not the text box
     offset, ink = get_caps_ink(font)
     return top + (height - ink) / 2.0 - offset
 
 
 def get_face(on=False, down=False, hover=False, warn=False, disabled=False):
-    # (face, ink) of a control in its state; disabled: flat, its label faint
+    # (face, ink) for a state; disabled: flat, faint label
     tokens = ui()
     if disabled:
         return colour(tokens.CONTROL_BG), colour(tokens.BAR_TEXT_DIM)
     if warn:
         return colour(tokens.WARN), colour(tokens.WARN_FG)
     if on:
-        # lit, under the mouse a shade lighter (pressed: draw_face's darker), as an unlit
-        # key's are (a lit key showed neither)
+        # lit, a shade lighter on hover
         face = colour(tokens.ACCENT)
         if hover and not down:
             face = mix(face, (255, 255, 255), 0.14)
@@ -199,8 +187,7 @@ def get_face(on=False, down=False, hover=False, warn=False, disabled=False):
     return colour(tokens.CONTROL_BG), colour(tokens.CONTROL_FG)
 
 
-# a button's drawn mark after its label (draw_button: mark): its gap, its stroke and its
-# size against the capitals' height (as tall as them it was large: the user)
+# button mark: gap, stroke and size against the capitals
 MARK_GAP = 4
 MARK_WEIGHT = 1.6
 MARK_SCALE = 0.75
@@ -208,9 +195,7 @@ MARK_SCALE = 0.75
 
 def draw_button(dc, rect, label=None, icon=None, on=False, down=False, hover=False,
                 warn=False, font=None, disabled=False, corners='all', mark=None):
-    # corners: 'left' or 'right' for a key joined to another (an input group's: a toggle
-    # and its menu's arrow), its square side the one they share; 'none' for one between two
-    # (a button group's middle: play between prev and next)
+    # corners: 'left'/'right' joined to a neighbour, 'none' between two
     x, y, w, h = rect
     if w <= 0 or h <= 0:
         return
@@ -222,26 +207,21 @@ def draw_button(dc, rect, label=None, icon=None, on=False, down=False, hover=Fal
         return
     gc.SetAntialiasMode(wx.ANTIALIAS_DEFAULT)
     pressed = down
-    # an unlit key's edge: a darkened accent edge reads as face, the key a pixel larger
+    # unlit key's edge: a darkened accent edge reads as face
     seat = colour(ui().CONTROL_BG) if on or warn else None
     draw_face(gc, (x, y, w, h), face, pressed=pressed, flat=disabled, corners=corners, seat=seat)
-    # pressed, the ink a pixel down as a key pushed in
+    # pressed: ink a pixel down
     sink = 1 if pressed else 0
     if icon is not None:
         draw_icon(gc, icon, (x, y + sink, w, h), ink)
     if label:
-        # one weight on and off (bold when on, the label widened and shifted as it toggled):
-        # the state is the face's
+        # one weight on and off: bold would shift the label
         font = font or get_font(10, bold=True)
         set_font(gc, font, ink)
         tw = gc.GetTextExtent(label)[0]
-        # the capitals' ink centred, not the text's box (its descent under them): in mixed
-        # case too (Filename sat a row low by its box, 7 rows over and 5 under), a
-        # descender hanging under the middle as type does
+        # centre the capitals' ink, not the text box
         top = get_caps_top(font, y, h) + sink
-        # mark: a plus or a minus after the label, drawn (the font's: a small thin plus low
-        # on the line, a long thin minus, the two unlike: the user), as tall as the
-        # capitals' MARK_SCALE, of their weight, on their middle (a whole pixel wide)
+        # mark: a drawn plus or minus, MARK_SCALE of the capitals
         size = round(get_caps_ink(font)[1] * MARK_SCALE) if mark else 0
         gap = MARK_GAP if mark else 0
         left = x + (w - tw - gap - size) / 2.0
@@ -266,9 +246,7 @@ def get_meter_tone(db):
 
 
 def get_meter_strips(gc, width, height, ground, low=-48.0, high=0.0, tone=None):
-    '''(unlit, lit) pictures of a meter's segments width x height on ground, a segment's tone
-    by the dB it stands for from low to high (or tone), made once a size (every segment a
-    rectangle at every frame cost a ms)'''
+    '''(unlit, lit) segment pictures, cached per size'''
     ground = tuple(colour(ground).Get()[:3])
     key = (width, height, ground, low, high, tone)
     if key not in METER_STRIPS:
@@ -293,9 +271,7 @@ def get_meter_strips(gc, width, height, ground, low=-48.0, high=0.0, tone=None):
 
 def draw_meter(gc, x, y, width, height, share, ground, low=-48.0, high=0.0, tone=None,
                start=0.0, unlit=True):
-    # a meter lit to share of its width (on whole segments), the rest faint (METER_TONES);
-    # start: lit from there (a bipolar one's middle), unlit False: its lit part alone (a
-    # second tone over another)
+    # lit to share on whole segments; start: lit from there
     x, y, width, height = int(x), int(y), int(width), int(height)
     faint, lit = get_meter_strips(gc, width, height, ground, low, high, tone)
     if unlit:
@@ -310,21 +286,18 @@ def draw_meter(gc, x, y, width, height, share, ground, low=-48.0, high=0.0, tone
 
 
 def draw_face(gc, rect, face, pressed=False, flat=False, corners='all', seat=None):
-    # a hardware key's matte face: one even colour (no shine, no bulge), seated in the panel
-    # by a darker edge (seat: the colour it is darkened from, else the face's); pressed, the
-    # face a shade darker; disabled, the same without its edge darkened as much
+    # hardware key's matte face, seated by a darker edge
     x, y, w, h = rect
     if pressed:
         face = mix(face, (0, 0, 0), 0.18)
     edge = mix(seat or face, (0, 0, 0), 0.3 if flat else 0.5)
     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(edge).Width(1)))
     gc.SetBrush(gc.CreateBrush(wx.Brush(face)))
-    # the renderer draws a shape's lines half a pixel down and right: from (x, y), w - 1
-    # wide, its edge is on the rect's own outer rows and columns (measured)
+    # the renderer draws lines half a pixel down and right: w - 1 wide
     if corners == 'all':
         gc.DrawRoundedRectangle(x, y, w - 1, h - 1, RADIUS)
         return
-    # rounded on one side only (corners: that side), square where it joins its neighbour
+    # rounded on one side only, square where it joins
     left, right = corners == 'left', corners == 'right'
     x2, y2, r = x + w - 1, y + h - 1, RADIUS
     path = gc.CreatePath()
@@ -350,7 +323,7 @@ def draw_face(gc, rect, face, pressed=False, flat=False, corners='all', seat=Non
 
 
 def draw_icon(gc, icon, rect, ink):
-    # play, pause, prev, next, loop (and loop_one): about half the face's height, centred
+    # play, pause, prev, next, loop: about half the face height
     x, y, w, h = rect
     size = min(w, h) * 0.5
     cx, cy = x + w / 2.0, y + h / 2.0
@@ -369,8 +342,7 @@ def draw_icon(gc, icon, rect, ink):
         gc.DrawRectangle(cx - half * 0.85, cy - half, bar, size)
         gc.DrawRectangle(cx + half * 0.85 - bar, cy - half, bar, size)
     elif icon in ('down', 'up'):
-        # a chevron: the panel under the button folded (down) or open (up), a menu's
-        # arrow; thinner and smaller than it was (1.8 px, 0.8 of the half wide)
+        # chevron: down folded, up open; a menu's arrow
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.4)))
         gc.SetBrush(wx.NullGraphicsBrush)
         sign = 1 if icon == 'down' else -1
@@ -380,8 +352,7 @@ def draw_icon(gc, icon, rect, ink):
         path.AddLineToPoint(cx + half * 0.62, cy - sign * half * 0.28)
         gc.StrokePath(path)
     elif icon in ('star', 'starred'):
-        # a five-pointed star: outlined, filled while on (the shape tells it, not the face's
-        # colour alone)
+        # star: outlined, filled while on
         path = gc.CreatePath()
         for k in range(10):
             radius = half * 1.25 if k % 2 == 0 else half * 0.52
@@ -404,7 +375,7 @@ def draw_icon(gc, icon, rect, ink):
         for k in (-0.6, 0.0, 0.6):
             gc.StrokeLine(cx - half * 1.0, cy + half * k, cx + half * 1.0, cy + half * k)
     elif icon in ('speaker', 'mute'):
-        # a speaker; its waves, or a cross while muted
+        # speaker: waves, or a cross while muted
         body = gc.CreatePath()
         body.MoveToPoint(cx - half * 1.0, cy - half * 0.4)
         body.AddLineToPoint(cx - half * 0.5, cy - half * 0.4)
@@ -426,10 +397,7 @@ def draw_icon(gc, icon, rect, ink):
                             math.radians(50), True)
                 gc.StrokePath(path)
     elif icon in ('loop', 'loop_one'):
-        # a player's repeat: a loop round, an arrow at either end of it; a little smaller
-        # than next's mark, its weight near the filled marks' (a thin outline larger than
-        # them read as from another set; as large as them, still large: the user); the
-        # song's (loop_one) a 1 right of it, the loop moved left as much
+        # repeat: a loop with an arrow at each end; loop_one adds a 1
         if icon == 'loop_one':
             font = get_font(9, bold=True)
             set_font(gc, font, ink)
@@ -442,7 +410,7 @@ def draw_icon(gc, icon, rect, ink):
         left, right = cx - half * 0.9, cx + half * 0.9
         top, bottom, r = cy - half * 0.62, cy + half * 0.62, half * 0.32
         for sign in (1, -1):
-            # the upper half rightward, the lower half leftward
+            # upper half rightward, lower half leftward
             start, end = (left, right) if sign > 0 else (right, left)
             edge = top if sign > 0 else bottom
             path = gc.CreatePath()

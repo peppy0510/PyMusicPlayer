@@ -82,7 +82,7 @@ MULTIPROCESSING_FORK = '--multiprocessing-fork'
 
 # MAIN_SOCKET_PORT = 55557
 MAIN_SOCKET_PORT = 55755
-# a test's launch placed this long after it shows (wininstance.is_test_launch)
+# delay before placing a test launch
 TEST_PLACE_MS = 600
 
 # GRAB over 2 eats the tab scrollbar
@@ -97,7 +97,7 @@ LIST_TAB_ANIMATION_INTERVAL = 10
 LIST_TAB_ANIMATION_DURATION = 80
 
 
-# the search row's height over the list (ListBoxSearch)
+# search row height over the list
 SEARCH_ROW_HEIGHT = 32
 
 
@@ -139,7 +139,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         self.list_tab_ratio_target = 1.0
         self.list_tab_lap = 0.0
         self.ListTabAnimation = ListTabAnimationTimer(self)
-        # a newer release over the search row (hidden, no room taken, till one is found)
+        # newer release notice, hidden until one is found
         self.UpdateBox = UpdateBox(self, parent.OnUpdateAction)
         self.PlayBox = PlayBox(self)
         self.ListBox = ListBox(self)
@@ -150,8 +150,6 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT = BorderBoxH(self)
         # bgcolor = parent.st.PLAYBOX.PLAY_BG_COLOR
         # self.BorderBoxHT.SetBackgroundColour(bgcolor)
-        # (the window's bottom 5 px a bevel's gradient to a light grey before, the old
-        # look's: none now, the status line at the bottom)
         self.BorderBoxHB = BorderBoxH(self)
         self.BorderBoxHB.SetBackgroundColour(self.StatusBox.GetBackgroundColour())
         self.Bind(wx.EVT_SIZE, self.OnSize)
@@ -176,7 +174,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
 
     def DistributeEvent(self, event):
         self.EventSkipTimer()
-        # the daily look for a release (nothing more than a clock read till it is due)
+        # daily release check, only a clock read until due
         self.parent.Updater.tick(self.parent.UpdateCheck)
         self.UpdateBox.CatchEvent(event)
         self.PlayBox.CatchEvent(event)
@@ -198,13 +196,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             self.ListTab.TabList.CatchEvent(event)
             self.ListTab.SliderV.CatchEvent(event)
             self.ListTab.TabHeader.CatchEvent(event)
-            # the search row over the list (it had no row: off while it was hidden)
+            # search row over the list
             self.ListSearch.CatchEvent(event)
             # self.ListBox.CatchEvent(event) #####
-            # the list's header: sorting, and the columns' widths dragged at their edges
+            # list header: sorting and column resize
             self.ListBox.Header.CatchEvent(event)
             self.ListBox.List.CatchEvent(event)
-            # shown when the columns are wider than the list (the radio's Browse tab)
+            # shown when the columns are wider than the list
             self.ListBox.SliderH.CatchEvent(event)
             self.ListBox.SliderV.CatchEvent(event)
         self.StatusBox.CatchEvent(event)
@@ -216,15 +214,10 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         return wx.Panel.SetCursor(self, cursor)
 
     def GetPlayBoxHeight(self):
-        # the rack adds its height (over the header)
+        # rack height over the header
         master = self.PlayBox.GetRackHeight() + self.PlayBox.GetHeaderExtra()\
             + self.PlayBox.GetControlExtra()\
             if hasattr(self, 'PlayBox') else 0
-        # (the waveforms' frame 8 px from the header over it and from the control row under
-        # it: 4 px less than before, 12 over and 8 under)
-        # (the header's own: PlayBox.HEADER_HEIGHT, 57 when 154 was written here, 61 since;
-        # left at 154, the box was 4 px short)
-        # (the whole song's waveform 40 of the 97 before: View > Waveform Height)
         wave = 57 + self.parent.GetWaveformHeight() + self.parent.GetWaveformDetailHeight()
         if self.parent.IsPlayerTopShowOn():
             return PlayBox.HEADER_HEIGHT + wave + master
@@ -259,16 +252,14 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
             sash_width = 0
 
         list_top = pbh + sph
-        # down to the status line (its 27 rows at the window's bottom; the 5 under it gone)
+        # down to the status line
         list_height = h - pbh + sph - (26 + 35) + 26
-        # a newer release's notice first, under the player (0 tall while there is none)
+        # release notice under the player, 0 tall when none
         notice = self.UpdateBox.GetHeight(w - right_panel_width)
         self.UpdateBox.SetRect((0, list_top, w - right_panel_width, notice))
         list_top += notice
         list_height -= notice
-        # the search row across the window (its sidebar key at the left, over the sidebar;
-        # a field of its own width whether the sidebar is open or not), the sidebar and the
-        # list under it
+        # search row across the window, then the sidebar and the list
         search = (0, list_top, w - right_panel_width, SEARCH_ROW_HEIGHT)
         below = list_top + SEARCH_ROW_HEIGHT
         height = list_height - SEARCH_ROW_HEIGHT
@@ -293,7 +284,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.SetRect((0, pbh, w, sph))
 
         self.SetListRects()
-        # at the window's bottom (5 px over a bevel strip before, BorderBoxHB, now none)
+        # status line at the window's bottom
         self.StatusBox.SetRect((0, h - 27, w, 27))
 
         # self.ListBox.SetRect((0, pbh + sph, w, h - pbh + sph - (24 + 26 + 35 + 5) + 26))
@@ -303,8 +294,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.ListTab.SetRect((0, h - 24 - 5, w, 24))
 
         self.BorderBoxHB.SetRect((0, h, w, 0))
-        # a new size has laid the play box out already (its EVT_SIZE, in SetRect):
-        # laid out again here it was done twice a step
+        # SetRect's EVT_SIZE already laid it out: skip a second layout
         if self.PlayBox.GetSize() == size:
             self.PlayBox.OnSize()
         self.ListTab.OnSize()
@@ -314,14 +304,13 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         # self.BorderBoxHT.OnSize()
         self.BorderBoxHB.OnSize()
         self.Thaw()
-        # the window's least height follows the player's (MainFrame.FitLeastHeight)
+        # window's least height follows the player's
         if pbh != getattr(self, 'least_pbh', None):
             self.least_pbh = pbh
             wx.CallAfter(self.parent.FitLeastHeight)
 
     def GetLeastHeight(self):
-        # the player, a release's notice, the search row and the status line, the list none
-        # tall (SetListRects)
+        # player, notice, search row and status line; the list none
         return self.GetPlayBoxHeight() + 31 + self.UpdateBox.GetHeight() + SEARCH_ROW_HEIGHT
 
     def OnListTabSize(self):
@@ -329,8 +318,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         size = self.ListBox.GetSize()
         self.SetListRects()
         self.ListTab.OnSize()
-        # a new size has laid the list out already (its EVT_SIZE, in SetRect): laid
-        # out again here, a step of a sash dragged drew the list three times (80 ms)
+        # SetRect's EVT_SIZE already laid it out: skip a second layout
         if self.ListBox.GetSize() == size:
             self.ListBox.OnSize()
         self.Thaw()
@@ -375,9 +363,7 @@ class MainPanel(wx.Panel, RectRect, EventDistributor, PopupMenuEventCatcher):
         if width == self.list_tab_width:
             return
         self.list_tab_width = width
-        # the list tab, the sash and the list only (SetListRects): laid out whole
-        # (OnSize), the player above was laid out and drawn at every step of a sash
-        # dragged, and it hardly followed the mouse
+        # list side only: a full OnSize redraws the player on every sash step
         self.OnListTabSize()
 
     def ResetListTabWidth(self):
@@ -488,11 +474,10 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         self.LoadPreferences()
         self.SetMainFrameIcon()
         self.RestoreMainFrameRect()
-        # the radio's tabs as a station's (made before with a playlist's columns; once the
-        # lists are read, LoadPreferences)
+        # radio tabs as station columns, once the lists are read
         radio.repair_playlist_columns(self.MainPanel.ListBox)
         radio.ensure_station_columns(self.MainPanel.ListBox, rebuild=True)
-        # the rack's modules shown when it closed: room for them with the list
+        # make room for rack modules open at close
         wx.CallAfter(self.FitRackRoom)
         fgsizer = wx.FlexGridSizer(1, 0, 0, 0)
         fgsizer.AddGrowableCol(0)
@@ -507,7 +492,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         # self.LicenseCheckTimer = LicenseCheckTimer(self)
         self.Show()
         if is_test_launch():
-            # (after the rack's room is made: its height set)
+            # after the rack's room is made
             wx.CallLater(TEST_PLACE_MS, self.PlaceForTest)
         elif get_launch_desktop():
             wx.CallLater(TEST_PLACE_MS, lambda: move_to_virtual_desktop(
@@ -564,19 +549,17 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
             self.MainPanel.SetRect((0, 0, w, height))
         else:
             self.MainPanel.SetRect((0, 0, w, h))
-        # a new size has laid the panel out already (its EVT_SIZE, in SetRect):
-        # laid out again here it was done twice a step, the list drawn twice
+        # SetRect's EVT_SIZE already laid it out: skip a second layout
         if self.MainPanel.GetSize() == size:
             self.MainPanel.OnSize()
         self.Thaw()
 
     def InitUpdater(self):
-        # read once here (a preference read opens the shelve): the panel's tick asks
-        # UpdateCheck every event
+        # read once: a preference read opens the shelve
         values = GetPreferences(('update_check', 'update_checked_at', 'update_skipped',
                                  'auto_check_update'))
         check, checked_at, skipped, old_check = values
-        # the old update dialog's check box, till this one is set
+        # fall back to the old dialog's check box
         self.UpdateCheck = check if check is not None else old_check is not False
         self.Updater = Updater({'update_checked_at': checked_at, 'update_skipped': skipped},
                                self.__version__, self.OnUpdateChecked)
@@ -587,15 +570,14 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         SetPreference('update_check', self.UpdateCheck)
 
     def TellUpdateStatus(self, text, color):
-        # asked from the menu: the answer on the status line
+        # answer on the status line
         status = self.MainPanel.StatusBox
         status.alarm = text
         status.alarm_color = color
         status.alarm_timer = 0
 
     def OnCheckUpdates(self):
-        # the Update Check dialog (dialogbox.UpdateCheckBox) while GitHub is asked, its
-        # answer there (OnUpdateChecked)
+        # update check dialog while GitHub is asked
         if self.DialogBox is not None:
             return
         self.DialogBox = self.UpdateCheckDialog = UpdateCheckBox(self)
@@ -613,8 +595,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         dialog = getattr(self, 'UpdateCheckDialog', None)
         if dialog:
             if result == 'skipped':
-                # (the daily check's, under way when the dialog asked: asked again, a
-                # skipped version shown when asked)
+                # daily check was under way: ask again so a skipped version shows
                 self.Updater.check(forced=True)
                 return
             if result != 'error':
@@ -659,7 +640,7 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         elif key == 'cancel':
             self.Updater.cancel()
         elif release['kind'] == 'page':
-            # explorer hands the link to the shell (the default browser, not this process's)
+            # explorer opens the link in the default browser
             subprocess.Popen(['explorer', release['page']])
             self.HideUpdate()
         else:
@@ -716,16 +697,12 @@ class MacroBoxApp(wx.App):
         return -1
 
     def OnPreInit(self):
-        # a dark style: Windows' dark mode for the title bar, the menus and the standard
-        # controls (wx 3.3), set before any window; a style chosen later takes it at the next
-        # start. wx.App's own first: it makes the stock pens and brushes (without it
-        # wx.TRANSPARENT_PEN and _BRUSH stayed invalid, drawn as a black pen and a white fill)
+        # dark mode before any window; wx.App first or the stock pens stay invalid
         wx.App.OnPreInit(self)
         if macroboxstyle.load(GetPreference('color_scheme')).UI.DARK:
             self.MSWEnableDarkMode(wx.App.DarkMode_Always)
         self.MainFrame = MainFrame(initfile=self.initfile)
-        # DEBUG(hang): every thread's stack written when the GUI stops for 3 s; removed
-        # once found
+        # debug(hang): dump thread stacks when the GUI stalls 3 s
         import faulthandler
         beat = [time.time()]
         self.hang_timer = wx.Timer()
@@ -746,7 +723,7 @@ class MacroBoxApp(wx.App):
             return counters.ws // (1 << 20)
 
         def note(file):
-            # (the boxes' drawing: ms a second since the last note)
+            # drawing ms per second since the last note
             try:
                 counts = dict(list(COUNTS.items()))
                 file.write(f'memory {int(memory())} MB, counts {counts}\n')

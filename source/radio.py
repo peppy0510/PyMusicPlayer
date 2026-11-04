@@ -30,39 +30,30 @@ from macroboxlib import SetPreference
 from utilities import get_user_docapp_path
 
 
-# internet radio as rows of the playlists: a station's row has its stream's address for a
-# path (audio.is_stream_path), played by the player as a track is (a stream with no end: no
-# analysis, no highlight). the stations are kept in the settings (radio_stations: their
-# names and pictures by their addresses). here: the directory (radio-browser.info, read
-# when the window opens and when a genre, a country or a name is asked for), a stream
-# opened, what it plays now, its waveform as it plays and its picture
+# internet radio as playlist rows: a station's path is its stream address
 USER_AGENT = 'PyMusicPlayer/1.5.0 +https://github.com/peppy0510/PyMusicPlayer'
 DIRECTORY = 'https://all.api.radio-browser.info/json'
 TIMEOUT = 15
 LISTS_SECONDS = 60 * 60 * 24
 STATIONS_LIMIT = 200
-# the radio's two tabs (shown under Radio in the sidebar, not with the playlists): the
-# favorite stations, and the directory's stations found (Browse)
+# the radio tabs: favorites and browse
 RADIO_TITLE = 'Radio'
 BROWSE_TITLE = 'Radio Browse'
-# the stations played lately (recent_stations: their addresses, the latest first)
+# recently played stations, latest first
 RECENT_TITLE = 'Radio Recent'
 RECENT_LIMIT = 50
-# named as the library's (Favorite tracks, Recent tracks): Favorites was the only one
-# without what it holds
 RADIO_TABS = {RADIO_TITLE: 'Favorite stations', RECENT_TITLE: 'Recent stations',
               BROWSE_TITLE: 'Browse stations'}
-# the stations found in the directory kept (their names, tags and pictures for their rows
-# after a restart), the latest this many
+# browsed stations kept for their rows after a restart
 SEEN_LIMIT = 3000
-# the browse tab's columns: (key, title) shown, the rest hidden
+# browse tab columns: (key, title) shown, the rest hidden
 BROWSE_COLUMNS = (('order', '#', 58), ('filename', 'station', 300), ('genre', 'tags', 220),
                   ('album', 'country', 60), ('type', 'codec', 60), ('bitrate', 'kbps', 50))
-# the waveform of what a stream played, for the player's waveform boxes (LiveTrace)
+# stream waveform for the player's waveform boxes
 TRACE_SECONDS = 30
-# a station's picture no larger than this (a favicon, a logo)
+# station picture size cap
 PICTURE_BYTES = 2 * 1024 * 1024
-# what a failed connection says (BASS_ErrorGetCode); 10 is BASS_ERROR_SSL, not in pybass
+# 10 is BASS_ERROR_SSL, not in pybass
 ERRORS = {2: 'the station did not answer the address', 10: 'HTTPS is not available',
           32: 'no network', 40: 'the station took too long to answer',
           41: 'a stream format BASS does not play (AAC or HLS needs a plugin)',
@@ -70,18 +61,14 @@ ERRORS = {2: 'the station did not answer the address', 10: 'HTTPS is not availab
 
 
 def open_stream(url, decode=False):
-    '''(handle, error) of a station's stream: an address that is a playlist (.pls, .m3u)
-    followed to its stream, an https one that fails tried once more over http (many
-    stations serve both). blocks for the connection: the player's audio thread calls it'''
+    '''(handle, error) of a station's stream; blocks, called on the audio thread'''
     pybass.BASS_SetConfig(pybass.BASS_CONFIG_NET_PLAYLIST, 1)
     urls = [url]
     if url.lower().startswith('https://'):
         urls.append('http://' + url[len('https://'):])
-    # no download callback: a null one of pybass' type (None was refused by ctypes, an
-    # ArgumentError on the thread, and no station ever opened)
+    # null DOWNLOADPROC: ctypes refuses None
     handle, error = 0, None
-    # through bass_fx's tempo stream when it is there: its key moved as it plays (the
-    # tempo not: at another speed a station's buffer ran dry or piled up)
+    # through bass_fx tempo for key changes only: tempo drains the buffer
     tempo_create = audio.load_bass_fx_tempo()[0]
     for address in urls:
         try:
@@ -93,7 +80,7 @@ def open_stream(url, decode=False):
             log_failure(url, address, f'{type(e).__name__} {e}')
             continue
         if handle and tempo_create:
-            # (decode: for a mixer, the audio graph's deck)
+            # decode: for the mixer deck
             tempo = tempo_create(handle, audio.BASS_FX_FREESOURCE
                                  | (pybass.BASS_STREAM_DECODE if decode else 0))
             if tempo:
@@ -111,10 +98,10 @@ def open_stream(url, decode=False):
 
 
 def get_stream_title(handle):
-    # the song a station is playing now, from its stream's metadata ('' without)
+    # now playing from the stream metadata ('' without)
     if not handle:
         return ''
-    # the station's own stream's (under the tempo stream: open_stream)
+    # the station's own stream under the tempo one
     handle = audio.get_tempo_source(handle) or handle
     pointer = pybass.BASS_ChannelGetTags(handle, pybass.BASS_TAG_META)
     if not pointer:
@@ -134,9 +121,7 @@ def get_stream_title(handle):
 
 class LiveTrace():
 
-    '''the last TRACE_SECONDS of what a stream played, as waveform columns (mfeats'), the
-    newest last: the columns since the last call read from it (what the sound card plays
-    now), as many as the time gone by'''
+    '''last TRACE_SECONDS of the stream as waveform columns, newest last'''
 
     def __init__(self):
         self.Reset()
@@ -188,13 +173,12 @@ def get_saved_stations():
     return GetPreference('radio_stations') or []
 
 
-# the stations by their addresses, read from the settings once (the title asks every event)
-# and again after they are saved here
+# stations cached from the settings, reread after a save
 STATIONS = None
 
 
 def get_station(url):
-    # a saved station, else one found in the directory
+    # a saved station, else a browsed one
     global STATIONS
     if STATIONS is None:
         STATIONS = dict(GetPreference('radio_seen') or {})
@@ -208,7 +192,7 @@ def forget_stations():
 
 
 def remember_stations(stations):
-    # the directory's stations found, kept by their addresses (the latest SEEN_LIMIT)
+    # browsed stations by address, the latest SEEN_LIMIT
     seen = GetPreference('radio_seen') or {}
     for station in stations:
         seen.pop(station['url'], None)
@@ -220,7 +204,7 @@ def remember_stations(stations):
 
 
 def keep_station(station):
-    # a station played is kept (its name and picture for its rows), once
+    # keep a played station once
     stations = get_saved_stations()
     if any(v.get('url') == station['url'] for v in stations):
         return
@@ -230,7 +214,7 @@ def keep_station(station):
 
 
 def keep_favicon(url, favicon):
-    # the saved stations with that address keep their picture's address (looked up once)
+    # saved stations keep their picture address
     stations = get_saved_stations()
     for v in stations:
         if v.get('url') == url:
@@ -240,7 +224,7 @@ def keep_favicon(url, favicon):
 
 
 def find_favicon(url):
-    # the directory's picture for a stream address ('' when none or not found)
+    # directory picture for a stream address ('' when none)
     try:
         found = read_directory('stations/byurl', dict(url=url))
     except Exception:
@@ -249,9 +233,7 @@ def find_favicon(url):
 
 
 def fetch_picture(url):
-    '''the bytes of a station's picture (its favicon), None without one; its favicon looked
-    up in the directory once when the station was kept before it had one. blocks: called
-    on threads'''
+    '''station favicon bytes or None; blocks, called on threads'''
     station = get_station(url) or {}
     favicon = station.get('favicon')
     if favicon is None:
@@ -264,7 +246,7 @@ PICTURES = {}
 
 
 def get_picture(url):
-    # the station's picture for the player's cover: read once on a thread, None till then
+    # station cover read once on a thread, None till then
     if url not in PICTURES:
         PICTURES[url] = None
 
@@ -275,8 +257,7 @@ def get_picture(url):
 
 
 def read_picture(url):
-    '''the bytes of a picture by its address, kept in the covers folder; None when there is
-    none or it cannot be read'''
+    '''picture bytes by address, cached in the covers folder'''
     if not url or not url.lower().startswith(('http://', 'https://')):
         return None
     folder = os.path.join(get_user_docapp_path(), 'covers', 'radio')
@@ -302,7 +283,7 @@ def read_picture(url):
 
 
 def log_failure(url, address, error):
-    # what did not play, for a look later (radio.log in the user's folder)
+    # log what failed to play (radio.log)
     station = get_station(url) or {}
     try:
         with open(os.path.join(get_user_docapp_path(), 'radio.log'), 'a',
@@ -314,7 +295,7 @@ def log_failure(url, address, error):
 
 
 def open_tab(listbox, title):
-    # the tab's index, made when it is not there; a station's columns (ensure_station_columns)
+    # tab index, made when missing
     index = [i for i, v in enumerate(listbox.innerList) if v.title == title]
     if not index:
         selected = listbox.selectedList
@@ -326,9 +307,7 @@ def open_tab(listbox, title):
 
 
 def ensure_station_columns(listbox, rebuild=False):
-    '''the radio's tabs (Favorites, Browse) with a station's columns alone (BROWSE_COLUMNS:
-    no length, tempo, key or waveform, nothing of a file): a tab made with a playlist's has
-    its rows made again from their addresses, in the new columns' order'''
+    '''radio tabs with station columns only'''
     wanted = [key for key, _, _ in BROWSE_COLUMNS]
     for inner in listbox.innerList:
         if inner.title not in RADIO_TABS:
@@ -337,8 +316,7 @@ def ensure_station_columns(listbox, rebuild=False):
             set_browse_columns(inner)
         elif rebuild is False:
             continue
-        # its rows made again from their addresses (each row's one http value: rows left in
-        # another order than their columns, by the shared columns sorted, are read too)
+        # rows rebuilt from their http address
         paths = [next((v for v in item if isinstance(v, str)
                        and v.startswith(('http://', 'https://'))), None) for item in inner.items]
         inner.items = [tuple(MakeMusicFileItem(path, order, inner.columns))
@@ -348,7 +326,7 @@ def ensure_station_columns(listbox, rebuild=False):
 
 
 def get_favorite_urls(listbox):
-    # the addresses in the Favorites tab
+    # addresses in the Favorites tab
     for inner in listbox.innerList:
         if inner.title == RADIO_TITLE:
             pathIdx = [v.key for v in inner.columns].index('path')
@@ -357,16 +335,14 @@ def get_favorite_urls(listbox):
 
 
 def get_station_rows(inner, stations):
-    # the stations' rows for a tab, as its columns are
+    # station rows for a tab
     return [tuple(MakeMusicFileItem(v['url'], order, inner.columns))
             for order, v in enumerate(stations, 1)]
 
 
 def set_browse_columns(inner):
-    # the station, its tags, country, codec and bitrate in that order, nothing of a file
-    # (before the rows are made: a row's values are in its columns' order)
-    # (copies, in a list of its own: a tab's columns can be the same objects as the other
-    # tabs', and sorting them in place put every playlist's columns out of its rows' order)
+    # station, tags, country, codec, bitrate; set before the rows are made
+    # copies: tabs can share column objects
     shown = dict((key, (title, width)) for key, title, width in BROWSE_COLUMNS)
     order = [key for key, _, _ in BROWSE_COLUMNS]
     columns = [copy.deepcopy(v) for v in sorted(
@@ -379,9 +355,7 @@ def set_browse_columns(inner):
 
 
 def repair_playlist_columns(listbox):
-    '''a playlist whose columns were sorted as a station's (set_browse_columns before it
-    copied them): its columns back in the order of its rows' values (the default
-    definition's, from which it was made) and as that definition shows them'''
+    '''restore a playlist's columns sorted as a station's'''
     station = [key for key, _, _ in BROWSE_COLUMNS]
     default = GetPreference('columns') or ListBoxColumn()
     by_key = dict((v.key, v) for v in default)
@@ -397,8 +371,7 @@ def repair_playlist_columns(listbox):
 
 
 def show_found(mainpanel, stations, label):
-    '''the directory's stations in the Browse tab, selected (kept by their addresses for
-    their rows' names after a restart)'''
+    '''browsed stations in the Browse tab, selected'''
     remember_stations(stations)
     listbox = mainpanel.ListBox
     index = open_tab(listbox, BROWSE_TITLE)
@@ -415,7 +388,7 @@ def show_found(mainpanel, stations, label):
 
 
 def browse(mainpanel, label, work):
-    # the directory asked on a thread, its stations shown in the Browse tab
+    # query on a thread, show in the Browse tab
     tell(mainpanel, f'Reading {label} ...')
 
     def run():
@@ -440,7 +413,7 @@ def tell(mainpanel, text, warn=False):
 
 
 def add_favorites(mainpanel, stations):
-    # the stations kept and put in the Favorites tab (once a row a station)
+    # keep stations and add them to Favorites, once each
     listbox = mainpanel.ListBox
     index = open_tab(listbox, RADIO_TITLE)
     inner = listbox.innerList[index]
@@ -459,7 +432,7 @@ def add_favorites(mainpanel, stations):
 
 
 def remove_favorites(mainpanel, urls):
-    # the stations' rows taken out of the Favorites tab, the rest numbered again
+    # remove from Favorites and renumber
     listbox = mainpanel.ListBox
     index = [i for i, v in enumerate(listbox.innerList) if v.title == RADIO_TITLE]
     if not index:
@@ -481,14 +454,13 @@ def remove_favorites(mainpanel, urls):
 
 
 def note_recent(url):
-    # a station that came on: first in the recent ones (once), the latest RECENT_LIMIT
+    # played station first in recent, the latest RECENT_LIMIT
     urls = [v for v in (GetPreference('recent_stations') or []) if v != url]
     SetPreference('recent_stations', [url] + urls[:RECENT_LIMIT - 1])
 
 
 def show_recent(mainpanel):
-    '''the stations played lately in their tab, the latest first (made again at each
-    showing), selected'''
+    '''recent stations, latest first, selected'''
     listbox = mainpanel.ListBox
     index = open_tab(listbox, RECENT_TITLE)
     inner = listbox.innerList[index]
@@ -502,7 +474,7 @@ def show_recent(mainpanel):
 
 
 def toggle_favorite(mainpanel, url):
-    # a Browse row's star clicked: the station into the Favorites, or out of them
+    # browse row star: toggle favorite
     if url in get_favorite_urls(mainpanel.ListBox):
         remove_favorites(mainpanel, [url])
     else:
@@ -510,7 +482,7 @@ def toggle_favorite(mainpanel, url):
 
 
 def add_url(mainpanel):
-    # a station by its stream's address, to the favorites
+    # add a station by its address to favorites
     url = wx.GetTextFromUser('Stream URL (http or https)', 'Add Station', '', mainpanel)
     url = url.strip()
     if not url.lower().startswith(('http://', 'https://')):
@@ -520,8 +492,7 @@ def add_url(mainpanel):
 
 
 def get_browse_choices():
-    '''[(label, query)] to browse by: the most voted, then genres and countries by how many
-    stations they have (the directory's lists, kept a day)'''
+    '''[(label, query)] to browse by'''
     genres, countries = get_lists()
     choices = [('Top voted', dict())]
     choices += [(f'Genre: {name}', dict(tag=name, tagExact='true'))
@@ -543,8 +514,7 @@ def read_directory(path, query=None):
 
 
 def get_lists():
-    '''(genres, countries) of the directory, [(name, stations)] the most stations first; read
-    once a day, kept in the user's folder'''
+    '''(genres, countries) of the directory, cached a day'''
     path = os.path.join(get_user_docapp_path(), 'radio_lists.json')
     try:
         if time.time() - os.path.getmtime(path) < LISTS_SECONDS:
@@ -566,8 +536,7 @@ def get_lists():
 
 
 def get_stations(**query):
-    '''[station] of the directory for a genre (tag), a country (countrycode) or a name, the
-    most voted first'''
+    '''[station] for a genre, country or name, most voted first'''
     query.update(limit=STATIONS_LIMIT, hidebroken='true', order='votes', reverse='true')
     body = read_directory('stations/search', query)
     return [dict(name=v.get('name', '').strip(), url=v.get('url_resolved') or v.get('url', ''),

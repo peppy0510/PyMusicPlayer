@@ -18,17 +18,15 @@ import threading
 from utilities import Struct
 
 
-# the library: every song in the playlists, once a file. found songs go to a tab of their
-# own (SEARCH_TITLE, SIMILAR_TITLE), their rows copied from the playlists they came from
+# the library: every song in the playlists, once a file
 SEARCH_TITLE = 'Search'
 SIMILAR_TITLE = 'Similar'
-# the songs starred (favorite_tracks: their paths, in the order starred), shown in a tab of
-# their own as the found ones are
+# starred songs (favorite_tracks), in the order starred
 FAVORITES_TITLE = 'Favorite tracks'
-# the songs played lately (recent_tracks: their paths, the latest first), as the starred
+# songs played lately (recent_tracks), the latest first
 RECENT_TITLE = 'Recent tracks'
 RECENT_LIMIT = 200
-# a folder's songs, opened in the sidebar's folders (folders.py): no songs of the library
+# a folder's songs (folders.py), not the library's
 FOLDER_TITLE = 'Folder view'
 TEXT_KEYS = ('filename', 'artist', 'title', 'album', 'genre')
 FEATURES = dict()
@@ -36,7 +34,7 @@ FEATURES_LOCK = threading.Lock()
 
 
 def get_camelot(key):
-    # (number, letter) of a key in any of the analysis' formats, or None
+    # (number, letter) of a key, or None
     code = mfeats.convert_chord_type(key, 2) if key else ''
     if len(code) < 2 or code[:-1].isdigit() is False or code[-1] not in 'AB':
         return None
@@ -44,7 +42,7 @@ def get_camelot(key):
 
 
 def is_key_compatible(one, other):
-    # the same key, a fifth either way, or its relative (Camelot's neighbours)
+    # the same key, a fifth either way, or its relative
     a, b = get_camelot(one), get_camelot(other)
     if a is None or b is None:
         return False
@@ -63,7 +61,7 @@ def to_float(value):
 
 
 def get_grid_tempi():
-    # the grid's tempo of every song that has one (finer than the analysis' 0.1 BPM)
+    # grid tempo, finer than the analysis' 0.1 BPM
     try:
         conn = mfeats.connect_grid()
         rows = conn.execute(f'SELECT mdx, bpm FROM {mfeats.GRID_TABLE} '
@@ -96,7 +94,7 @@ def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE,
 
 
 def make_song(values, tempi):
-    # a row's song as the library holds it (its grid's tempo when it has one: tempi)
+    # grid tempo when it has one
     return Struct(path=values.get('path'), mdx=values.get('mdx'), values=values,
                   tempo=tempi.get(values.get('mdx'), to_float(values.get('tempo'))),
                   key=values.get('key', ''))
@@ -117,8 +115,7 @@ def search(songs, text='', low=0.0, high=0.0, octave=False, key='', compatible=F
     found = list()
     for song in songs:
         values = song.values
-        # the folders too: the playlist rows keep no tags, and a library is often kept in
-        # folders by genre
+        # folders too: playlist rows keep no tags, folders often name a genre
         folders = os.path.dirname(song.path).lower()
         if words:
             haystack = ' '.join(str(values.get(k, '')) for k in TEXT_KEYS).lower()
@@ -159,15 +156,14 @@ def get_features(mdx):
 
 
 def get_tempo_distance(one, other):
-    # how far apart in percent, the nearer of the tempo, its double and its half
+    # percent apart, the nearest of the tempo, its double and its half
     if one <= 0 or other <= 0:
         return None
     return min(abs(math.log2(other * ratio / one)) for ratio in (1.0, 2.0, 0.5)) * 100 / 1.44
 
 
 def similar(songs, target, count=100):
-    '''the songs nearest target: tempo (within about 8%), key (the same or a neighbour on the
-    Camelot wheel), and the sound (loudness, dynamics, and the low, mid and high shares)'''
+    '''the songs nearest target by tempo, key and sound'''
     base = get_features(target.mdx)
     features = [get_features(song.mdx) for song in songs]
     known = numpy.array([f for f in features if f is not None])
@@ -195,7 +191,7 @@ def similar(songs, target, count=100):
     return [song for _, song in scored[:count]]
 
 
-# (read once and kept: the list asks at every drawing, the settings' file opened each time)
+# cached: the list asks at every drawing, GetPreference opens the file
 FAVORITES = None
 
 
@@ -208,8 +204,7 @@ def get_favorite_tracks():
 
 
 def toggle_favorite_tracks(paths):
-    '''the paths starred (none of them was) or let go (one was, or all): True when
-    starred'''
+    '''True when starred'''
     from macroboxlib import SetPreference
     kept = get_favorite_tracks()
     paths = [v for v in paths if v and not audio.is_stream_path(v)]
@@ -227,8 +222,7 @@ def toggle_favorite_tracks(paths):
 
 
 def star_tracks(paths):
-    '''the paths starred, those not yet, after the starred in their order (a drop on the
-    Favorite tracks: none let go, as a toggle would): how many were'''
+    '''star the paths not starred yet, never unstar: how many were'''
     from macroboxlib import SetPreference
     kept = get_favorite_tracks()
     known = set(kept)
@@ -243,7 +237,7 @@ def star_tracks(paths):
 
 
 def note_recent(path):
-    # a song that started playing: first in the recent ones (once), the latest RECENT_LIMIT
+    # first in the recent ones, once, the latest RECENT_LIMIT
     from macroboxlib import GetPreference
     from macroboxlib import SetPreference
     if not path or audio.is_stream_path(path):
@@ -253,19 +247,16 @@ def note_recent(path):
 
 
 def show_recent(listbox):
-    # the songs played lately in their tab, the latest first (show_favorites)
     from macroboxlib import GetPreference
     return show_paths(listbox, RECENT_TITLE, GetPreference('recent_tracks') or [])
 
 
 def show_favorites(listbox, select=True):
-    '''the starred songs in their tab, in the order starred: their rows as in the playlists
-    they are in (a song in none read from its file)'''
+    '''the starred songs in their tab, in the order starred'''
     return show_paths(listbox, FAVORITES_TITLE, get_favorite_tracks(), select)
 
 
 def show_paths(listbox, title, paths, select=True):
-    # the songs at paths in the tab named title, in that order (show_favorites)
     from macroboxlib import ListBoxColumn
     from macroboxlib import MakeMusicFileItem
     songs = dict((v.path, v) for v in collect(listbox))
@@ -283,8 +274,7 @@ def show_paths(listbox, title, paths, select=True):
 
 
 def show_results(listbox, title, songs, select=True):
-    # the found songs in the tab named title (made, or emptied and filled), in their order;
-    # that tab chosen, or (select False, its tab kept open) the one chosen left as it is
+    # the tab named title made or refilled, chosen when select
     index = [i for i, v in enumerate(listbox.innerList) if v.title == title]
     if index == []:
         listbox.AddInnerList(title)

@@ -48,9 +48,7 @@ def wrap_text(gc, text, width):
 
 class UpdateBox(RectBox):
 
-    '''a newer release over the search row: its version, its notes and the choices about it
-    (the keys as the search row's, the primary one lit). wide, the keys at the title's right;
-    narrow, under the notes'''
+    '''newer release notice over the search row'''
 
     PAD = 8
     GAP = 8
@@ -82,7 +80,7 @@ class UpdateBox(RectBox):
         self.stacked = False
         self.rects = []
         self.drawn = None
-        # measured by the renderer the box draws with
+        # text extents from the renderer the box draws with
         self.measure = wx.GraphicsContext.Create()
         self.Hide()
 

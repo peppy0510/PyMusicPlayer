@@ -2,65 +2,40 @@
  * author: Taehong Kim
  * email: peppy0510@hotmail.com
  *
- * Copied from PyWinAudio (plugin/automaster.c at 38b1f61) for PyMusicPlayer's LOUD, the
- * shared memory's name (METER_NAME) its only change: keep it the same as PyWinAudio's otherwise.
+ * Copied from PyWinAudio (plugin/automaster.c at 38b1f61) for LOUD.
+ * Only METER_NAME differs: keep the rest in sync with PyWinAudio.
  *
- * PyWinAudio Auto Master — 방송 프로세서처럼 소리를 곡마다 손대지 않고 고르게 다듬는 VST2 플러그인.
- * 자동 레벨(AGC), 스테레오 보정, 미리 보는 피크 리미터. 레벨만 맞추는 것이 아니라 Leveler 에서
- * 이름을 바꿨다(사용자). Equalizer APO 가 audiodg 안에서 올려
- * 실시간으로 돌린다. 화면은 없고, 랙이 파라미터를 손잡이·단추로 보여 준다.
+ * PyWinAudio Auto Master: broadcast-style VST2 processor, hosted by Equalizer APO in audiodg.
+ * AGC, stereo correction, lookahead peak limiter. No editor: the rack shows the parameters.
+ * The VST2 ABI (AEffect, dispatcher opcodes) is written out here as in source/vsthost.py, no SDK.
  *
- * VST2 의 바깥 모양(AEffect 구조체와 함수 포인터 넷, 디스패처 번호)은 source/vsthost.py
- * 와 같은 배치를 여기에 직접 적는다. Steinberg SDK 는 쓰지 않는다.
+ * AGC: BS.1770 K-weighted input loudness (~3 s mean) moves the gain slowly toward Target.
+ * Taken before the gain, so no feedback. Below -45 LUFS (50 ms) measuring and gain hold;
+ * more than 10 dB under the long mean (gaps, fades) both follow 10x slower.
  *
- * AGC: 들어오는 소리를 BS.1770 K 가중으로 재고(약 3 초 평균) 목표 라우드니스까지 이득을
- * 천천히 움직인다. 재는 것은 이득을 걸기 전 소리라 제 출력을 쫓는 되먹임이 없다. 조용하면
- * (0.05 초 라우드니스가 -45 LUFS 아래) 재는 값도 이득도 그대로 둔다. 긴 평균보다 10 dB 넘게
- * 낮은 쉼·페이드에서는 열 배 느리게 따라간다 — 곡 사이 무음에서
- * 이득이 치솟지 않고, 소리가 돌아왔을 때 무음 동안 줄어든 평균 때문에 튀지도 않게.
+ * Limiter: 5 ms lookahead. Window minimum of the needed gain, smoothed by a box average of the
+ * same length so it lands on the peak exactly; slower separate release. Latency in initialDelay.
+ *   Drive: gain into the limiter (0..+30 dB).
+ *   Smooth: second release, a floor of the reduction followed in 0.1 s, held 0.25 s after the
+ *     last deepening, then rising at 20 dB/s.
+ *   Attack: ramp length (0.5..5 ms). Latency stays 5 ms; a shorter ramp delays the gain instead.
  *
- * 리미터: 5 ms 앞을 내다보고 줄인다. 앞으로 올 피크까지 필요한 이득의 최솟값을 창으로 잡고,
- * 같은 길이의 상자 평균으로 매끈하게 내려가 피크가 올 때 정확히 그 값에 닿는다. 풀릴 때는
- * 따로 천천히. 소리는 그만큼 늦게 나가고, 그 늦음을 initialDelay 로 알린다.
- * Drive 는 리미터 앞에서 미는 이득(0~+30 dB) — 헤드룸을 끝까지 채운다(LoudMax 의 Threshold 자리, 사용자).
- * Smooth 는 두 번째 풀림: 줄인 양의 바닥을 0.1 초로 따라가고, 마지막으로 깊어진 뒤 0.25 초를
- * 기다렸다가 초당 20 dB 로만 오른다(2026-10-28 LoudMax 와 같은 +30 dB 로 두 곡 실측: 0.3·0.15·10
- * 은 같은 크기에 이득의 출렁임(1~10 Hz)이 30~60% 크고 짧은 레벨이 평평했다, "눌리는 느낌",
- * 사용자. 이 값은 하우스에서 출렁임·짧은 레벨 폭이 LoudMax 와 같고 0.65 LU 작다).
- * 아래는 그 전 값의 기록: 빠른 풀림은 그 바닥 위로 못 올라가 꽉 민 소리의 출렁임이
- * 줄고(±0.50 → 0.30 dB, LoudMax 0.26), 큰 구간 뒤에는 2 초쯤에 걸쳐 돌아온다(LoudMax 출력 곡선
- * 실측: 0.2 초 2.4 dB, 1 초 9.7 dB, 2 초 17.6 dB). 기다림을 늘리면 출렁임은 더 줄지만 그만큼 덜 차고
- * 늦게 돌아온다(0.25 초: 0.26 dB, −0.3 dB 더 작음).
- * Attack 은 줄이기 시작하는 길이(0.5~5 ms). 늦음은 늘 5 ms 그대로 두고 이득만 그 차이만큼 늦춰
- * 짧은 비탈도 피크에 정확히 닿는다. 5 ms 는 타격음 4 ms 앞부터 주변 소리까지 눌러 뭉개 들리고,
- * LoudMax 는 0.5 ms 앞부터만 줄인다(실측, 사용자 "LoudMax 가 더 깔끔한 느낌").
+ * Stereo (between AGC and limiter), input averaged over ~5 s:
+ *   Balance: a constant L/R offset is split over both sides (up to +-3 dB each).
+ *   Width Limit: S cut when S/M exceeds Max Width (up to 6 dB). Never widens.
+ *   Bass Mono: S removed below 120 Hz.
+ *   Mono Wide: fake S from M through velvet noise (25 ms, 1500 pulses/s, decaying), added to L
+ *     and subtracted from R, so L+R is untouched and mono has no comb (Alary, Politis, Valimaki,
+ *     DAFx-17). Nothing below 150 Hz; ducked on transients.
+ *     Three LR4 bands above 150 Hz (150-600 Hz, 600 Hz-3 kHz, 3 kHz up), each detected and
+ *     filled on its own; target = Wide Target -5 dB, +0 dB, +Air (-6..+6 dB). Detection ends at
+ *     10 kHz: MP3 side residue up there would make mono read as stereo.
+ *     Fills only the missing S energy (target minus present S): wide input passes unchanged.
+ * Measuring stops in silence, as in the AGC.
  *
- * 스테레오 보정(AGC 와 리미터 사이): 들어오는 소리를 약 5 초 평균으로 재서
- *   좌우 균형 — 한쪽이 늘 크면 양쪽에 반씩 나눠 맞춘다(최대 ±3 dB씩).
- *   폭 상한 — 옆(S)이 가운데(M) 대비 상한(Max Width)보다 크면(지나치게 넓거나 위상이 어긋난
- *     소리) 그만큼 S 를 줄인다(최대 6 dB). 넓히지는 않는다 — 넓히기는 모노 넓히기가 모자란
- *     만큼만 맡고, 괜찮은 스테레오는 그대로 나간다(사용자).
- *   저역 모노 — 120 Hz 아래의 S 를 걷어 낮은 소리를 가운데로 모은다.
- *   모노 넓히기 — 거의 모노면 M 을 벨벳 노이즈(듬성한 무작위 ±1 펄스열, 25 ms, 초당 1500 개,
- *     뒤로 갈수록 작아지게)에 통과시켜 가짜 S 를 만들고 L 에 더하고 R 에서 뺀다(Alary·Politis·
- *     Välimäki DAFx-17 의 벨벳 노이즈 비상관기). 몇 갈래 지연을 더하던 것보다 빗살 색이 덜
- *     묻고 넓게 퍼진다. L+R 은 원래 소리 그대로라 모노로 들어도 빗살이 생기지 않는다. 150 Hz
- *     아래는 만들지 않아 킥·서브 베이스는 가운데에 남는다. 타격음(빠른 포락이 느린 포락보다
- *     6 dB 넘게 높을 때)에서는 가짜 S 를 잠깐 줄여 어택이 번지지 않게 한다(DAFx-24 StereoWidener
- *     의 트랜지언트 처리와 같은 생각).
- *     150 Hz 위를 150–600 Hz·600 Hz–3 kHz·3 kHz 위 세 대역으로 나눠(Linkwitz-Riley 4 차) 대역마다
- *     S/M 을 재고 따로 채운다(Ozone Imager 처럼 — 사용자). 목표는 Wide Target 에 중저역 -5 dB,
- *     중역 0, 고역은 Air 손잡이(-6~+6 dB, 처음 +2). 판정 위 끝은 10 kHz — 전 대역 한 덩어리로 재면 MP3 가 고역에 남긴
- *     S(-20 dB 안팎) 때문에 거의 모노인 곡도 반쯤 스테레오로 읽혔다.
- *     가짜 S 는 모자란 만큼만 채운다: 목표 넓이(Wide Target)의 S 에너지에서 지금 있는 S 를
- *     뺀 나머지. 이미 목표만큼 넓은 소리에는 아무것도 더하지 않아 그대로 나가고, 모노는 목표
- *     까지, 좁은 소리는 모자란 만큼만 넓어진다 — 방송 중에 곡마다 맞출 수 없으니(사용자).
- * 무음에서는 AGC 처럼 재기를 멈춘다.
- *
- * 계기: 단계마다 지금 얼마나 고치고 있는지(AGC 이득, 좌우 보정, 폭 줄임, 모노 채움, 리미터
- * 줄임)를 블록마다 공유 메모리 "Global\PyWinAudioAutoMaster" 에 적는다. 플러그인은 audiodg(세션 0,
- * LocalService) 안에 있고 랙은 사용자 세션에 있어 Global 이름과 모두 읽을 수 있는 DACL 을 쓴다.
- * 인스턴스마다 칸 하나를 잡고, 랙은 가장 최근에 소리를 처리한 칸을 읽는다.
+ * Meters: each block, every stage's correction goes to shared memory METER_NAME. Global name and
+ * a world DACL: the plugin runs in audiodg (session 0, LocalService), the rack in the desktop
+ * session. One slot per instance; the rack reads the most recently active one.
  */
 
 #include <math.h>
@@ -100,7 +75,7 @@
 #define PARAM_IS_SWITCH (1 << 0)
 #define PARAM_SUPPORTS_DISPLAY_CATEGORY (1 << 5)
 
-/* VST2 의 VstParameterProperties. 호스트가 묶음(구역)과 켜고 끄는 값을 알 수 있다. */
+/* VST2 VstParameterProperties: lets the host see sections and switches */
 typedef struct {
     float stepFloat, smallStepFloat, largeStepFloat;
     char label[64];
@@ -153,7 +128,7 @@ struct AEffect {
     char future[56];
 };
 
-/* ------------------------------------------------------------ 파라미터 */
+/* ------------------------------------------------------------ parameters */
 
 enum {
     P_AGC,
@@ -181,19 +156,14 @@ static const char *PARAM_NAMES[PARAM_COUNT] = {
     "Bass Mono", "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling",
     "Drive", "Smooth", "Attack"
 };
-/* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다.
- * 예전 Stereo 하나가 좌우 균형과 폭 상한을 함께 켜고 꺼서, 스테레오 처리가 다 꺼지는 것처럼 읽혔다 —
- * Balance·Width Limit 둘로 나눴다(사용자). 랙은 저장된 Stereo 값을 둘에 옮긴다. */
+/* sections: 1 AGC, 2 Stereo, 3 Limiter; the rack draws a rule between them */
 static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3};
 static const char *CATEGORY_LABELS[4] = {"", "AGC", "Stereo", "Limiter"};
 static const char *PARAM_LABELS[PARAM_COUNT] = {
     "", "LUFS", "dB", "s", "", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB", "dB", "", "ms"
 };
-/* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 좌우 균형 켬, 폭 상한 켬(S/M -6 dB), 저역 모노 켬,
- * 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지 않는다 —
- * 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 고역 몫(Air) +2 dB(3 대역 전과 같은 소리),
- * 위상 바로잡기 켬, 리미터 켬, -1 dBFS. Drive 0 dB·Smooth 끔 — 넣기 전과 같은 소리. Attack 은 1 ms
- * (0.5~5 ms 를 재어 본 가운데 앞 눌림·출렁임이 가장 적고 잡음은 LoudMax 보다 적다, 사용자). */
+/* defaults: AGC on, -16 LUFS, max +9 dB, ~3 s, Max Width -6 dB, Wide Target -7.5 dB, Air +2 dB,
+ * Ceiling -1 dBFS, Drive 0 dB, Smooth off, Attack 1 ms; other switches on */
 static const float PARAM_DEFAULTS[PARAM_COUNT] = {
     1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 8.0f / 12.0f,
     1.0f, 5.0f / 6.0f, 0.0f, 0.0f, 1.0f / 9.0f
@@ -213,46 +183,44 @@ static int is_switch(int32_t index)
 #define GATE_LUFS -45.0
 #define MEASURE_TIME 3.0
 #define GATE_TIME 0.05
-/* 짧은 라우드니스가 긴 평균보다 이만큼 낮으면(곡 사이 쉼·페이드) 재는 것도 이득도 열 배
- * 느리게 따라간다. 아주 멈추면 크게 조용해진 곡에 끝내 맞추지 못한다. */
+/* gaps and fades (this far under the long mean) follow 10x slower, not frozen,
+ * or a song that turns much quieter is never caught up */
 #define RELATIVE_GATE 10.0
 #define RELATIVE_SLOW 0.1
 #define STEREO_TIME 5.0
 #define STEREO_FOLLOW 2.0
-#define BALANCE_LIMIT 6.0      /* 좌우 차이를 이만큼까지 고친다(한쪽에 반씩, ±3 dB) */
+#define BALANCE_LIMIT 6.0      /* L/R difference corrected, half per side (+-3 dB) */
 #define SIDE_LIMIT 6.0
 #define WIDTH_LOW -18.0
 #define WIDTH_HIGH -4.0
-#define MONO_SOURCE -30.0      /* S 가 M 보다 이만큼 낮으면 모노 소스 */
+#define MONO_SOURCE -30.0      /* S this far under M: mono source */
 #define BASS_MONO_HZ 120.0
 #define WIDE_LOW -18.0
 #define WIDE_HIGH 0.0
-/* 모노 넓히기는 150 Hz 위를 세 대역으로 나눠 따로 재고 따로 채운다(Ozone Imager 처럼 — 사용자).
- * 목표는 Wide Target 에 대역마다 더하는 값: 중저역은 적게(뭉개지고 위상감이 나기 쉽다), 고역은
- * Air 로(공기감 — 진짜 스테레오 곡의 고역까지 넓히면 귀로 낮출 수 있게 손잡이로 뺐다, 사용자). 판정 맨 위는 10 kHz 에서 끊는다 — MP3 가 잘라 낸 위쪽은 재지 않는다. */
+/* mono wide: three bands above 150 Hz, each detected and filled; less in the low mids,
+ * Air sets the highs; detection ends at 10 kHz, above where MP3 cuts off */
 #define BANDS 3
 static const double BAND_EDGES[BANDS + 1] = {150.0, 600.0, 3000.0, 10000.0};
-/* 고역 몫은 Air 손잡이가 정한다(여기 마지막 칸은 쓰지 않는다). */
+/* the highs take Air instead (last entry unused) */
 static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define AIR_LOW -6.0
 #define AIR_HIGH 6.0
 #define WIDE_HZ 150.0
-#define MAX_WIDE_DELAY 8192    /* 192 kHz 에서 42 ms — 가장 긴 갈래 27 ms 를 넉넉히 담는다 */
-#define VELVET_LENGTH 0.025      /* 초 */
-#define VELVET_DENSITY 1500.0    /* 초당 펄스 */
-#define VELVET_DECAY -30.0       /* 끝 펄스의 크기(dB) */
+#define MAX_WIDE_DELAY 8192    /* 42 ms at 192 kHz */
+#define VELVET_LENGTH 0.025      /* s */
+#define VELVET_DENSITY 1500.0    /* pulses per s */
+#define VELVET_DECAY -30.0       /* last pulse level (dB) */
 #define MAX_PULSES 64
-#define TRANSIENT_RATIO 3.0      /* 빠른/느린 포락 비(9.5 dB) 넘으면 타격음 */
-#define TRANSIENT_DUCK 0.4       /* 타격음 동안 가짜 S 를 이만큼으로(킥이 많은 곡도 평균 넓이를 크게 잃지 않게) */
+#define TRANSIENT_RATIO 3.0      /* fast/slow envelope ratio (9.5 dB) above which it is a transient */
+#define TRANSIENT_DUCK 0.4       /* fake S scale during transients */
 #define FAST_TIME 0.001
 #define SLOW_TIME 0.05
 #define DUCK_RELEASE 0.03
-/* 모노 채움 계기의 평균 시간. 타격음 지킴이 줄인 것까지 넣어 실제로 섞인 양(띠 에너지 가중)을 보인다. */
+/* fill meter mean; includes transient ducking (band energy weighted) */
 #define FILL_METER_TIME 1.0
-/* 위상 바로잡기(Phase Fix): 입력 L·R 의 150 Hz–4 kHz 를 ±2 ms 상호상관으로 0.25 초마다 재고(약 1 초로
- * 고르게), 가장 센 상관이 -0.5 아래면 R 의 극성을 뒤집고(-0.2 위로 오면 되돌림), 0 이 아닌 어긋남에서
- * 상관이 0.85 이상이면서 어긋남 0 보다 0.08 넘게 높고 세 번 이어지면 앞선 쪽을 그만큼 늦춘다. 일부러
- * 벌린 마이크의 진짜 스테레오는 두 채널이 그만큼 닮지 않아 건드리지 않는다. 바꿀 때는 20 ms 에 걸쳐. */
+/* phase fix: L/R 150 Hz-4 kHz cross-correlation over +-2 ms every 0.25 s (~1 s smoothing);
+ * peak under -0.5 flips R (back above -0.2); a nonzero lag >= 0.85 and 0.08 over lag 0
+ * three times in a row delays the leading side; changes fade over 20 ms */
 #define PHASE_LOW_HZ 150.0
 #define PHASE_HIGH_HZ 4000.0
 #define PHASE_MAX_LAG 0.002
@@ -270,44 +238,43 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define RELEASE_TIME 0.08
 #define MAX_LOOKAHEAD 1024
 #define DRIVE_HIGH 30.0
-#define SMOOTH_ATTACK 0.1      /* 초: 바닥이 깊어질 때 */
-#define SMOOTH_RATE 20.0       /* dB/초: 바닥이 풀릴 때 */
+#define SMOOTH_ATTACK 0.1      /* s, while the floor deepens */
+#define SMOOTH_RATE 20.0       /* dB/s, while the floor releases */
 #define ATTACK_LOW 0.0005
-#define SMOOTH_HOLD 0.25       /* 초: 마지막으로 깊어진 뒤 이만큼 기다렸다 풀린다 */
+#define SMOOTH_HOLD 0.25       /* s held after the last deepening before release */
 
-/* ------------------------------------------------------------ 계기(공유 메모리) */
+/* ------------------------------------------------------------ meters (shared memory) */
 
 #define METER_MAGIC 0x4D415750 /* 'PWAM' */
-/* 칸 배치가 바뀌면 이름도 바꾼다 — 옛 DLL 이 아직 도는 엔진이 같은 이름에 짧은 칸으로 만들어 둔
- * 공유 메모리에 새 배치로 쓰면 넘친다. */
+/* bump with the slot layout, and in METER_NAME: an old DLL's mapping
+ * under the same name is smaller and would overflow */
 #define METER_VERSION 4
-/* PyMusicPlayer: its own name, so it neither shows on the PyWinAudio rack's meters nor
- * follows the rack's A/B bypass */
+/* own name: kept off the PyWinAudio rack's meters and A/B bypass */
 #define METER_NAME L"PyMusicPlayerAutoMaster.v4"
 #define METER_SLOTS 8
 
 typedef struct {
-    volatile LONG64 owner;  /* 칸을 쥔 인스턴스(포인터 값). 0 이면 빈 칸 */
-    volatile LONG64 tick;   /* 마지막으로 소리를 처리한 GetTickCount64 */
-    float agc_db;           /* 지금 거는 AGC 이득 */
-    float balance_db;       /* 좌우 보정(+ 면 왼쪽을 내림) */
-    float side_db;          /* 폭 줄임(0 이하) */
-    float fill_db;          /* 실제로 섞인 가짜 S 크기(M 대비 dB, 1 초 평균, 없으면 -120) */
-    float limiter_db;       /* 이 블록에서 리미터가 가장 깊게 줄인 값(0 이하) */
-    float loudness;         /* 재고 있는 입력 라우드니스(LUFS) */
+    volatile LONG64 owner;  /* owning instance (pointer value), 0 = free */
+    volatile LONG64 tick;   /* GetTickCount64 of the last processed block */
+    float agc_db;           /* current AGC gain */
+    float balance_db;       /* L/R correction (+ lowers L) */
+    float side_db;          /* width cut (<= 0) */
+    float fill_db;          /* fake S actually mixed (dB re M, 1 s mean, -120 if none) */
+    float limiter_db;       /* deepest limiter cut this block (<= 0) */
+    float loudness;         /* input loudness (LUFS) */
     int32_t sounding;
-    int32_t phase_flip;     /* R 극성을 뒤집고 있으면 1 */
-    float fill_band_db[3];  /* 대역마다 섞인 가짜 S(150–600 Hz·600 Hz–3 kHz·3 kHz 위) */
-    float phase_delay_ms;   /* 맞추느라 늦추고 있는 시간(+ 면 L 을, - 면 R 을) */
-    float band_width_db[3]; /* 대역마다 들어온 소리의 넓이(S/M dB, 판정에 쓰는 평균) */
-    float band_target_db[3];/* 대역마다 목표 넓이(Wide Target + 대역 몫) */
+    int32_t phase_flip;     /* 1 while R is inverted */
+    float fill_band_db[3];  /* fake S mixed per band (150-600 Hz, 600 Hz-3 kHz, 3 kHz up) */
+    float phase_delay_ms;   /* alignment delay (+ delays L, - delays R) */
+    float band_width_db[3]; /* input width per band (S/M dB, detection mean) */
+    float band_target_db[3];/* target width per band (Wide Target + band offset) */
 } MeterSlot;
 
 typedef struct {
     uint32_t magic;
     uint32_t version;
-    /* 랙이 쓰는 칸: 0 이 아니면 A/B 비교 중 — 원래 소리를 같은 크기·같은 늦음으로 내보낸다. 설정 줄을
-     * 바꾸면 엔진이 플러그인을 새로 만들어 적응이 처음부터 다시 쌓이므로, 비교는 여기로만 오간다. */
+    /* written by the rack: nonzero = A/B, dry signal at the same gain and delay; switched here
+     * since changing the config line recreates the plugin and resets its adaptation */
     volatile LONG bypass;
     uint32_t reserved;
     MeterSlot slots[METER_SLOTS];
@@ -322,7 +289,7 @@ static MeterBlock *open_meters(void)
         return meter_block;
     SECURITY_ATTRIBUTES attributes = {sizeof(attributes), NULL, FALSE};
     PSECURITY_DESCRIPTOR descriptor = NULL;
-    /* 누구나 읽고 쓰기(랙은 읽기만 한다). */
+    /* full access for everyone (the rack only reads) */
     if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)", SDDL_REVISION_1,
                                                               &descriptor, NULL))
         attributes.lpSecurityDescriptor = descriptor;
@@ -357,7 +324,7 @@ static MeterSlot *claim_slot(void *owner)
     for (int index = 0; index < METER_SLOTS; index++) {
         MeterSlot *slot = &block->slots[index];
         LONG64 current = slot->owner;
-        /* 비었거나 10 초 넘게 아무도 안 쓴(죽은 프로세스가 남긴) 칸을 차지한다. */
+        /* take a free slot or one idle over 10 s (left by a dead process) */
         if (current == 0 || now - (ULONGLONG)slot->tick > 10000) {
             if (InterlockedCompareExchange64(&slot->owner, (LONG64)(intptr_t)owner, current) ==
                 current) {
@@ -369,7 +336,7 @@ static MeterSlot *claim_slot(void *owner)
     return NULL;
 }
 
-/* ------------------------------------------------------------ 상태 */
+/* ------------------------------------------------------------ state */
 
 typedef struct {
     double b0, b1, b2, a1, a2;
@@ -383,71 +350,71 @@ typedef struct {
     double rate;
 
     Biquad shelf, highpass;
-    double power;          /* K 가중 평균 제곱(두 채널 합) */
+    double power;          /* K-weighted mean square (both channels) */
     double power_coef;
-    double momentary;      /* 0.05 초 평균 제곱 — 무음·쉼 판정용 */
+    double momentary;      /* 50 ms mean square, for gating */
     double momentary_coef;
-    double gain_db;        /* 지금 걸고 있는 AGC 이득 */
+    double gain_db;        /* current AGC gain */
 
     double left_power, right_power, mid_power, side_power;
     double stereo_coef, follow_coef;
-    double balance_db;     /* 왼쪽이 크면 + — 왼쪽을 반만큼 내리고 오른쪽을 반만큼 올린다 */
-    double side_db;        /* S 에 걸고 있는 이득 */
-    Biquad bass;           /* S 의 120 Hz 고역 통과 */
-    Biquad wide_highpass;  /* 가짜 S 의 150 Hz 고역 통과 */
-    /* 모노 판정: 대역마다 아래 끝 고역 통과 둘·위 끝 저역 통과 둘(Linkwitz-Riley 4 차, 0 = M, 1 = S) */
+    double balance_db;     /* + when L is louder: L down by half, R up by half */
+    double side_db;        /* gain on S */
+    Biquad bass;           /* 120 Hz highpass on S */
+    Biquad wide_highpass;  /* 150 Hz highpass on fake S */
+    /* mono detection: per band two highpasses, two lowpasses (LR4; 0 = M, 1 = S) */
     Biquad detect[BANDS][4];
     double detect_mid[BANDS], detect_side[BANDS];
-    /* 가짜 S 를 세 대역으로 나누는 크로스오버(600 Hz·3 kHz, 각 LR4 = 2 차 둘) */
+    /* crossover splitting fake S at 600 Hz and 3 kHz (LR4 = two biquads each) */
     Biquad split_low[2], split_rest[2], split_mid[2], split_high[2];
     float wide_delay[MAX_WIDE_DELAY];
     int wide_head;
     int pulse_count;
-    int pulse_at[MAX_PULSES];      /* 펄스 자리(표본) */
-    float pulse_gain[MAX_PULSES];  /* 부호 × 크기, 제곱합 1 */
+    int pulse_at[MAX_PULSES];      /* pulse positions (samples) */
+    float pulse_gain[MAX_PULSES];  /* sign * level, unit energy */
     double fast_env, slow_env, duck;
     double fast_coef, slow_coef, duck_coef;
-    double wide_mix[BANDS];  /* 대역마다 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
-    /* 계기용: 실제로 섞인 가짜 S 배율(wide_mix × duck)의 제곱을 띠 M 에너지로 가중한 평균의 분자·분모 */
+    double wide_mix[BANDS];  /* fake S mixed per band (ratio to M) */
+    /* fill meter: (wide_mix * duck)^2 weighted by band M energy, sum and weight */
     double fill_power, fill_weight;
     double fill_band_power[BANDS], fill_band_weight[BANDS];
     double fill_coef;
 
-    /* 위상 바로잡기 */
-    Biquad phase_band[2];        /* 판정용 150 Hz 고역·4 kHz 저역 통과(0 = L, 1 = R) */
+    /* phase fix */
+    Biquad phase_band[2];        /* detection 150 Hz highpass, 4 kHz lowpass (0 = L, 1 = R) */
     float phase_l[PHASE_WINDOW], phase_r[PHASE_WINDOW];
-    float flat_l[PHASE_WINDOW], flat_r[PHASE_WINDOW];  /* 잴 때 창을 일자로 펴 둔 것(나머지 셈 없이) */
+    float flat_l[PHASE_WINDOW], flat_r[PHASE_WINDOW];  /* window unrolled for measuring (no modulo) */
     int phase_head, phase_tick, phase_every, max_lag;
     double phase_score[2 * MAX_LAG + 1];
     int flipped;
     double flip_gain, fade_step;
-    int lag, candidate, candidate_count;  /* 지금 맞추고 있는 어긋남, 다음 후보와 이어진 횟수 */
-    int fade_from;                        /* 바꾸는 중이면 이전 어긋남 */
-    double fade;                          /* 0 → 1 */
+    int lag, candidate, candidate_count;  /* current lag, next candidate and its run count */
+    int fade_from;                        /* previous lag while fading */
+    double fade;                          /* 0 -> 1 */
     float input_l[2 * MAX_LAG], input_r[2 * MAX_LAG];
     int input_head;
 
-    int lookahead;         /* 리미터가 내다보는 표본 수 */
+    int lookahead;         /* limiter lookahead (samples) */
     float delay[2][MAX_LOOKAHEAD];
-    float raw_delay[2][MAX_LOOKAHEAD];  /* A/B 의 원래 소리(AGC 이득만 곱해 크기를 맞춘 것) */
-    double bypass_mix;                  /* 0 = 처리한 소리, 1 = 원래 소리 */
-    float wanted[MAX_LOOKAHEAD];  /* 표본마다 필요한 이득 */
-    float held[MAX_LOOKAHEAD];    /* 창 최솟값(풀림 적용 뒤) */
+    float raw_delay[2][MAX_LOOKAHEAD];  /* A/B dry signal (AGC gain only, level matched) */
+    double bypass_mix;                  /* 0 = processed, 1 = dry */
+    float wanted[MAX_LOOKAHEAD];  /* needed gain per sample */
+    float held[MAX_LOOKAHEAD];    /* window minimum (after release) */
     int head;
     double held_sum;
-    double release;        /* 지금 풀리고 있는 이득 */
-    double floor_db;       /* Smooth 의 바닥(dB, 0 이하) */
+    double release;        /* current release gain */
+    double floor_db;       /* Smooth floor (dB, <= 0) */
     double floor_coef, floor_step;
     int floor_hold, hold_length;
-    int attack;                   /* 비탈 길이(표본), lookahead 이하 */
-    float late_gain[MAX_LOOKAHEAD];  /* 비탈이 짧으면 이득을 lookahead - attack 만큼 늦춘다 */
-    MeterSlot *meter;      /* 계기 칸(없으면 NULL) */
+    int attack;                   /* ramp length (samples), <= lookahead */
+    float late_gain[MAX_LOOKAHEAD];  /* a short ramp delays the gain by lookahead - attack */
+    MeterSlot *meter;      /* meter slot (NULL if none) */
     double release_coef;
 } AutoMaster;
 
 static double get_speed_time(float value)
 {
-    /* 0 → 10 초(느림), 1 → 1 초(빠름). 가운데가 약 3 초. */
+    /* 0 -> 10 s (slow), 1 -> 1 s (fast), ~3 s in the middle */
     return 10.0 * pow(0.1, value);
 }
 
@@ -501,7 +468,7 @@ static int is_on(float value)
     return value >= 0.5f;
 }
 
-/* BS.1770 K 가중의 두 단(높은 선반 + RLB 고역 통과). 표본 빠르기마다 계수를 다시 낸다. */
+/* BS.1770 K-weighting: high shelf + RLB highpass, per sample rate */
 static void set_filters(AutoMaster *self)
 {
     double rate = self->rate;
@@ -528,7 +495,7 @@ static void set_filters(AutoMaster *self)
     b->a1 = 2.0 * (k * k - 1.0) / a0;
     b->a2 = (1.0 - k / q + k * k) / a0;
 
-    /* 저역 모노용 2 차 버터워스 고역 통과(S 에만). */
+    /* 2nd-order Butterworth highpass for bass mono (S only) */
     double w0 = 2.0 * M_PI * BASS_MONO_HZ / rate;
     double alpha = sin(w0) / (2.0 * 0.7071067811865476);
     double c = cos(w0);
@@ -574,12 +541,12 @@ static double run_biquad(Biquad *b, int channel, double x)
     return y;
 }
 
-/* 판정 창의 ±max_lag 상호상관을 재서 고르게 하고, 극성 뒤집기와 맞출 어긋남을 정한다. */
+/* smoothed +-max_lag cross-correlation; sets the flip and the lag to align */
 static void estimate_phase(AutoMaster *self)
 {
     int lags = self->max_lag;
     int count = PHASE_WINDOW - 2 * lags;
-    int start = self->phase_head;  /* 가장 오래된 표본 */
+    int start = self->phase_head;  /* oldest sample */
     int tail = PHASE_WINDOW - start;
     memcpy(self->flat_l, self->phase_l + start, tail * sizeof(float));
     memcpy(self->flat_l + tail, self->phase_l, start * sizeof(float));
@@ -592,7 +559,7 @@ static void estimate_phase(AutoMaster *self)
         rr += (double)fr[i] * fr[i];
     }
     if (ll < 1e-9 || rr < 1e-9)
-        return;  /* 조용하면 재지 않는다 */
+        return;  /* silent: skip */
     double norm = 1.0 / sqrt(ll * rr);
     int best = 0;
     double best_value = 0.0;
@@ -616,7 +583,7 @@ static void estimate_phase(AutoMaster *self)
     int want = 0;
     if (abs(best) >= 2 && fabs(best_value) >= PHASE_MATCH && fabs(best_value) - at_zero > PHASE_GAIN)
         want = best;
-    /* 맞추고 있는 어긋남이 아직 거의 그만큼 닮았으면 그대로 둔다(흔들리지 않게). */
+    /* keep the current lag while it still matches nearly as well (no flapping) */
     if (self->lag != 0 && want == 0 &&
         fabs(self->phase_score[self->lag + MAX_LAG]) >= PHASE_MATCH - 0.05)
         want = self->lag;
@@ -633,7 +600,7 @@ static void estimate_phase(AutoMaster *self)
     }
 }
 
-/* 어긋남 lag(+ 면 R 이 늦다 → L 을 늦춘다)만큼 맞춘 L·R. */
+/* L/R aligned by lag (+: R is late, L is delayed) */
 static void read_aligned(const AutoMaster *self, int lag, double *l, double *r)
 {
     int size = 2 * MAX_LAG;
@@ -692,10 +659,10 @@ static void reset(AutoMaster *self)
         }
     }
     self->wide_head = 0;
-    /* 벨벳 노이즈: 고른 칸마다 펄스 하나, 칸 안 자리와 부호는 정해진 씨앗의 난수. 매번 같은 열이
-     * 나와 다시 열어도 소리가 바뀌지 않는다. */
+    /* velvet noise: one pulse per grid cell, position and sign from a fixed seed,
+     * so the sequence is the same on every reopen */
     {
-        /* 씨앗 463: 1~4000 가운데 44.1·48 kHz 모두 1/3 옥타브 응답이 가장 고른 열(편차 0.6 dB). */
+        /* seed 463: flattest 1/3-octave response at 44.1 and 48 kHz of seeds 1..4000 */
         unsigned int seed = 463u;
         int length = (int)(self->rate * VELVET_LENGTH);
         if (length > MAX_WIDE_DELAY - 1)
@@ -768,7 +735,7 @@ static void reset(AutoMaster *self)
     self->floor_hold = 0;
 }
 
-/* ------------------------------------------------------------ 소리 */
+/* ------------------------------------------------------------ audio */
 
 static void process(AEffect *effect, float **inputs, float **outputs, int32_t frames)
 {
@@ -783,7 +750,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     int bass_mono = is_on(self->params[P_BASS_MONO]);
     double width = get_width(self);
     int mono_wide = is_on(self->params[P_MONO_WIDE]);
-    /* 대역마다 목표 S/M 에너지 비 — Wide Target 에 대역 몫을 더하되 0 dB(S = M) 를 넘지 않게. */
+    /* target S/M energy per band: Wide Target + band offset, capped at 0 dB (S = M) */
     double wide_target[BANDS];
     for (int band = 0; band < BANDS; band++) {
         double db = get_wide_amount(self) + (band == BANDS - 1 ? get_air(self) : BAND_OFFSET[band]);
@@ -796,7 +763,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     double drive = limit ? pow(10.0, get_drive(self) / 20.0) : 1.0;
     int smooth_release = limit && is_on(self->params[P_SMOOTH]);
     double time = get_speed_time(self->params[P_SPEED]);
-    /* 올릴 때는 정한 빠르기, 내릴 때는 세 배 빠르게 — 갑자기 커지는 소리를 오래 두지 않는다. */
+    /* up at the set speed, down 3x faster */
     double up = 1.0 - exp(-1.0 / (self->rate * time));
     double down = 1.0 - exp(-3.0 / (self->rate * time));
     int lookahead = self->lookahead;
@@ -806,21 +773,21 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     if (attack > lookahead)
         attack = lookahead;
     if (attack != self->attack) {
-        /* 창 길이가 바뀌면 합을 새 창으로 다시 센다 */
+        /* window length changed: recount the sum */
         self->held_sum = 0.0;
         for (int k = 1; k <= attack; k++)
             self->held_sum += self->held[(self->head - k + lookahead) % lookahead];
         self->attack = attack;
     }
-    double deepest = 1.0;  /* 이 블록에서 리미터가 건 가장 작은 이득 */
+    double deepest = 1.0;  /* lowest limiter gain this block */
     int any_sound = 0;
 
     int phase_fix = is_on(self->params[P_PHASE_FIX]);
-    /* A/B: 비교 중이어도 처리와 적응은 그대로 돌린다 — 되돌리는 순간 바로 처리한 소리가 나온다. */
+    /* A/B: processing and adaptation keep running, so switching back is instant */
     double bypass = (meter_block != NULL && meter_block->bypass) ? 1.0 : 0.0;
     double raw_gain = 1.0;
     for (int32_t n = 0; n < frames; n++) {
-        /* 위상 바로잡기: 판정은 들어온 그대로의 소리로, 바로잡은 소리는 그 뒤 모든 단계가 쓴다. */
+        /* phase fix: detect on the raw input; later stages use the corrected signal */
         double in_l = inputs[0][n], in_r = inputs[1][n];
         {
             int head = self->phase_head;
@@ -867,7 +834,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         double left = in_l;
         double right = in_r;
 
-        /* AGC: 이득 걸기 전 소리를 잰다. */
+        /* AGC: measure before the gain */
         double kl = run_biquad(&self->highpass, 0, run_biquad(&self->shelf, 0, left));
         double kr = run_biquad(&self->highpass, 1, run_biquad(&self->shelf, 1, right));
         double energy = kl * kl + kr * kr;
@@ -894,11 +861,11 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->gain_db += (0.0 - self->gain_db) * down;
         }
         double gain = pow(10.0, self->gain_db / 20.0);
-        raw_gain = gain;  /* A/B 의 원래 소리도 같은 크기로 — 큰 쪽이 좋게 들리지 않게 */
+        raw_gain = gain;  /* A/B dry at the same level, so louder does not sound better */
         left *= gain;
         right *= gain;
 
-        /* 스테레오 보정: 재는 것은 K 가중 입력(이득 앞), 거는 것은 이득 뒤 소리. */
+        /* stereo: measure the K-weighted input (pre-gain), apply post-gain */
         if (sounding) {
             double mid = (kl + kr) * 0.5, side = (kl - kr) * 0.5;
             double c = self->stereo_coef * pace;
@@ -907,7 +874,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->mid_power += (mid * mid - self->mid_power) * c;
             self->side_power += (side * side - self->side_power) * c;
         }
-        /* 모노 판정: 이득 앞 입력의 M·S 를 대역마다 거른다. */
+        /* mono detection: band-filter pre-gain M and S */
         double band_mid[BANDS];
         {
             double raw_mid = (in_l + in_r) * 0.5;
@@ -935,7 +902,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             if (limit_width && ratio > MONO_SOURCE)
                 want_side = clamp(width - ratio, -SIDE_LIMIT, 0.0);
         }
-        /* 끄면 소리가 없어도 0 으로 돌아간다. 켜져 있을 때 무음이면 재기와 함께 멈춘다. */
+        /* off: back to 0 even in silence; on: holds in silence with measuring */
         {
             double f = self->follow_coef * (sounding ? pace : 1.0);
             if (sounding || !balance)
@@ -943,7 +910,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             if (sounding || !limit_width)
                 self->side_db += (want_side - self->side_db) * f;
         }
-        /* 모노 넓히기: 대역마다 목표 S 에너지에서 지금 있는 S 를 뺀 만큼만 가짜 S 로 채운다. */
+        /* mono wide: per band fill only target S energy minus present S */
         int widening = 0;
         for (int band = 0; band < BANDS; band++) {
             double want_mix = 0.0;
@@ -963,7 +930,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             right *= pow(10.0, self->balance_db / 40.0);
             double mid = (left + right) * 0.5;
             double side = (left - right) * 0.5 * pow(10.0, self->side_db / 20.0);
-            /* 가짜 S: M 을 벨벳 노이즈에 통과시킨 것, 150 Hz 위만. */
+            /* fake S: M through velvet noise, above 150 Hz only */
             int head = self->wide_head;
             self->wide_delay[head] = (float)mid;
             double made = 0.0;
@@ -975,8 +942,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             }
             self->wide_head = (head + 1) % MAX_WIDE_DELAY;
             made = run_biquad(&self->wide_highpass, 0, made);
-            /* 타격음 지킴: 빠른 포락이 느린 포락을 크게 넘으면 가짜 S 를 곧바로 줄였다 천천히 푼다.
-             * 가짜 S 가 있는 150 Hz 위만 본다 — 킥의 낮은 쿵까지 보면 킥이 많은 곡은 늘 좁아졌다. */
+            /* transient guard: duck fake S at once when the fast envelope jumps, release slowly;
+             * looks above 150 Hz only, or kick-heavy songs stay narrow */
             double level = fabs(run_biquad(&self->wide_highpass, 1, mid));
             self->fast_env += (level - self->fast_env) * self->fast_coef;
             self->slow_env += (level - self->slow_env) * self->slow_coef;
@@ -984,7 +951,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
                 self->duck = TRANSIENT_DUCK;
             else
                 self->duck += (1.0 - self->duck) * self->duck_coef;
-            /* 가짜 S 를 600 Hz·3 kHz 에서 셋으로 나눠 대역마다 제 배율로. 셋을 더하면 크기는 평평하다. */
+            /* split fake S at 600 Hz and 3 kHz, each band at its own mix; the sum is flat */
             double low = run_biquad(&self->split_low[1], 0, run_biquad(&self->split_low[0], 0, made));
             double rest = run_biquad(&self->split_rest[1], 0, run_biquad(&self->split_rest[0], 0, made));
             double middle = run_biquad(&self->split_mid[1], 0, run_biquad(&self->split_mid[0], 0, rest));
@@ -994,19 +961,19 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
                 mixed[band] = self->wide_mix[band] * self->duck;
                 side += parts[band] * mixed[band];
             }
-            /* 저역 모노는 가짜 S 까지 더한 뒤에 — 150 Hz 고역 통과가 다 못 거른 낮은 S 도 걷는다. */
+            /* bass mono after adding fake S: also removes low S the 150 Hz highpass leaves */
             if (bass_mono)
                 side = run_biquad(&self->bass, 0, side);
             left = mid + side;
             right = mid - side;
         } else {
-            /* 꺼져 있어도 지연선은 채워 둔다 — 켜는 순간 빈 소리가 섞이지 않게. */
+            /* keep the delay line filled while off, so switching on mixes no silence */
             self->wide_delay[self->wide_head] = (float)((left + right) * 0.5);
             self->wide_head = (self->wide_head + 1) % MAX_WIDE_DELAY;
         }
 
-        /* 계기는 wide_mix 만 보면 타격음 지킴이 줄인 만큼을 놓쳐 드럼 많은 곡에서 5 dB 크게 보였다.
-         * 지킴은 소리가 큰 순간에 걸리므로 시간 평균으로는 안 드러난다 — 띠 M 에너지로 가중한다. */
+        /* weighted by band M energy: ducking hits loud moments, so wide_mix
+         * or a plain time mean overstates the fill */
         if (sounding || !mono_wide) {
             double added = 0.0, weight = 0.0;
             for (int band = 0; band < BANDS; band++) {
@@ -1021,7 +988,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->fill_weight += (weight - self->fill_weight) * self->fill_coef;
         }
 
-        /* 리미터: 이 표본에 필요한 이득, 창 최솟값, 풀림, 상자 평균. */
+        /* limiter: needed gain, window minimum, release, box average */
         left *= drive;
         right *= drive;
         double peak = fabs(left) > fabs(right) ? fabs(left) : fabs(right);
@@ -1068,7 +1035,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             deepest = smooth;
         any_sound |= sounding;
 
-        /* 내다본 만큼 늦게 내보낸다. head 자리에는 lookahead - 1 표본 전 소리가 있다. */
+        /* delayed by the lookahead; head holds the sample from lookahead - 1 ago */
         int tail = (head + 1) % lookahead;
         float out_left = self->delay[0][tail];
         float out_right = self->delay[1][tail];
@@ -1087,7 +1054,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         }
         out_left *= (float)smooth;
         out_right *= (float)smooth;
-        /* 상자 평균의 반올림 때문에 아주 조금 넘을 수 있다. 끝에서 한 번 더 막는다. */
+        /* box average rounding can overshoot slightly: clip once more */
         if (limit) {
             if (out_left > ceiling) out_left = (float)ceiling;
             if (out_left < -ceiling) out_left = (float)-ceiling;
@@ -1138,7 +1105,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     _MM_SET_FLUSH_ZERO_MODE(mode);
 }
 
-/* ------------------------------------------------------------ 파라미터 읽고 쓰기 */
+/* ------------------------------------------------------------ parameter get/set */
 
 static void set_parameter(AEffect *effect, int32_t index, float value)
 {
@@ -1302,7 +1269,7 @@ static intptr_t dispatch(AEffect *effect, int32_t opcode, int32_t index, intptr_
     return 0;
 }
 
-/* ------------------------------------------------------------ 들머리 */
+/* ------------------------------------------------------------ entry point */
 
 __declspec(dllexport) AEffect *VSTPluginMain(AudioMaster master)
 {

@@ -21,15 +21,9 @@ from rackbox import RackModule
 from rackbox import draw_rule
 
 
-# ANALYZER's module in the rack (rackbox), PyWinAudio's analyzer on the playing song, drawn as
-# PyWinAudio draws it (meterview: its sizes, its colours, its order): one screen, its parts one
-# under another a line apart, METERS (a goniometer, the channels' levels, their scale, the
-# spectrum's bars, the correlation and the balance; their values at the right), SPECTRUM,
-# SCOPE (an oscilloscope) and SPECTROGRAM. (its parts side by side before, each its own well,
-# the spectrum's bars in the header's window: the least finished screen, the user.) shown from
-# the View menu or a click on the header's spectrum or scope; kept (analyzer_panel)
+# analyzer module in the rack, drawn as PyWinAudio's meterview
 
-# PyWinAudio's rack palette (rackui.RACK) and meterview's tones
+# PyWinAudio's rack palette and meterview's tones
 LCD = '#111215'
 LCD_RIM = '#2b2e33'
 LCD_GRID = '#1e2126'
@@ -49,7 +43,7 @@ LOUDNESS_NAMES = {'M': 'MOM', 'S': 'SHORT', 'I': 'INT'}
 PHASE_NAMES = {'correlation': 'CORR', 'balance': 'BAL'}
 SEGMENT_OFF = 0.84
 
-# a part's height, its inside's room, the meters' sizes (meterview's)
+# part heights and meter sizes (meterview's)
 SECTION = 118
 LCD_PAD = 8
 BAR = 6
@@ -65,9 +59,7 @@ NAME_GAP = 4
 READOUT = 34
 STRIP_HEIGHT = 24
 SCOPE_SIDE = 104
-# METERS no wider than this (stretched across a wide rack its rows ran 800 px long; 440,
-# PyWinAudio's screen as the user keeps it, too narrow), on the screen's middle (at its left,
-# the rest of it empty at the right)
+# meters capped in width, centred on the screen
 METERS_MOST = 600
 BALANCE_RANGE = 6.0
 BAR_HEIGHT = 0.4
@@ -80,7 +72,7 @@ FONTS = {}
 
 
 def get_font(size, bold=False, mono=False):
-    # in points, as PyWinAudio's (wx.FontInfo takes their fractions)
+    # in points, as PyWinAudio's
     key = (size, bold, mono)
     if key not in FONTS:
         info = wx.FontInfo(size).FaceName('Consolas' if mono else 'Segoe UI')
@@ -131,17 +123,14 @@ class AnalyzerPanel(RackModule):
 
     TITLE = 'ANALYZER'
     PREFERENCE = 'analyzer_panel'
-    # one under another, PyWinAudio's order; SCOPE ('bars', the key it was kept by) its
-    # oscilloscope
+    # one under another, PyWinAudio's order; 'bars' is the scope
     PARTS = (('meters', 'METERS', SECTION), ('spectrum', 'SPECTRUM', SECTION),
              ('bars', 'SCOPE', SECTION), ('gram', 'SPECTROGRAM', SECTION))
 
     def __init__(self, parent):
         self.analyzer = analyzer.Analyzer()
         self.path = None
-        # the readings made on a thread of their own (Run): the samples read, the FFTs and
-        # the spectrogram's picture off the GUI's thread, which only draws them, under the
-        # lock (they took 60 ms a second of it, ANALYZER open or the rack bar's OUT)
+        # readings on their own thread; the GUI thread only draws, under the lock
         self.lock = threading.Lock()
         self.version = 0
         self.drawn_version = -1
@@ -153,7 +142,7 @@ class AnalyzerPanel(RackModule):
         threading.Thread(target=self.Run, daemon=True).start()
 
     def OnDestroy(self, event):
-        # (its own: the visualizers laid on it send theirs here too)
+        # visualizers laid on it send their destroy here too
         if event.GetEventObject() is self:
             self.running = False
         event.Skip()
@@ -164,7 +153,7 @@ class AnalyzerPanel(RackModule):
     def GetState(self):
         if self.IsActive() is False:
             return ('NO SIGNAL', False)
-        # after MASTER when it is on: what is heard
+        # after master when it is on: what is heard
         return ('AFTER MASTER' if self.parent.IsLoudOn() else 'DIRECT', False)
 
     def GetChips(self):
@@ -172,25 +161,24 @@ class AnalyzerPanel(RackModule):
 
     def OnChip(self, key):
         if key == 'reset':
-            # the hold, the clip marks and the integrated loudness started again
+            # reset hold, clip marks and integrated loudness
             with self.lock:
                 self.analyzer.Reset()
             self.reInitBuffer = True
 
     def Run(self):
-        # the readings at the module's pace (its fps), read by it and by the rack bar's OUT
+        # readings at the module's fps
         while self.running:
             due = time.perf_counter() + 1.0 / max(self.buffer.fps, 1)
             try:
                 self.Measure()
             except Exception:
-                # (the player being made or closed under it: the next one)
+                # player being made or closed: try next time
                 pass
             time.sleep(max(due - time.perf_counter(), 0.002))
 
     def Measure(self):
-        '''(the thread's) the playing stream's next samples read; a new song starts the
-        readings again; nothing done once they have fallen to rest with nothing playing'''
+        '''(thread) read the stream's next samples'''
         if hasattr(self.parent, 'cue') is False:
             return
         path = self.parent.cue.path
@@ -210,8 +198,7 @@ class AnalyzerPanel(RackModule):
             self.version += 1
 
     def MakeGram(self):
-        # (the thread's) the spectrogram's picture at the size it was last drawn: a column
-        # a frame, the newest at the right, its rows stretched to the height
+        # (thread) spectrogram picture: a column a frame, newest at right
         if self.gram_size is None or self.parts.get('gram') is False:
             return
         iw, ih = self.gram_size
@@ -221,24 +208,22 @@ class AnalyzerPanel(RackModule):
         self.gram_picture = (rgb.shape[1], rgb.shape[0], rgb.tobytes())
 
     def DirectDraw(self):
-        # a frame only when the readings moved on, its size changed, or another change asked
-        # for one (the mouse, a part folded); (resized with nothing playing it was left
-        # white: no reading moved on)
+        # redraw only when readings moved, size changed or asked
         if self.version == self.drawn_version and self.reInitBuffer is False\
                 and tuple(self.GetSize()) == getattr(self, 'drawn_size', None):
             return
         RackModule.DirectDraw(self)
 
-    # the screen: its parts one under another, a line between them
+    # parts one under another, a line between
 
     def GetSections(self):
-        # (none while it is folded: its header alone)
+        # folded: header alone
         if self.folded:
             return []
         return [part[0] for part in self.PARTS if self.parts[part[0]]]
 
     def DrawIcon(self, gc, cx, cy):
-        # a meter's three bars (PyWinAudio's meter view's), dimmed
+        # a meter's three bars, dimmed
         gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(self.parent.st.RACK_LABEL_COLOR))))
         bottom = cy + 6
@@ -256,25 +241,19 @@ class AnalyzerPanel(RackModule):
         return wx.Rect(9, HEADER + 1, w - 18, count * SECTION + count - 1)
 
     def SetRectDraw(self, dc):
-        '''its header and its screen's still grounds one picture (made again when they
-        change: its size, its parts, its state, the mouse on a key), the moving readings drawn
-        over it, a plain DC's (bitmaps and rectangles) but the spectrum's curve; (every frame
-        drawn whole, the header's keys, the grids, the segments one by one: 13 ms a frame, 380
-        a second at 30 fps)'''
+        '''still grounds cached in one picture, moving readings drawn over'''
         with self.lock:
             self.drawn_version = self.version
             w, h = self.GetSize()
             self.drawn_size = (w, h)
             sections = self.GetSections()
-            # (its header a picture of its own, made again when the mouse moves over its keys
-            # or its state changes: in the screen's, the whole of it was made again, 27 to
-            # 31 ms each time the mouse went over a key, the keys slow to answer, the user)
+            # header has its own picture so hover does not rebuild the screen
             key = (w, h, tuple(sections), self.folded, uikit.get_style_version())
             if getattr(self, 'background', None) is None or self.background[0] != key:
                 self.background = (key,) + self.MakeBackground(w, h, sections)
             dc.Blit(0, 0, w, h, self.background_dc, 0, 0)
             _, _, header_dc, hits = self.GetHeaderPicture(w)
-            # (its bottom row left: folded, the line under it is there)
+            # leave the bottom row: the line under the header
             dc.Blit(0, 0, w, min(HEADER, h - 1), header_dc, 0, 0)
             self.hits = list(hits)
             self.regions = dict()
@@ -290,13 +269,13 @@ class AnalyzerPanel(RackModule):
                 elif name == 'gram':
                     self.DrawGram(dc, rect)
                 y += SECTION + 1
-        # the header's bars and dots, laid on BARS before: hidden (the bars in METERS now)
+        # hide the old header bars (now in METERS)
         if getattr(self, 'bars_laid', 0) is not None:
             self.bars_laid = None
             wx.CallAfter(self.parent.LayoutAnalyzerVisuals)
 
     def GetHeaderPicture(self, w):
-        # (key, its picture, a DC with it, its keys' hits)
+        # (key, picture, dc, hits)
         key = (w, self.GetState(), self.IsActive(), self.hovered, getattr(self, 'key_down', None),
                self.folded, uikit.get_style_version())
         cache = getattr(self, 'header_cache', None)
@@ -319,14 +298,12 @@ class AnalyzerPanel(RackModule):
         dc.Clear()
         gc = wx.GraphicsContext.Create(dc)
         draw_rule(gc, self.parent.st, 0, h - 1, w)
-        # (its header drawn over it: GetHeaderPicture)
+        # header drawn over it: GetHeaderPicture
         if sections:
             self.PaintScreen(gc, self.GetScreen(w), sections)
         del gc
         dc.SelectObject(wx.NullBitmap)
-        # the meters' lit segments over a copy of it (a frame copies the spans it needs); the
-        # goniometer's ground, its pixels, its dots mixed into them (a clear picture laid
-        # over it: 1.6 ms)
+        # lit segments and goniometer ground over a copy
         self.lit = self.MakeLit(bitmap, w) if 'meters' in sections else None
         self.scope_ground = None
         if 'meters' in sections:
@@ -334,20 +311,19 @@ class AnalyzerPanel(RackModule):
             scope, side = g['scope'], analyzer.SCOPE_SIDE
             rect = wx.Rect(scope.x + (scope.width - side) // 2,
                            scope.y + (scope.height - side) // 2, side, side)
-            # (none while it is smaller than its screen: its first frame's, 20 px)
+            # none while smaller than its screen
             if wx.Rect(0, 0, w, h).Contains(rect):
                 image = bitmap.GetSubBitmap(rect).ConvertToImage()
                 self.scope_ground = (rect, numpy.frombuffer(bytes(image.GetData()),
                                                             dtype='uint8')
                                      .reshape(side, side, 3).astype('float32'))
-        # (kept in a DC: blitted at every frame, the spectrum's ground copied from it; put
-        # in it after the copies above were taken: a bitmap in a DC copied black)
+        # into the dc after the copies: a bitmap in a dc copies black
         self.background_dc = wx.MemoryDC(bitmap)
         self.spectrum_canvas = None
         return bitmap, []
 
     def PaintScreen(self, gc, rect, sections):
-        # its rim, its ground, the lines between its parts, each part's still ground
+        # rim, ground, lines between parts, each part's ground
         fill(gc, LCD_RIM, rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2, 3)
         fill(gc, LCD, rect.x, rect.y, rect.width, rect.height, 2)
         y = rect.y
@@ -368,7 +344,7 @@ class AnalyzerPanel(RackModule):
         dc.SetBrush(wx.Brush(wx.Colour(tone)))
 
     def DrawText(self, dc, words, right, y, size, tone, mono=True):
-        # right-aligned at right (the readouts')
+        # right-aligned at right
         dc.SetFont(get_font(size, mono=mono))
         dc.SetTextForeground(wx.Colour(tone))
         dc.DrawText(words, int(right - dc.GetTextExtent(words)[0]), int(y))
@@ -376,9 +352,7 @@ class AnalyzerPanel(RackModule):
     # METERS
 
     def GetMetersLayout(self, section):
-        '''meterview's layout_level: the goniometer at its left, a line, the rows (L, R, their
-        scale, the bars' strip over M, S and I's rows, C, B) between equal wings, their names
-        and values at the right'''
+        '''meterview's layout_level'''
         width = min(section.width, METERS_MOST)
         narrowed = width < section.width
         section = wx.Rect(section.x + (section.width - width) // 2, section.y, width,
@@ -396,7 +370,7 @@ class AnalyzerPanel(RackModule):
                              side - 8, side - 8)
         g['scope_divider'] = wx.Rect(section.x + side, section.y + LCD_PAD, 1,
                                      section.height - LCD_PAD * 2)
-        # on the screen's middle: a line at either side of it, as the goniometer's
+        # on the screen's middle
         g['edges'] = [wx.Rect(x, section.y + LCD_PAD, 1, section.height - LCD_PAD * 2)
                       for x in (section.x, section.x + section.width - 1)] if narrowed else []
         pitch = SEGMENT + SEGMENT_GAP
@@ -458,7 +432,7 @@ class AnalyzerPanel(RackModule):
         g = self.GetMetersLayout(section)
         rows = g['rows']
         first, last = rows['L'], rows['R']
-        # the goniometer's line and its axes: M up, L and R the diagonals
+        # goniometer line and axes: M up, L and R diagonal
         for divider in [g['scope_divider']] + g['edges']:
             fill(gc, LCD_GRID, divider.x, divider.y, divider.width, divider.height)
         scope = g['scope']
@@ -470,7 +444,7 @@ class AnalyzerPanel(RackModule):
         gc.StrokeLine(cx + radius * 0.7, cy - radius * 0.7, cx - radius * 0.7, cy + radius * 0.7)
         text(gc, 'L', cx - radius * 0.7 - 2, cy - radius * 0.7 - 6, 7, LCD_TEXT, align='right')
         text(gc, 'R', cx + radius * 0.7 + 2, cy - radius * 0.7 - 6, 7, LCD_TEXT)
-        # the scale: its lines across the channels' rows, its numbers under them
+        # scale lines across the channel rows, numbers under
         drawn = None
         for value in METER_SCALE:
             x = round(self.ToX(first, value))
@@ -481,7 +455,7 @@ class AnalyzerPanel(RackModule):
                 text(gc, str(value), x, g['scale_y'] + 1, 6.5, LCD_TEXT,
                      align='left' if least else 'center')
                 drawn = x
-        # the segments dark, the names
+        # dark segments, names
         for name, row in rows.items():
             for x in g['xs']:
                 tone = get_meter_colour(self.FromX(row, x + SEGMENT / 2.0))
@@ -490,7 +464,7 @@ class AnalyzerPanel(RackModule):
                  align='center')
         for clip in g['clips']:
             fill(gc, LCD_GRID, clip.x, clip.y, clip.width, clip.height)
-        # the values' names, flush with their numbers' right
+        # value names flush with their numbers' right
         boxes = g['boxes']
         names = [(boxes['Lpk'].x + boxes['Lpk'].width, g['scale_y'] + 1, 'PK'),
                  (boxes['Lrms'].x + boxes['Lrms'].width, g['scale_y'] + 1, 'RMS')]
@@ -500,8 +474,7 @@ class AnalyzerPanel(RackModule):
                    boxes[k[0].upper()].y + 1, v) for k, v in PHASE_NAMES.items()]
         for x, y, words in names:
             text(gc, words, x, y, 6.5, FAINT, mono=True, align='right')
-        # the bars' strip: its bars dark (dots), the correlation's and the balance's
-        # segments dark, their middles marked
+        # bars strip dark; correlation and balance dark, middles marked
         bars = self.GetBarsInner(g['strip'])
         xs, halves, middle = self.GetBarSpans(bars, numpy.zeros(2), 1)
         for x, half in zip(xs, halves):
@@ -515,8 +488,7 @@ class AnalyzerPanel(RackModule):
             fill(gc, LCD_AXIS, centre, bar.y + bar.height, SEGMENT, 2)
 
     def GetBarSpans(self, rect, levels, floor):
-        # (xs, halves, middle) of the bars across rect from the levels (meterview's
-        # get_bar_spans: resampled to a bar every BAR_PITCH px, on the strip's middle)
+        # (xs, halves, middle) of the bars (meterview's get_bar_spans)
         count = max(2, rect.width // BAR_PITCH + 1)
         levels = numpy.asarray(levels, dtype='float64')
         source = len(levels)
@@ -535,8 +507,7 @@ class AnalyzerPanel(RackModule):
         return rect.x + BAR_PITCH * numpy.arange(count) + offset, halves, middle
 
     def MakeLit(self, background, w):
-        # (a DC on the background with every channel and the phase's segments lit in their
-        # tones, one with the phase's in METER_MID: a frame blits the spans it needs)
+        # lit dcs: all tones, and phase in METER_MID
         g = self.GetMetersLayout(wx.Rect(9, HEADER + 1, w - 18, SECTION))
         sources = []
         for phase in (METER_BLUE, METER_MID):
@@ -561,7 +532,7 @@ class AnalyzerPanel(RackModule):
         g = self.GetMetersLayout(section)
         rows = g['rows']
         lit, mid = self.lit
-        # the channels: lit to the higher of the peak and the RMS, the hold a tick, a clip lamp
+        # channels: peak or rms, hold tick, clip lamp
         for c, name in enumerate(('L', 'R')):
             row = rows[name]
             level = max(a.peak[c], a.rms[c])
@@ -576,8 +547,7 @@ class AnalyzerPanel(RackModule):
                 clip = g['clips'][c]
                 self.SetDC(dc, CLIP)
                 dc.DrawRectangle(clip)
-        # the goniometer's dots, kept a while, mixed into its ground's pixels (its picture
-        # its own size: no scaling)
+        # goniometer dots fading into the ground pixels
         glow = numpy.clip(a.scope, 0.0, 1.0)
         if float(glow.max()) >= 0.02 and self.scope_ground is not None:
             rect, ground = self.scope_ground
@@ -587,7 +557,7 @@ class AnalyzerPanel(RackModule):
             share = numpy.minimum(1.0, glow * 4)[..., None]
             image = (ground + (rgb - ground) * share).astype('uint8')
             dc.DrawBitmap(wx.Bitmap.FromBuffer(rect.width, rect.height, image), rect.x, rect.y)
-        # the spectrum's bars, one picture (meterview's draw_bars)
+        # spectrum bars, one picture (meterview's draw_bars)
         bars = self.GetBarsInner(g['strip'])
         self.analyzer.bar_scale = max(1, int(round(bars.width / float(analyzer.BAR_SET * BAR_PITCH))))
         if a.bars is not None and bars.width > 0 and bars.height > 0:
@@ -595,8 +565,7 @@ class AnalyzerPanel(RackModule):
             inside = (xs >= bars.x) & (xs < bars.x + bars.width)
             xs, halves = xs[inside] - bars.x, halves[inside]
             rows_ = numpy.arange(bars.y, bars.y + bars.height)[:, None]
-            # opaque: the ground, the dark dots of the bars at rest, the bars (a clear picture
-            # laid over the ground cost a ms)
+            # opaque: ground, dark dots, bars
             image = numpy.empty((bars.height, bars.width, 3), dtype='uint8')
             image[:] = list(wx.Colour(LCD).Get()[:3])
             rest = (rows_ >= middle - 1) & (rows_ < middle + 1)
@@ -613,8 +582,7 @@ class AnalyzerPanel(RackModule):
             else:
                 bitmap.CopyFromBuffer(image, wx.BitmapBufferFormat_RGB)
             dc.DrawBitmap(bitmap, bars.x, bars.y)
-        # the correlation and the balance: lit from the middle to the value, a bright tick
-        # at its end
+        # correlation and balance: lit from the middle, tick at the end
         xs = g['xs']
         centre = len(xs) // 2
         for name, share, value, tone in (
@@ -633,7 +601,7 @@ class AnalyzerPanel(RackModule):
             dc.DrawRectangle(xs[end], bar.y - 1, SEGMENT, bar.height + 2)
             box = g['boxes']['C' if name == 'correlation' else 'B']
             self.DrawText(dc, value, box.x + box.width, box.y, 7.5, TEXT)
-        # the values: PK and RMS a channel, the loudness in its colours
+        # values: PK and RMS per channel, loudness
         momentary, short, integrated = a.loudness
         values = {'Lpk': (a.hold[0], analyzer.FLOOR), 'Rpk': (a.hold[1], analyzer.FLOOR),
                   'Lrms': (a.rms[0], analyzer.FLOOR), 'Rrms': (a.rms[1], analyzer.FLOOR),
@@ -677,8 +645,7 @@ class AnalyzerPanel(RackModule):
                  inner.width, 1)
 
     def GetSpectrumNames(self, dc, section):
-        # (x, y, words) of its frequencies under it and its dB at its right, worked out once
-        # a size (drawn as text over the curve: a clear picture laid over it cost a ms)
+        # (x, y, words) of the labels, once per size
         key = tuple(section)
         cached = getattr(self, 'spectrum_names', None)
         if cached is not None and cached[0] == key:
@@ -692,7 +659,7 @@ class AnalyzerPanel(RackModule):
             words = get_short_hz(freq)
             w, h = dc.GetTextExtent(words)
             left = x + 3 if index == 0 else x - w - 3 if index == last else x - w // 2
-            # (a name touching the one before it left out: narrow, 10k20k)
+            # skip a name touching the previous one
             if right is not None and left < right + 4:
                 continue
             names.append((left, bottom - h - 2, words))
@@ -714,8 +681,7 @@ class AnalyzerPanel(RackModule):
             dc.DrawText(words, int(x), int(y))
 
     def DrawSpectrum(self, dc, section):
-        '''its curve on a picture of its own, its GraphicsContext kept (made at every frame, a
-        ms of it), its ground copied from the background; its names over it'''
+        '''curve on its own picture, its GraphicsContext kept'''
         a = self.analyzer
         inner = self.GetInner(section)
         self.regions['spectrum'] = inner
@@ -757,7 +723,7 @@ class AnalyzerPanel(RackModule):
         self.DrawHover(dc, inner, xs)
 
     def DrawHover(self, dc, inner, xs):
-        # under the mouse: its frequency, its note and the level there
+        # under the mouse: frequency, note and level
         pointer = getattr(self, 'pointer', None)
         if pointer is None or inner.Contains(pointer) is False:
             return
@@ -781,7 +747,7 @@ class AnalyzerPanel(RackModule):
         dc.DrawText(words, box.x + 6, box.y + 3)
 
     def CATCH_EVT_GLOBAL(self, event):
-        # where the mouse is, for the spectrum's readout (drawn again as it moves over it)
+        # mouse position for the readout
         pointer = wx.Point(int(event.X), int(event.Y)) if self.onClient else None
         if pointer != getattr(self, 'pointer', None):
             inner = getattr(self, 'regions', {}).get('spectrum')
@@ -792,7 +758,7 @@ class AnalyzerPanel(RackModule):
             self.pointer = pointer
         RackModule.CATCH_EVT_GLOBAL(self, event)
 
-    # SCOPE (the oscilloscope)
+    # SCOPE
 
     def PaintWaveGround(self, gc, section):
         inner = self.GetInner(section)
@@ -801,7 +767,7 @@ class AnalyzerPanel(RackModule):
         fill(gc, LCD_AXIS, inner.x, inner.y + inner.height // 2, inner.width, 1)
 
     def PaintWave(self, image, wave):
-        # columns of the oscilloscope: the highest to the lowest dim, the RMS bright
+        # oscilloscope columns: peak range dim, rms bright
         height = image.shape[0]
         middle = height / 2.0
         high, low, rms = wave
@@ -812,7 +778,7 @@ class AnalyzerPanel(RackModule):
         inside = (rows >= numpy.floor(middle - reach)[None, :]) &\
             (rows <= numpy.ceil(middle + reach)[None, :])
         silent = (numpy.abs(high) < 1e-4) & (numpy.abs(low) < 1e-4)
-        # its ground and grid in it (opaque: a clear picture laid over the ground cost a ms)
+        # ground and grid in it (opaque)
         image[:] = list(wx.Colour(LCD).Get()[:3])
         for y in (height // 4, height * 3 // 4):
             image[y] = list(wx.Colour(LCD_GRID).Get()[:3])
@@ -822,8 +788,7 @@ class AnalyzerPanel(RackModule):
         image[inside & (reach[None, :] > 0.5)] = list(wx.Colour(TRACE_BLUE).Get()[:3])
 
     def DrawWave(self, dc, section):
-        # its picture moved on by the columns read since the last frame, they alone painted
-        # (meterview's draw_wave; painted whole every frame, 2 ms)
+        # picture scrolled by new columns, only they painted
         inner = self.GetInner(section)
         width, height = inner.width, inner.height
         if width <= 3 or height <= 3:
@@ -850,8 +815,7 @@ class AnalyzerPanel(RackModule):
         iw, ih = inner.width, inner.height
         if iw <= 3 or ih <= 3:
             return
-        # its picture made on the readings' thread (MakeGram) at this size, copied into a
-        # bitmap kept (a new one every frame before)
+        # picture from MakeGram copied into a kept bitmap
         self.gram_size = (int(iw), int(ih))
         picture = self.gram_picture
         if picture is not None and picture[1] == int(ih) and picture[0] == int(iw):
@@ -866,7 +830,7 @@ class AnalyzerPanel(RackModule):
         self.DrawGramNames(dc, section)
 
     def DrawGramNames(self, dc, section):
-        # at its left, inside it (the right edge would hide the sound coming in)
+        # at its left: the right edge would hide new sound
         inner = self.GetInner(section)
         dc.SetFont(get_font(6.5))
         dc.SetTextForeground(wx.Colour(LCD_TEXT))

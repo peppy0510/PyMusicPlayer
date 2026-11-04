@@ -1,7 +1,6 @@
 @echo off
 rem ASCII only: cmd misreads UTF-8 lines on code page 949 PCs.
-rem Builds the Auto Master copied from PyWinAudio (automaster.c) as a 64-bit VST2 DLL for LOUD,
-rem with the Visual Studio 2022 C compiler, into assets\dlls.
+rem builds automaster.c as a 64-bit VST2 DLL (VS 2022) into assets\dlls
 setlocal
 set HERE=%~dp0
 for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS=%%i

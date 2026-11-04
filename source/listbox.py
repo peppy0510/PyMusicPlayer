@@ -255,8 +255,7 @@ class ListBox(RectBox, ListControl):
         self.SliderH.DirectDraw()
         self.SliderV.DirectDraw()
         self.DirectDraw()
-        # drawn just above: not again when idle (the draw before this one asks it,
-        # SetRectDraw), or a step of a sash dragged drew the list twice
+        # drawn just above: no idle redraw, or a sash drag draws it twice
         self.List.reInitBuffer = False
         self.Header.reInitBuffer = False
         self.SliderH.reInitBuffer = False
@@ -267,14 +266,12 @@ class ListBox(RectBox, ListControl):
         pass
 
 
-# the files whose comment was read (fill_comments: once a file, a session)
+# files whose comment was read, once a session
 COMMENTS_READ = set()
 
 
 def fill_comments(listbox):
-    '''the comment column's values read for the rows made before it was (their files' ID3
-    COMM) in every tab (the columns are the same in all), on a thread, put in every tab's
-    rows with the same file when read'''
+    '''read the comment column of the rows on a thread, in every tab'''
     paths = []
     for inner in listbox.innerList:
         keys = [v.key for v in inner.columns]
@@ -312,10 +309,9 @@ def fill_comments(listbox):
 
 
 def toggle_favorite_tracks(listbox, paths):
-    # songs starred or let go: the favorites' tab (when open) as they are now, told
+    # star or unstar songs, the favorites tab refreshed
     starred = library.toggle_favorite_tracks(paths)
-    # (its tab refilled where it is: chosen and then left, it showed for a frame and the
-    # list jumped at each star, the user)
+    # refilled in place: selecting it made the list jump at each star
     if any(v.title == library.FAVORITES_TITLE for v in listbox.innerList):
         library.show_favorites(listbox, select=False)
     listbox.reInitBuffer = True
@@ -326,16 +322,14 @@ def toggle_favorite_tracks(listbox, paths):
 
 
 def get_shared_gc(dc, shared):
-    # one GraphicsContext for a list's rows (shared: a list kept by the drawing, empty at
-    # first): one a row cost 1.7 ms on the list's bitmap (its size's), 50 ms a draw
+    # one GraphicsContext shared by a list's rows: one a row is slow
     if not shared:
         shared.append(wx.GraphicsContext.Create(dc))
     return shared[0]
 
 
 def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255, shared=None):
-    # a song's analysis: under way (a ring three quarters round, the accent) or waiting (a
-    # ring of dots, dimmed), 9 px across; see-through by alpha (under the playing mark)
+    # analysis icon: an accent arc while running, dimmed dots while waiting
     tokens = macroboxstyle.current().UI
 
     def ink(name):
@@ -345,7 +339,7 @@ def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255, shared=None):
     if gc is None:
         return
     if working:
-        # turning, a turn in 1.2 s (the list drawn again for it while songs are analysed)
+        # turning
         start = math.radians((time.time() % 1.2) / 1.2 * 360.0)
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink('ACCENT')).Width(1.8)))
         path = gc.CreatePath()
@@ -360,13 +354,12 @@ def draw_analysis_icon(dc, cx, cy, working, r=4.0, alpha=255, shared=None):
             gc.DrawEllipse(cx + r * math.cos(angle) - 0.9, cy + r * math.sin(angle) - 0.9, 1.8,
                            1.8)
     if shared is not None:
-        # (on the bitmap now: the playing mark the dc draws next goes over it)
+        # flushed: the playing mark drawn next goes over it
         gc.Flush()
 
 
 def draw_waiting_icons(dc, points, r=4.0, shared=None):
-    '''draw_analysis_icon's waiting rings (dots, dimmed) at points [(cx, cy)], all in one
-    path: a ring a row, 8 ellipses each, was 2.4 ms of a list's 26'''
+    '''waiting rings at points [(cx, cy)] in one path'''
     if not points:
         return
     gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
@@ -388,8 +381,7 @@ def draw_waiting_icons(dc, points, r=4.0, shared=None):
 
 
 def draw_star_outlines(dc, points, r, colour, shared=None):
-    '''draw_star_outline's at points [(cx, cy)], all in one path (a path a row was 4.6 ms
-    of a list's 26)'''
+    '''star outlines at points [(cx, cy)] in one path'''
     if not points:
         return
     gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
@@ -413,8 +405,7 @@ def draw_star_outlines(dc, points, r, colour, shared=None):
 
 
 def draw_folder_icons(dc, points, colour, shared=None):
-    '''a folder (its tab on the left of its top), 11 px across, at points [(cx, cy)] in one
-    path: the folder's tab's folders, where a song's star is'''
+    '''folder icons, 11 px across, at points [(cx, cy)] in one path'''
     if not points:
         return
     gc = wx.GraphicsContext.Create(dc) if shared is None else get_shared_gc(dc, shared)
@@ -434,7 +425,7 @@ def draw_folder_icons(dc, points, colour, shared=None):
 
 
 def draw_star(dc, cx, cy, r, colour):
-    # a five-pointed star, filled (a favorite station)
+    # filled five-pointed star
     points = []
     for k in range(10):
         radius = r if k % 2 == 0 else r * 0.45
@@ -446,15 +437,13 @@ def draw_star(dc, cx, cy, r, colour):
     dc.DrawPolygon(points)
 
 
-# a list text's picture over its ground (ListBoxList.DrawTexts, a text not Latin): (font,
-# text, ink, ground)
+# cached text pictures by (font, text, ink, ground)
 TEXT_PICTURES = {}
 
 
 class ListBoxList(RectBox):
 
-    # drawn first of the boxes waiting (macroboxlib.DrawPending): songs skipped one after
-    # another, the cover, the buttons and the tabs took its turns and it jumped songs
+    # drawn first among pending boxes (macroboxlib.DrawPending)
     PENDING_FIRST = True
 
     def __init__(self, parent):
@@ -476,15 +465,14 @@ class ListBoxList(RectBox):
         self.bmp = Struct(playing=Struct())
         self.bmp.playing.black = images.listbox_playing_black.GetBitmap()
         self.bmp.playing.white = images.listbox_playing_white.GetBitmap()
-        # (half see-through on the row's ground, by white or not: a folder's mark while its
-        # song is not sounding, the sidebar's dimmed one's half way)
+        # half see-through: a folder's mark while its song is not sounding
         self.bmp.playing.dimmed = {
             light: wx.Bitmap(bmp.ConvertToImage().AdjustChannels(1.0, 1.0, 1.0, 0.5))
             for light, bmp in ((True, self.bmp.playing.white),
                                (False, self.bmp.playing.black))}
         self.InitBuffer()
-        # the mouse's back button (its first side button): the folder's tab's parent opened,
-        # as Backspace (a second press soon after comes as a double click)
+        # mouse back button opens the parent folder, as Backspace
+        # a quick second press comes as a double click
         self.Bind(wx.EVT_MOUSE_AUX1_DOWN, self.OnBackButton)
         self.Bind(wx.EVT_MOUSE_AUX1_DCLICK, self.OnBackButton)
 
@@ -502,9 +490,7 @@ class ListBoxList(RectBox):
         self.DrawTextEdit(dc)
 
     def InitBuffer(self):
-        # the rows whose state changed drawn alone over the last picture when nothing else
-        # did (DrawChangedRows): songs skipped one after another moved the selection and the
-        # playing mark a row, and the whole list (10 to 20 ms) was drawn for two rows
+        # redraw only the changed rows when nothing else changed
         state = self.GetDrawnState()
         last, self.drawn_state = getattr(self, 'drawn_state', None), state
         if state is not None and last is not None and self.DrawChangedRows(last, state):
@@ -514,8 +500,7 @@ class ListBoxList(RectBox):
         RectBox.InitBuffer(self)
 
     def GetDrawnState(self):
-        '''(what the whole picture is drawn by, the scroll, {item: its row's state}), or None
-        when it is drawn whole whatever (a picture column, a turning icon, an edit, a drop)'''
+        '''(whole, scroll, {item: row state}), or None to draw whole'''
         lb = self.parent
         if hasattr(lb, 'innerList') is False or len(lb.innerList) == 0:
             return None
@@ -542,7 +527,7 @@ class ListBoxList(RectBox):
                  getattr(self, 'star_down', None), tuple(mfeats.GetProcPath()),
                  frozenset(mfeats.GetTaskPath()))
         pathIdx = lb.GetColumnKeyToIdx('path')
-        # (the folder's tab's alone: a station's tab has no status)
+        # folder tab only: a station's tab has no status
         browsing = inner.title == library.FOLDER_TITLE
         if browsing:
             statusIdx = lb.GetColumnKeyToIdx('status')
@@ -557,21 +542,20 @@ class ListBoxList(RectBox):
             row = inner.items[item]
             playing = None
             if here and row[pathIdx] == cue.path:
-                # (the playing mark's: as DrawListItem tells it)
+                # the playing mark, as DrawListItem draws it
                 playing = (playbox.IsStreamWaiting(), playbox.IsPlaying(),
                            playbox.AudioControl.pending, playbox.GetStreamConnecting(),
                            self.pending.SkipStopIcon)
             elif browsing and here and cue.path and row[statusIdx] == folders.FOLDER_STATUS\
                     and row[nameIdx] != folders.PARENT_NAME\
                     and folders.is_under(cue.path, row[pathIdx]):
-                # (a folder's mark: DrawFolderPlayingMark)
+                # a folder's mark: DrawFolderPlayingMark
                 playing = (playbox.IsPlaying(), playbox.AudioControl.pending)
             rows[item] = (id(row), item in selected, playing)
         return whole, lb.GetVirtualPositionY(), rows
 
     def DrawChangedRows(self, last, state):
-        '''the rows changed since the last picture drawn over it (scrolled by whole rows: the
-        picture moved first, the rows come in drawn); False when it is to be drawn whole'''
+        '''redraw only the changed rows; False when it must be drawn whole'''
         whole, vpy, rows = state
         last_whole, last_vpy, last_rows = last
         row_size = self.parent.GetRowsHeight()
@@ -583,11 +567,11 @@ class ListBoxList(RectBox):
             return False
         if dy != 0 and max(rows, default=-1) >= len(
                 self.parent.innerList[self.parent.selectedList].items) - 1:
-            # (the end of the list in sight: the ground under it moved too)
+            # list end in sight: the ground under it moved too
             return False
         changed = [item for item, row in rows.items() if last_rows.get(item) != row]
         if dy != 0:
-            # rows cut by the edge in the last picture came in with the old strip under them
+            # rows cut by the edge last time kept the old strip under them
             strip = (h + dy, h) if dy < 0 else (0, dy)
             changed += [item for item in rows if item not in changed
                         and item * row_size + vpy < strip[1]
@@ -632,8 +616,7 @@ class ListBoxList(RectBox):
                     if w > rect.width - x:
                         w = rect.width - x
                     h = row_size - 1
-                    # the cell's editor ground, as the editor is (it was white under the
-                    # dark editor)
+                    # the editor's ground under the cell
                     edit_bg = macroboxstyle.current().UI.EDIT_BG
                     dc.DrawRectangleList(((x, y, w + 1, h),),
                                          pens=wx.Pen(edit_bg, 0), brushes=wx.Brush(edit_bg))
@@ -650,7 +633,7 @@ class ListBoxList(RectBox):
         return font
 
     def DrawListItem(self, dc, only=None):
-        # only: the items whose rows are drawn (DrawChangedRows), the rest left as drawn
+        # only: the items to draw (DrawChangedRows), the rest left as drawn
         top_margin = 4
         left_margin = 5
         x, y = (0, 0)
@@ -679,8 +662,7 @@ class ListBoxList(RectBox):
         # tw, _ = dc.GetTextExtent(u'W')
         _, th = dc.GetTextExtent(u'A^`qj!#%*&ypQ')
         top_margin = int((row_size - th) * 0.5) + 1
-        # the numbers (the right-aligned columns: order, duration, tempo) in the display's
-        # monospace, so their digits line up row under row; on the text's baseline
+        # numeric columns in monospace so digits line up
         mono = self.GetMonoFont()
         _, mh, descent, _ = dc.GetFullTextExtent(u'0', mono)
         _, fh, fdescent, _ = dc.GetFullTextExtent(u'0', self.parent.font)
@@ -701,7 +683,7 @@ class ListBoxList(RectBox):
         r, g, b = self.parent.st.LIST_BG_COLOR
         bgcolor_odd = [min(max(v, 0), 255) for v in (r - ct, g - ct, b - ct)]
         bgcolor_even = [min(max(v, 0), 255) for v in (r + ct, g + ct, b + ct)]
-        # each text's ground (its row's), for its kept picture (DrawTexts)
+        # each text's row ground, for its cached picture
         n_grounds, s_grounds, m_grounds, ms_grounds = [], [], [], []
         selected_ground = tuple(self.parent.st.SELECTED_BG_COLOR)[:3]
         browsing_folder = self.parent.innerList[listIdx].title == library.FOLDER_TITLE
@@ -714,8 +696,7 @@ class ListBoxList(RectBox):
                 column = columns[i]
                 if item > len(self.parent.innerList[listIdx].items):
                     continue
-                # a cover or a waveform: drawn after the text, over the row's ground (none
-                # for a folder's row)
+                # cover or waveform drawn after the text, over the row's ground
                 if listColumns[col].key in ('cover', 'wave'):
                     if browsing_folder and folders.is_folder_item(self.parent, item, listIdx):
                         continue
@@ -729,8 +710,7 @@ class ListBoxList(RectBox):
                 # limitedString = self.LimitTextLength(\
                 #   dc, string, column.width-left_margin-15, tww)
                 if right_align:
-                    # cut by the monospace digits it is drawn in (measured in the list's
-                    # font it came out wider and ran left over the column before it)
+                    # cut in the monospace it is drawn in, not the list font
                     string = f'{string}'
                     fits = max(int((column.width - left_margin - 8) // mono_width), 0)
                     limitedString = string if len(string) <= fits\
@@ -788,7 +768,7 @@ class ListBoxList(RectBox):
         dc.DrawRectangleList(s_rects,
                              pens=wx.Pen(sel_bgcolor, 1),
                              brushes=wx.Brush(sel_bgcolor))
-        # the selected rows' bar at the left, in the accent
+        # selection bar at the left
         bar = self.parent.st.SELECTED_BAR_COLOR
         dc.DrawRectangleList([(x, y, 3, h) for x, y, w, h in s_rects],
                              pens=wx.Pen(bar, 1), brushes=wx.Brush(bar))
@@ -807,16 +787,12 @@ class ListBoxList(RectBox):
 
         # draw status column
         procpath = self.parent.parent.MFEATS.GetProcPath()
-        # waiting in the queue: red too, analyzed before or not (a song analyzed
-        # by an older version waits for its analysis again)
+        # queued: waits again even if analyzed by an older version
         taskpath = set(self.parent.parent.MFEATS.GetTaskPath())
         pathIdx = self.parent.GetColumnKeyToIdx('path')
-        # the radio's Browse tab: the stations in the favorites starred
-        # starred: the stations in the radio's favorites (Browse), the songs in the
-        # favorite tracks (every playlist's rows)
+        # starred: radio favorites (Browse) or favorite tracks
         favorites = set()
-        # the songs and Browse's stations not starred: an outline, faint (the Favorites'
-        # rows all starred: their star taken off by a click, as the favorite tracks')
+        # not starred: a faint outline
         outline = None
         if self.parent.innerList[listIdx].title != radio.RADIO_TITLE:
             bg = wx.Colour(self.parent.st.LIST_BG_COLOR)
@@ -828,16 +804,15 @@ class ListBoxList(RectBox):
             favorites = radio.get_favorite_urls(self.parent)
         elif self.parent.innerList[listIdx].title not in radio.RADIO_TABS:
             favorites = set(library.get_favorite_tracks())
-        # (the rows' stars and rings on one GraphicsContext: get_shared_gc)
+        # stars and rings share one GraphicsContext (get_shared_gc)
         shared = []
         self.spinning = False
-        # (the outlines and the waiting rings drawn together after the rows: one path each)
+        # outlines and waiting rings drawn after the rows, one path each
         outlines, waiting = [], []
         playing_path = self.parent.parent.PlayBox.cue.path
-        # a folder's songs (the sidebar's folders) not queued: no waiting ring for one not
-        # analyzed, only for one queued (its root chosen for the analysis: as a playlist's)
+        # folder songs: a waiting ring only when queued
         browsed = folders.is_browsed_only(self.parent.innerList[listIdx])
-        # the folder's tab's folders: a folder where a song's star is, nothing else of a song
+        # folder tab: folder icons where a song's star is
         folder_marks = []
         for row, item in enumerate(shownItemIdx):
             if only is not None and item not in only:
@@ -847,8 +822,7 @@ class ListBoxList(RectBox):
                     continue
                 # 5 px right of the playing mark's ring (MARK_X)
                 cx = columns[i].x + self.STAR_X
-                # 1 px over the row's middle (a star's ink is low in its box: it looked low at
-                # +1, high at -1)
+                # 1 px above the middle: a star's ink sits low in its box
                 cy = row_size * row + rect.y - row_offset + row_size // 2
                 star = 4 if item == getattr(self, 'star_down', None) else 5
                 if self.parent.innerList[listIdx].items[item][statusIdx]\
@@ -874,15 +848,10 @@ class ListBoxList(RectBox):
                 # elif status == 'analyzing':
                 #   dc.DrawRectangleList((rects,), pens=wx.Pen((80,80,255), 0),\
                 #       brushes=wx.Brush(wx.Colour(100,100,255)))
-                # as icons where the playing mark goes (none on the playing row): being
-                # analysed a ring three quarters drawn in the accent, waiting a dotted ring
-                # dimmed (told by their shapes, not by red and blue bars)
+                # analysis icons where the playing mark goes, none on the playing row
                 path = self.parent.innerList[listIdx].items[item][pathIdx]
-                # on the play mark's centre (its 9 rows from int((row_size - 8) / 2): the
-                # middle row's middle), a half row off by row_size / 2 in an even row
+                # on the play mark's centre
                 cy = row_size * row + rect.y - row_offset + int((row_size - 8) * 0.5) + 4.5
-                # (the playing row's its own size, the playing mark half see-through over it:
-                # a wider ring round the mark looked off centre)
                 unanalyzed = status == '' and browsed is False
                 analysing = path in procpath or unanalyzed or path in taskpath
                 if path in procpath:
@@ -891,7 +860,7 @@ class ListBoxList(RectBox):
                     self.spinning = True
                 elif unanalyzed or path in taskpath:
                     if path == playing_path:
-                        # (now: the playing mark goes over it)
+                        # the playing mark goes over it
                         draw_analysis_icon(dc, columns[i].x + self.MARK_X + 4, cy, False,
                                            shared=shared)
                     else:
@@ -903,8 +872,7 @@ class ListBoxList(RectBox):
                         bmp = images.listbox_brokenlink_red.GetBitmap()
                     m = int((row_size - bmp.GetHeight()) * 0.5) - 1
                     dc.DrawBitmap(bmp, rects[0], rects[1] + m, useMask=False)
-                # playing status: in the tab it was played from; a station's in every tab
-                # (the same stream wherever its row is)
+                # playing status: in its own tab; a station's in every tab
                 if self.parent.parent.PlayBox.cue.listId\
                         != self.parent.innerList[listIdx].Id\
                         and audio.is_stream_path(self.parent.parent.PlayBox.cue.path) is False:
@@ -916,15 +884,12 @@ class ListBoxList(RectBox):
                 font_color = self.parent.st.LIST_FG_COLOR
                 if self.parent.IsHighlightedItem(item):
                     font_color = self.parent.st.SELECTED_FG_COLOR
-                # while it starts (a file opening, a station connecting) the playing mark
-                # held: it was let go after a frame and taken again at the next event, the
-                # mark and the stopped square in turns
+                # mark held while a file opens or a station connects, or it flickers
                 playbox = self.parent.parent.PlayBox
                 starting = playbox.AudioControl.pending\
                     or playbox.GetStreamConnecting() is not None
                 if playbox.IsStreamWaiting():
-                    # a station connecting or filling its buffer: the turning ring in the
-                    # mark's place (its mark once it sounds), as the analysing song's
+                    # station connecting or buffering: a turning ring in the mark's place
                     self.pending.SkipStopIcon = False
                     offset = int((row_size - 8) * 0.5)
                     draw_analysis_icon(dc, column.x + self.MARK_X + 4,
@@ -942,16 +907,14 @@ class ListBoxList(RectBox):
                     mx = column.x + self.MARK_X
                     my = row_size * row + rect.y - row_offset + offset
                     if analysing:
-                        # over the analysis icon: cut out of it by a pixel of the row's
-                        # ground round it, its own colour kept (see-through, it took the
-                        # ring's blue and the ground's grey)
+                        # cut out of the analysis icon by a pixel of the row's ground
                         halo = self.GetHalo(bmp, self.GetRowGround(item, row, shownItemIdx,
                                                                    bgcolor_odd, bgcolor_even))
                         for dx, dy in self.HALO_STEPS:
                             dc.DrawBitmap(halo, mx + dx, my + dy, useMask=False)
                     dc.DrawBitmap(bmp, mx, my, useMask=False)
                 else:
-                    # its centre the play mark's (9 px, centred on MARK_X + 4)
+                    # centred on the play mark (9 px, MARK_X + 4)
                     x = column.x + self.MARK_X + 1
                     offset = int((row_size - 8) * 0.5)
                     y = row_size * row + rect.y - row_offset + offset + 1
@@ -972,11 +935,7 @@ class ListBoxList(RectBox):
         draw_waiting_icons(dc, waiting, shared=shared)
 
     def DrawTexts(self, dc, font, texts, xys, grounds, ink):
-        '''texts at xys: Latin ones at once (DrawTextList), the others each from its picture
-        over its row's ground, made once: GDI looks for a font for every Japanese or Korean
-        title it draws, 4 times a Latin one's (a list of them took 20 ms to draw, 13 now).
-        the picture 2 px wider each side than the text (ClearType's fringe), nothing drawn
-        there before the texts'''
+        '''texts at xys; non-Latin ones from cached pictures (GDI font lookup is slow)'''
         dc.SetFont(font)
         latin = [(text, xy) for text, xy in zip(texts, xys) if text.isascii()]
         if latin:
@@ -1011,9 +970,7 @@ class ListBoxList(RectBox):
         source.SelectObject(wx.NullBitmap)
 
     def DrawFolderPlayingMark(self, dc, listIdx, item, x, y):
-        # a subfolder the playing song is in, played from this tab: the song's play mark
-        # where a song's goes, dimmed while it is not sounding (as the sidebar's root's: the
-        # way back to it told); never on '..' (every song here is under it)
+        # subfolder of the playing song: its mark, dimmed when silent, not on '..'
         inner = self.parent.innerList[listIdx]
         playbox = self.parent.parent.PlayBox
         path = playbox.cue.path
@@ -1032,17 +989,17 @@ class ListBoxList(RectBox):
             bmp = self.bmp.playing.dimmed[bmp is self.bmp.playing.white]
         dc.DrawBitmap(bmp, x, y, useMask=False)
 
-    # the playing mark's cut-out: its shape a pixel round it, every way
+    # the playing mark's cut-out: its shape grown by a pixel
     HALO_STEPS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1))
 
     def GetRowGround(self, item, row, shownItemIdx, odd, even):
-        # the row's ground: selected, or its stripe's
+        # the row's ground: selected or striped
         if self.parent.IsHighlightedItem(item):
             return wx.Colour(self.parent.st.SELECTED_BG_COLOR)
         return wx.Colour(*(odd if shownItemIdx[row] % 2 == 0 else even)[:3])
 
     def GetHalo(self, bmp, ground):
-        # the mark's shape in the ground's colour (made once a mark and a ground)
+        # the mark's shape in the ground's colour, cached by mark and ground
         cache = self.__dict__.setdefault('halos', {})
         key = (id(bmp), ground.Get()[:3])
         if key not in cache:
@@ -1060,11 +1017,8 @@ class ListBoxList(RectBox):
     ORDER_GAP = 10
 
     def KeepOrderRoom(self, columns, orderIdx, digit, margin):
-        # the # column widened when its numbers would run into the marks before them (the
-        # playing mark, the star: STAR_X) as the list grows (100, 1000 rows); the file
-        # name's column gives the room. as wide in every tab, for the longest one (each its
-        # own, a tab chosen widened its # and then the file name's, a frame apart: the
-        # columns jumped at each change of tab, the user); the radio's keep theirs
+        # the # column widened for its numbers, the room from the file name's;
+        # one width for every tab or the columns jump on a tab change
         if orderIdx is None or orderIdx < 0:
             return
         lists = self.parent.innerList
@@ -1081,13 +1035,12 @@ class ListBoxList(RectBox):
             for column in inner.columns:
                 if column.key == 'order' and column.width < need:
                     column.width = need
-        # (drawn first while the list box is made, before its header is)
+        # drawn before the header exists
         header = getattr(self.parent, 'Header', None)
         if header is not None:
             wx.CallAfter(header.SetAutoColumnWidth)
 
-    # the # column's marks: the playing mark's left (9 px wide, its ring 6.5 round its
-    # centre, clear of the selection bar's 3 px by 2.5) and the star's centre
+    # the # column's marks: the playing mark's left, the star's centre
     MARK_X = 8
     STAR_X = 29
 
@@ -1101,8 +1054,7 @@ class ListBoxList(RectBox):
         mdxIdx = self.parent.GetColumnKeyToIdx('mdx')
         pathIdx = self.parent.GetColumnKeyToIdx('path')
         selected = self.parent.st.SELECTED_BG_COLOR
-        # the waveforms quieted but the playing song's (a column of them drew the eye before
-        # the titles did): their row's ground over them at WAVE_DIM
+        # waveforms dimmed but the playing song's
         cue = self.parent.parent.PlayBox.cue
         playing = cue.path if cue.listId == self.parent.innerList[listIdx].Id else None
         square = self.parent.parent.parent.IsCoverSquareOn()
@@ -1192,7 +1144,7 @@ class ListBoxList(RectBox):
         return event
 
     def GetStarSpan(self):
-        # the # column's star (x from, to: right of the playing mark), None without it
+        # the star's x span in the # column, None without it
         x = self.parent.GetVirtualPositionX()
         for column in self.parent.GetShownColumns():
             if column.key == 'order':
@@ -1201,9 +1153,7 @@ class ListBoxList(RectBox):
         return None
 
     def GetStarItem(self, event):
-        # the song (or a station's row) under the pointer in the star's span, None elsewhere
-        # (the Favorites' too: their star none, taken out by their menu alone, "it should
-        # be there to take it off at once", the user)
+        # the song or station under the pointer in the star's span, else None
         if self.onClient is False:
             return None
         span = self.GetStarSpan()
@@ -1212,16 +1162,14 @@ class ListBoxList(RectBox):
         item = self.parent.PosY2Item(event.Y)
         if item < 0 or item >= self.parent.GetItemsLength():
             return None
-        # (a folder's row starred never)
+        # folder rows are never starred
         if folders.is_folder_view(self.parent) and folders.is_folder_item(self.parent, item):
             return None
         return item
 
     def HandleEventStar(self, event):
-        # a click on a song's star: starred or let go (not selected); its star shown dimmed
-        # under the pointer before (True: the click was the star's)
-        # held down on it: drawn smaller, pressed in, till let go (the press the rows'
-        # selection and drag do not take)
+        # a star click toggles it, not the selection; True when it was the star's
+        # drawn pressed while held
         item = self.GetStarItem(event)
         down = getattr(self, 'star_down', None)
         if down is not None and event.LeftIsDown is False:
@@ -1244,14 +1192,11 @@ class ListBoxList(RectBox):
             toggle_favorite_tracks(self.parent, [path])
         return True
 
-    # while songs are analysed or a station connects, the list drawn again this often (their icons turning: at 10
-    # a second they turned in steps)
+    # redraw interval while icons turn
     SPIN_INTERVAL = 1.0 / 30
 
     def CATCH_EVT_GLOBAL(self, event):
-        # (a turning icon on the rows shown when last drawn: a song analysed out of sight
-        # drew the whole list 30 times a second for nothing; one coming into sight is drawn
-        # by the analysis' own redraw, RequestListRedraw)
+        # only when a turning icon was in the rows last drawn
         turning = getattr(self, 'spinning', False)
         if turning and time.time() - getattr(self, 'spin_lap', 0.0) >= self.SPIN_INTERVAL:
             self.spin_lap = time.time()
@@ -1347,7 +1292,7 @@ class ListBoxList(RectBox):
     def HandleEventFileDropPending(self, event):
         if self.parent.IsFilteredAll():
             return
-        # the folder's tab takes nothing dropped: no line where it would go
+        # the folder tab takes no drop: no insert line
         if folders.is_folder_view(self.parent):
             self.FileDrop.insertItemIdx = None
             return
@@ -1402,7 +1347,7 @@ class ListBoxList(RectBox):
             self.parent.SelectAndFocusItem(event.itemIdx)
             self.parent.LeftDoubleClick(event)
         elif event.ShiftDown and event.LeftDown:
-            # (with Ctrl, the rows added to those selected; not taken back when let go)
+            # with Ctrl, rows added to the selection
             self.parent.ShiftSelectItems(event.itemIdx, add=event.ControlDown)
             self.pending.SkipControlSelectItem = event.ControlDown
 
@@ -1471,9 +1416,7 @@ class ListBoxList(RectBox):
         self.ShowItemMenu(event.itemIdx, (event.x, event.y))
 
     def ShowItemMenu(self, item, xy):
-        '''the row's menu at xy (the screen's): a right click's, the context menu key's.
-        in the folder's tab a folder's row its own menu (it alone selected); on a song's
-        the folders let go from the selection (the songs' menu is a file's)'''
+        '''the row's menu at a screen xy; a folder row gets its own'''
         if folders.is_folder_view(self.parent):
             inner = self.parent.innerList[self.parent.selectedList]
             if folders.is_folder_item(self.parent, item):
@@ -1492,8 +1435,7 @@ class ListBoxList(RectBox):
         self.parent.parent.SetPopupMenu(ListBoxPopupItem(self), xy)
 
     def ShowSelectedItemMenu(self):
-        # the context menu key's: the menu under the selected row (the focused one when it
-        # is selected, else the last chosen), scrolled into sight first
+        # context menu key: the selected row's menu, scrolled into view
         listbox = self.parent
         selected = listbox.GetSelectedItems()
         if not selected:
@@ -1505,7 +1447,7 @@ class ListBoxList(RectBox):
         if listbox.IsItemInViewRange(item) is False:
             listbox.FocusItem(item)
         row = listbox.GetRowsHeight()
-        # under the row, past the star and the number (where a click on its name would be)
+        # under the row, past the star and the number
         y = listbox.GetVirtualPositionY() + 1 + (item + 1) * row
         x = min(self.STAR_X + 48, self.GetClientSize().width - 1)
         self.ShowItemMenu(item, tuple(self.ClientToScreen((x, y))))
@@ -1582,17 +1524,14 @@ class ListBoxList(RectBox):
         namespace = self.parent.parent.parent.GetNameSpaceByRawKeyFlag(
             event.RawKeyFlags, ctrl, event.ShiftDown)
 
-        # the context menu key, or Shift+F10 (Windows' own for it), bound to nothing: the
-        # selected row's menu, as a right click on it (not from a text field: its own menu)
+        # menu key or Shift+F10: the selected row's menu, not in a text field
         menu_key = event.KeyCode == wx.WXK_WINDOWS_MENU\
             or (event.ShiftDown and event.KeyCode == wx.WXK_F10)
         if menu_key and namespace is None and self.TextEdit is None\
                 and isinstance(wx.Window.FindFocus(), wx.TextCtrl) is False:
             self.ShowSelectedItemMenu()
 
-        # in the folder's tab: Enter (bound to nothing) the selected folder opened or song
-        # played, Backspace its parent opened; a song's keys (its tags, its cover, a web
-        # search) not for a selection with folders in it
+        # folder tab: Enter opens or plays, Backspace opens the parent
         if folders.is_folder_view(self.parent):
             if event.KeyCode in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and namespace is None:
                 self.parent.LeftDoubleClick(None)
@@ -1608,7 +1547,7 @@ class ListBoxList(RectBox):
             self.OpenItemEditBox(event)
 
         if namespace == 'look_up_cover':
-            # the selection's, as its menu's Look Up Cover
+            # as the menu's Look Up Cover
             look_up_cover(self.parent)
 
         if namespace == 'open_scripteditor':
@@ -1665,9 +1604,7 @@ class ListBoxList(RectBox):
         self.parent.ScrollV(event.WheelRotation / 40)
 
     def OnSize(self, event=None):
-        # drawn when idle (OnIdle), not at once: resized, it is drawn by the list box
-        # laying out right after (ListBox.OnSize), and a step of a sash dragged drew
-        # it twice, 16 ms each
+        # drawn when idle: the list box lays out right after a resize
         self.reInitBuffer = True
 
 
@@ -1687,14 +1624,11 @@ class ListBoxHeader(RectBox):
                               LeftDoubleClick=False)
         self.InitBuffer()
 
-    # the file name's least width when the other columns take the room (the rest is
-    # scrolled to)
+    # least file name width; the rest is scrolled to
     FILENAME_LEAST = 160
 
     def SetAutoColumnWidth(self):
-        # the file name's column takes the room the other shown columns leave, each tab by
-        # its own columns (it was the list's width less the first columns' widths: with the
-        # cover and the waveform shown, those ran past the list's right edge)
+        # the file name column takes the room the other shown columns leave
         width, height = self.GetSize()
         for inner in self.parent.innerList:
             keys = [v.key for v in inner.columns]
@@ -1724,7 +1658,7 @@ class ListBoxHeader(RectBox):
         self.DrawHeaderInsertLine(dc)
 
     def FitColumnWidth(self, idx):
-        # the shown column idx as wide as its widest text, now (a measuring DC)
+        # fit the shown column idx to its widest text
         bitmap = wx.Bitmap(1, 1)
         dc = wx.MemoryDC(bitmap)
         self.pending.autoColumnWidthIdx = idx
@@ -1789,14 +1723,11 @@ class ListBoxHeader(RectBox):
         dc.DrawLineList(lines, pens=wx.Pen(color, 1))
 
     def DrawHeaderText(self, dc):
-        # the columns' names as a rack's labels: in capitals (bold left DURATION cut), dimmed,
-        # on their middle
+        # column names as rack labels: capitals, dimmed, centred
         font = uikit.get_font(10)
         dc.SetFont(font)
         tw, th = FONT_ITEM_SIZE
-        # under the line at its top (rows 0 and 1), down to the list's first row (3 rows of
-        # the same ground under it are the list's): measured on the screen, 8 rows over the
-        # capitals and 9 under them (an odd row left: under, as the eye takes it centred)
+        # from under the top line to the first row, the capitals centred
         height = self.GetClientSize().height + 1
         margin_top = int(round(uikit.get_caps_top(font, 2, height - 2)))
         # shownColumns = self.parent.GetShownColumns()
@@ -1933,7 +1864,7 @@ class ListBoxHeader(RectBox):
             self.pending.ColumnSortDown = False
 
     def HandleEventSplitterCursor(self, event):
-        # the resize cursor over a column's edge, and while one is dragged
+        # resize cursor over a column edge and while dragging
         on = self.onClient and (event.splitterIdx is not None or (
             event.LeftIsDown and event.drag.splitterIdx is not None))
         if on == getattr(self, 'splitter_cursor', False):
@@ -2231,8 +2162,7 @@ class SearchText(wx.TextCtrl):
         self.SetForegroundColour(macroboxstyle.current().UI.EDIT_FG)
 
     def OnEnter(self, event):
-        # the directory (Browse) or the library searched now, not after the pause; nothing
-        # more for a filter (it follows the typing)
+        # search Browse or the library now; a filter follows the typing
         text = self.GetValue().strip()
         if not text:
             return
@@ -2309,13 +2239,11 @@ class SearchComboFilter(NativeComboBox):
         self.Choose(event.GetString())
 
     def Choose(self, label):
-        # the choice by its label (this hidden combo keeps the choices; the drawn chooser,
-        # ListBoxSearch, shows them as a menu)
+        # select by label: the hidden combo keeps the choices
         self.SetStringSelection(label)
         self.parent.reInitBuffer = True
         if self.parent.browse_mode:
-            # the radio's Browse tab: the directory by the chosen (top voted, a genre, a
-            # country)
+            # radio Browse: the directory by the chosen category
             found = [v for v in self.parent.browse_choices if v[0] == label]
             if found:
                 label, query = found[0]
@@ -2343,25 +2271,24 @@ class ListBoxSearch(RectBox):
         self.last_query = ''
         self.query_columnKey = 'filename'
         self.SearchComboFilter = SearchComboFilter(self)
-        # drawn instead (a rounded field, a chooser): the combo keeps the choices hidden
+        # drawn instead: the combo keeps the choices hidden
         self.SearchComboFilter.Hide()
         self.field_rect = self.clear_rect = self.chooser_rect = wx.Rect(0, 0, 0, 0)
         self.sidebar_rect = wx.Rect(0, 0, 0, 0)
-        # the star: the starred songs alone (ToggleStarred), for this playing session
+        # the star: starred songs only, for this session
         self.star_rect = wx.Rect(0, 0, 0, 0)
         self.starred = False
         self.scope_rects = []
         self.chooser_width = 96
         self.drawn = None
-        # the selected tab's search (SetMode): its mode, the directory's choices, the live
-        # search's timer and the last text searched
+        # the selected tab's search state (SetMode)
         self.mode = 'playlist'
         self.scope = GetPreference('search_scope') or 'list'
         self.browse_mode = False
         self.browse_choices = []
         self.live_search = None
         self.searched = None
-        # the playlist the library was searched from, gone back to when the field empties
+        # the playlist searched from, restored when the field empties
         self.library_origin = None
         self.SetDoubleBuffered(True)
         self.SearchText = SearchText(self)
@@ -2377,7 +2304,7 @@ class ListBoxSearch(RectBox):
             else:
                 button_color += [(self.button_color_off)]
         self.button_color = button_color
-        # the hint and the parts for the scope kept (the mode is set again on a change only)
+        # hint and scope parts kept; the mode set again only on a change
         self.SetMode(self.mode, force=True)
         self.InitBuffer()
 
@@ -2389,10 +2316,7 @@ class ListBoxSearch(RectBox):
                 return i
         return None
 
-    # what the row searches by the selected tab, all as typed (the clear mark empties it):
-    # a playlist by the scope switch, this list (filtered by the chosen column) or the
-    # library (every playlist, the found shown in the Search tab); the radio's Favorites
-    # (filtered by name or tags); the radio's Browse (the directory, after a pause)
+    # what the field searches, by the selected tab
     FAVORITE_KEYS = (('Name', 'filename'), ('Tags', 'genre'))
     SCOPES = (('list', 'THIS LIST'), ('library', 'LIBRARY'))
     LIVE_SEARCH_MS = 600
@@ -2403,7 +2327,7 @@ class ListBoxSearch(RectBox):
         return self.mode == 'playlist' and self.scope == 'library'
 
     def SetScope(self, scope):
-        # the playlist's search: this list's filter let go for the library, and back
+        # playlist search: filter released for the library scope, and back
         if scope == self.scope:
             return
         self.scope = scope
@@ -2415,7 +2339,7 @@ class ListBoxSearch(RectBox):
             self.SearchLibrary()
 
     def SearchLibrary(self, text=None):
-        # every playlist searched, the found in the Search tab (selected)
+        # library search: results in the Search tab
         self.live_search = None
         if not self or self.IsLibraryScope() is False:
             return
@@ -2452,7 +2376,7 @@ class ListBoxSearch(RectBox):
         if last == 'playlist':
             self.playlist_key = self.query_columnKey
         if mode == 'browse':
-            # a filter let go: it would hide the directory's rows
+            # release the filter: it would hide the directory's rows
             text.ChangeValue('')
             self.parent.ListBox.SetFilterOffAll()
             self.SetHints('Station name, searched as you type', 'Station name')
@@ -2476,15 +2400,14 @@ class ListBoxSearch(RectBox):
             self.browse_choices = [('Top voted', dict())]
             threading.Thread(target=run, daemon=True).start()
         elif mode == 'favorites':
-            # (the recent stations' too)
+            # recent stations too
             self.SetHints('Filter stations by name or tags', 'Filter stations')
             combo.Set([label for label, _ in self.FAVORITE_KEYS])
             combo.SetSelection(0)
             self.query_columnKey = self.FAVORITE_KEYS[0][1]
             self.chooser_width = 96
         elif mode == 'folder':
-            # the open folder named in the hint (its way shown nowhere else), filtered as a
-            # playlist is (no library scope)
+            # the open folder in the hint, filtered as a playlist
             path = folders.get_current() or ''
             self.SetHints(f'Filter {path}' if path else 'Filter this folder',
                           f'Filter {folders.get_name(path)}' if path else 'Filter')
@@ -2497,8 +2420,7 @@ class ListBoxSearch(RectBox):
         elif self.scope == 'library':
             self.SetHints('Search all playlists (found in the Search tab)',
                           'Search all playlists')
-            # its place kept, the chooser shown off (the field's width does not jump as the
-            # scope changes): the library is searched in all its fields
+            # chooser kept in place but shown off, so the field width stays
             self.chooser_width = 96
         else:
             self.SetHints('Filter this playlist', 'Filter')
@@ -2511,8 +2433,7 @@ class ListBoxSearch(RectBox):
         self.OnSize()
 
     def OnSearchTyped(self, event):
-        # the directory (Browse) or the library searched once the typing pauses, from
-        # LIVE_SEARCH_LEAST letters, not at every key; this list's filter follows as typed
+        # Browse and library searched once typing pauses; filters follow typing
         event.Skip()
         if self.live_search is not None:
             self.live_search.Stop()
@@ -2526,8 +2447,7 @@ class ListBoxSearch(RectBox):
                 self.LeaveLibrarySearch()
 
     def LeaveLibrarySearch(self):
-        # the field emptied (typed away or its x): back to the playlist searched from, as
-        # this list's filter let go shows the list again; the Search tab kept as it is
+        # field emptied: back to the playlist searched from
         self.searched = None
         origin, self.library_origin = self.library_origin, None
         listbox = self.parent.ListBox
@@ -2559,7 +2479,7 @@ class ListBoxSearch(RectBox):
             self.SetMode(mode)
         self.HandleEventDrawnControls(event)
         if mode == 'browse' or self.IsLibraryScope():
-            # the directory's or the library's rows are not filtered (OnSearchTyped)
+            # directory and library rows are not filtered
             return
         if self.onClient and event.LeftDown\
                 and self.parent.ListBox.List.TextEdit is not None:
@@ -2570,8 +2490,7 @@ class ListBoxSearch(RectBox):
         value = self.SearchText.GetValue()
         if len(value) > 0 or self.starred:
             if self.parent.ListBox.IsFilteredAll() is False:
-                # (turned on: its rows filtered at the next event, the text the same as when
-                # it was turned off or not)
+                # turned on: rows filtered at the next event
                 self.last_query = None
             self.parent.ListBox.SetFilterOnAll()
         elif len(value) == 0:
@@ -2579,8 +2498,7 @@ class ListBoxSearch(RectBox):
         # self.HandleEventSearchPopup(event)
 
     def ToggleStarred(self):
-        # the starred songs alone, with the text's filter or without (ListControl.FilterItems),
-        # filtered anew at once
+        # starred songs only, with or without the text filter
         self.starred = not self.starred
         listbox = self.parent.ListBox
         listbox.filter_starred = self.starred
@@ -2638,7 +2556,7 @@ class ListBoxSearch(RectBox):
         # print 'Listbox.Tool.HandleEventFilterQuery'
         self.last_query = query
         self.parent.ListBox.FilterItemsAll(self.query_columnKey, query)
-        # the rows are drawn by the list inside (and its slider), not the box around it
+        # rows drawn by the inner list, not the box around it
         self.parent.ListBox.reInitBuffer = True
         self.parent.ListBox.List.reInitBuffer = True
         self.parent.ListBox.SliderV.reInitBuffer = True
@@ -2646,24 +2564,19 @@ class ListBoxSearch(RectBox):
 
     # Draw ListBoxList
 
-    # inside the field: the room between its parts and at its edges, the magnifier's width
-    # (its ring and its handle) and the clear mark's
+    # field spacing, magnifier and clear mark widths
     FIELD_PAD = 8
     MAGNIFIER = 9
     MARK = 7
 
     def SetRectDraw(self, dc):
-        # a rounded field (a magnifier, the text box inside it, a clear mark with text),
-        # outlined in the accent while typed in; the chooser as the control buttons are
+        # rounded field: magnifier, text box, clear mark; accent edge when focused
         tokens = macroboxstyle.current().UI
         gc = wx.GraphicsContext.Create(dc)
         if gc is None:
             return
         x, y, w, h = self.field_rect
-        # its ground on its h rows with the focus or not (the keys' corners: uikit.RADIUS, one
-        # for every box; 6 before); the accent's edge on its outer rows, on whole pixels as
-        # the dialogs' fields' (draw_field): at the half the edge took two rows, half lit,
-        # and the text box over the inner one left the top's a row thinner over it (the user)
+        # whole pixels: a half-pixel edge blurs over two rows
         gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateBrush(wx.Brush(tokens.CONTROL_BG)))
         gc.DrawRoundedRectangle(x, y, w, h, uikit.RADIUS)
@@ -2674,8 +2587,7 @@ class ListBoxSearch(RectBox):
         ink = wx.Colour(tokens.BAR_TEXT_DIM)
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(ink).Width(1.4)))
         gc.SetBrush(wx.NullGraphicsBrush)
-        # (7 across: 9 read larger than the text beside it; its middle a row over the
-        # field's (on the hint's capitals' it read low: the user); FIELD_PAD in
+        # magnifier 7 across, a row above the field's middle, FIELD_PAD in
         cx, cy = x + self.FIELD_PAD + 3.5, y + h / 2.0 - 1
         gc.DrawEllipse(cx - 3.5, cy - 3.5, 7, 7)
         gc.StrokeLine(cx + 2.5, cy + 2.5, cx + 5.2, cy + 5.2)
@@ -2696,12 +2608,11 @@ class ListBoxSearch(RectBox):
         uikit.draw_button(dc, self.sidebar_rect, icon='menu',
                           on=self.parent.parent.IsListTabShowOn(),
                           hover=self.IsInRect(self.sidebar_rect, pointer))
-        # (off in the library's scope: the library's search is not filtered)
+        # off in the library scope: not filtered
         uikit.draw_button(dc, self.star_rect, icon='starred' if self.starred else 'star',
                           on=self.starred, disabled=self.IsLibraryScope(),
                           hover=self.IsInRect(self.star_rect, pointer))
-        # the playlist's scope: this list or the library, the one searched lit
-        # the lit one drawn last: the edge they share its own
+        # playlist scope: this list or the library, the lit one drawn last
         order = sorted(enumerate(self.scope_rects), key=lambda v: v[1][0] == self.scope)
         for k, (key, rect, label) in order:
             corners = 'left' if k == 0 else 'right' if k == len(self.scope_rects) - 1\
@@ -2715,10 +2626,8 @@ class ListBoxSearch(RectBox):
         w, h = self.GetClientSize()
         self.rects = ((3, 3, w - 6, h - 1), (3, 3, w - 6, h - 1))
         chooser = self.chooser_width
-        # the keys 21 rows tall (odd: 22 left the capitals' 7 rows half a row high, measured
-        # 5 over and 6 under)
-        # 6 rows over them and 6 under, to the list's frame (5 and 7 they were, measured);
-        # as many at the row's ends and between them (8 there, it read uneven: the user)
+        # keys 21 rows tall: odd so the capitals centre
+        # 6 rows above and below them, as at the ends and between
         top = gap = 6
         right = w - gap
         self.chooser_rect = wx.Rect(right - chooser, top, chooser, h - 11)
@@ -2731,38 +2640,31 @@ class ListBoxSearch(RectBox):
                 width = 74
                 right -= width
                 self.scope_rects.insert(0, (key, wx.Rect(right, top, width, h - 11), label))
-                # joined, their edge shared (a segmented switch: the row's only gap that
-                # is not one, 2 px)
+                # joined: a segmented switch sharing its edge
                 right += 1
             right -= 1 + gap
-        # the sidebar's key at the row's left (the status line's before), the star's after it
-        # (a playlist's and the folder's), the field after them
+        # sidebar key at the left, then the star, then the field
         self.sidebar_rect = wx.Rect(gap, top, 26, h - 11)
         left = gap + 26 + gap
         self.star_rect = wx.Rect(0, 0, 0, 0)
         if self.mode in ('playlist', 'folder'):
             self.star_rect = wx.Rect(left, top, 26, h - 11)
             left += 26 + gap
-        # as tall as the keys and on their rows (24 rows from 4 before: 3 taller, half a row
-        # lower, measured)
+        # as tall as the keys and on their rows
         self.field_rect = wx.Rect(left, top, max(0, right - left), h - 11)
         x, y, fw, fh = self.field_rect
-        # inside it FIELD_PAD apart, either side alike: its edge, the magnifier, the text,
-        # the clear mark, its edge (the text ran on to the mark, 11 px from the magnifier
-        # and 9 from the edge: the user); the mark taken by the room round it too
+        # FIELD_PAD between edge, magnifier, text, clear mark and edge
         self.clear_rect = wx.Rect(x + fw - self.FIELD_PAD * 2 - self.MARK, y,
                                   self.FIELD_PAD * 2 + self.MARK, fh)
         tokens = macroboxstyle.current().UI
         self.SearchText.SetBackgroundColour(tokens.CONTROL_BG)
         self.SearchText.SetForegroundColour(tokens.BAR_TEXT)
-        # (the text control's own margins none: its text at its left)
+        # no text control margins
         self.SearchText.SetMargins(0, 0)
         th = min(self.SearchText.GetBestSize().height, fh - 2)
         left = self.FIELD_PAD + self.MAGNIFIER + self.FIELD_PAD
         right = self.FIELD_PAD + self.MARK + self.FIELD_PAD
-        # a row higher than its box's middle: the text's capitals then on the magnifier's
-        # rows, 4 over them and 5 under in the field (a row lower, the hint read low: the
-        # user; 19 rows round 10 have no middle, measured)
+        # a row above the box's middle: the capitals on the magnifier's rows
         self.SearchText.SetRect((x + left, y + (fh - th) // 2 - 1, max(0, fw - left - right),
                                  th))
         self.FitHint()
@@ -2776,8 +2678,7 @@ class ListBoxSearch(RectBox):
         self.FitHint()
 
     def FitHint(self):
-        '''the hint whole, else its short one, else that cut with an ellipsis, else none:
-        cut by the field's edge it read as broken (the user)'''
+        '''the hint whole, else short, else ellipsized, else none'''
         hints = getattr(self, 'hints', None)
         if hints is None:
             return
@@ -2797,9 +2698,7 @@ class ListBoxSearch(RectBox):
             self.SearchText.SetHint(hint)
 
     def HandleEventDrawnControls(self, event):
-        # a click on the chooser opens its choices as a menu, on the clear mark empties
-        # the text, elsewhere in the field puts the caret in it; drawn again for the hover,
-        # the focus and the text there or not
+        # chooser opens a menu, clear mark empties, elsewhere focuses the text
         point = (event.X, event.Y)
         state = (self.IsInRect(self.chooser_rect, point) and self.onClient,
                  self.IsInRect(self.sidebar_rect, point) and self.onClient,
@@ -2811,7 +2710,7 @@ class ListBoxSearch(RectBox):
                  self.SearchComboFilter.GetStringSelection())
         if state != self.drawn:
             self.drawn = state
-            # (asked till drawn: a DirectDraw too soon after the last does nothing)
+            # asked till drawn: a DirectDraw too soon after the last does nothing
             self.reInitBuffer = True
             self.DirectDraw()
         if event.LeftDown is False or self.onClient is False:
@@ -2835,7 +2734,7 @@ class ListBoxSearch(RectBox):
                 item.Check(label == self.SearchComboFilter.GetStringSelection())
                 menu.Bind(wx.EVT_MENU, lambda e, label=label: self.SearchComboFilter.Choose(label),
                           item)
-            # under the chooser, from its left (a dropdown's: it opened at the pointer)
+            # under the chooser, from its left
             rect = self.chooser_rect
             self.parent.SetPopupMenu(menu, tuple(self.ClientToScreen(
                 (rect.x, rect.y + rect.height + 2))))
@@ -3123,9 +3022,7 @@ class CoverDrop(wx.FileDropTarget):
 
 class CoverField(wx.Window):
 
-    '''the editor's cover: the song's, or one chosen (a click for a file, a file dropped on
-    it, or Look Up's) to be put in its tags when the page is saved, marked NEW till then;
-    or taken out of them (its menu), marked REMOVE'''
+    '''the editor's cover: the song's or a chosen one, marked NEW or REMOVE'''
 
     WILDCARD = 'Images (*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif)|' \
         '*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.gif'
@@ -3218,9 +3115,7 @@ class CoverField(wx.Window):
         remove = menu.Append(wx.ID_ANY, 'Remove Cover')
         remove.Enable(bool(self.data) and not self.remove or self.chosen is not None)
         menu.Bind(wx.EVT_MENU, lambda e: self.SetRemove(), remove)
-        # the cover shown (the song's or the one chosen) as a scan fixed (straightened, its
-        # edge trimmed) or cut to a square on its subject (listimages.cut_cover), each a
-        # change like a chosen one (NEW, taken back by Undo)
+        # fix a scan or cut to a square on its subject, as a new change
         shown = self.chosen if self.chosen is not None else None if self.remove else self.data
         square = bool(shown) and listimages.is_square(shown) is False
         for label, asked, enable in (('Fix Scan', dict(scan=True), bool(shown)),
@@ -3272,8 +3167,7 @@ class CoverField(wx.Window):
             bw, bh = self.bitmap.GetSize()
             gc.DrawBitmap(self.bitmap, (w - bw) // 2, (h - bh) // 2, bw, bh)
         if self.chosen is not None or self.remove:
-            # NEW or REMOVE (not saved yet) in a chip at its top left, not the edge's
-            # colour alone; REMOVE in the warning's (orange)
+            # NEW or REMOVE in a chip at the top left, not by colour alone
             chip, face, ink = ('NEW', ui.ACCENT, uikit.colour(ui.ACCENT_FG)) \
                 if self.chosen is not None else ('REMOVE', ui.WARN, uikit.colour(ui.WARN_FG))
             uikit.set_font(gc, uikit.get_font(uikit.MICRO, bold=True), ink)
@@ -3313,23 +3207,17 @@ class ItemEditPanel(DialogPanel):
         self.labels = ('Path', 'Filename', 'Duration', 'Size', 'Bitrate',
                        'Channel', 'Artist', 'Title', 'Album', 'Genre', 'Key', 'Tempo')
         self.disables = ('Duration', 'Type', 'Size', 'Bitrate', 'Channel', 'Path')
-        # the file's modified date kept as it was when its tags are saved (KEEP); read
-        # once, kept on a click
+        # keep the file's modified date on save (KEEP), read once
         keep = GetPreference('item_editor_keep_modified')
         self.keep_modified = keep is not False
 
-    # 16 px round the fields (and the footer's buttons: ItemEditBox), a field 22 tall and 8
-    # between them (21 over them, 6 under them, 10 and 15 at the sides before: the user);
-    # four columns a row of four (a name, 8 px, its field; 16 between them), Genre's field
-    # across two of them
-    # (the dialogs' spacing: macroboxlib.DIALOG_PAD and the rest)
+    # fields and footer in the dialogs' spacing (macroboxlib.DIALOG_PAD)
     PAD = DIALOG_PAD
     ROW = DIALOG_ROW
     ROW_GAP = DIALOG_GAP
     LABEL = 50
     LABEL_GAP = DIALOG_GAP
-    # (Modified: the file's modified date, not a list's column, shown; KEEP: the check
-    # box keeping it as it was when saved, across two columns)
+    # Modified shown, not a list column; KEEP across two columns
     ROWS = (('Path',), ('Filename',), ('Duration', 'Size', 'Bitrate', 'Channel'),
             ('Modified', None, 'KEEP', None),
             ('Artist',), ('Title',), ('Album',), ('Genre', None, 'Key', 'Tempo'))
@@ -3370,7 +3258,7 @@ class ItemEditPanel(DialogPanel):
                 # value = value.decode(sys.getfilesystemencoding())
                 self.TextCtrls[i].SetValue(value)
             if v in self.disables:
-                # shown in fields of their edge alone
+                # read-only
                 self.TextCtrls[i].SetReadOnly()
         path = self.parent.parent.parent.GetItemValueByColumnKey(item_idx, 'path')
         self.Cover.SetSong(path)
@@ -3392,8 +3280,7 @@ class ItemEditPanel(DialogPanel):
                     continue
                 x = int(round(start + k * (column + self.PAD)))
                 left = x + self.LABEL + self.LABEL_GAP
-                # (the last of a row, or one alone, to the right edge; Genre over None's
-                # column too)
+                # the last of a row to the right edge; Genre across two
                 last = k == len(row) - 1
                 spans = 2 if k + 1 < len(row) and row[k + 1] is None else 1
                 end = right if last else int(round(
@@ -3411,8 +3298,7 @@ class ItemEditPanel(DialogPanel):
             y += self.ROW + self.ROW_GAP
         self.StaticTexts = [fields[v][0] for v in self.labels]
         self.TextCtrls = [fields[v][1] for v in self.labels]
-        # an editable field's changes marked as they are typed; its own menu (Look Up's
-        # values, Revert, Apply to All, and cut, copy and paste: ItemEditBox.ShowFieldMenu)
+        # editable fields mark changes as typed; their own menu
         for i, label in enumerate(self.labels):
             if label in self.disables:
                 continue
@@ -3424,8 +3310,7 @@ class ItemEditPanel(DialogPanel):
         # the names dimmed, the values (and the fields) brighter
         for text, _ in fields.values():
             text.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
-        # the editor's menu on its ground and its names too, not on the cover alone (the
-        # fields keep their own: cut, copy, paste)
+        # the editor's menu on its ground and names too; fields keep their own
         for window in [self] + [c for c in self.GetChildren() if isinstance(c, wx.StaticText)]:
             window.Bind(wx.EVT_RIGHT_UP, lambda e, window=window:
                         self.parent.ShowMenu(window))
@@ -3456,11 +3341,8 @@ class ItemEditBox(DialogBox):
         self.selectedItems = self.parent.parent.GetSelectedItems()
         self.total_items = len(self.selectedItems)
         self.selected_idx = 0
-        # the tracks' changes held till Save (Prev and Next and Close each saved, none could
-        # be taken back: the user): {item: dict(fields={name: value}, cover=('chosen', its
-        # bytes) or ('remove', None) or None)}; Cancel, the window's close or Esc lets them
-        # go (asked when there are); Look Up's rows of each track, its fields' values to
-        # choose from
+        # changes held till Save, let go by Cancel, close or Esc:
+        # {item: dict(fields={name: value}, cover=('chosen'|'remove', ...))}
         self.pending = dict()
         self.lookups = dict()
         # the fields (ItemEditPanel), the footer under them
@@ -3479,7 +3361,7 @@ class ItemEditBox(DialogBox):
         top = self.PlaceButtons(right=(self.PrevButton, self.NextButton, self.SaveButton,
                                        self.CancelButton),
                                 left=(self.LookUpButton,))
-        # the page's number PAD before Prev, on the buttons' middle (and the tracks changed)
+        # page number PAD before Prev, on the buttons' middle
         label = f'{int(self.selected_idx + 1)} / {int(self.total_items)}'
         self.PageNumber = StaticText(self, label=label, pos=(
             self.PrevButton.GetPosition().x - DIALOG_PAD - 160, top + 5), size=(160, 20),
@@ -3494,7 +3376,7 @@ class ItemEditBox(DialogBox):
             window.Bind(wx.EVT_RIGHT_UP, lambda e, window=window: self.ShowMenu(window))
 
     def ShowMenu(self, window):
-        # the editor's menu, where it was asked for: the cover's items, Look Up
+        # the editor's menu where asked: the cover's items, Look Up
         menu = wx.Menu()
         self.ItemEditPanel.Cover.AppendMenu(menu)
         menu.AppendSeparator()
@@ -3540,7 +3422,7 @@ class ItemEditBox(DialogBox):
             return
         itemIdx = self.selectedItems[self.selected_idx]
         length = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'duration')
-        # its rows kept: each field's values to choose from (its menu, its mark)
+        # rows kept: each field's values to choose from
         self.lookups[itemIdx] = candidates
         self.UpdateMarks()
         dialog = WebInfoBox(self, candidates, errors, length, use=self.UseLookUpValue)
@@ -3548,7 +3430,7 @@ class ItemEditBox(DialogBox):
         SetPreference('lookup_size', tuple(dialog.GetClientSize()))
         if answer == wx.ID_OK and dialog.selected is not None:
             chosen = candidates[dialog.selected]
-            # the fields ticked alone (Tags, all four, before: the user)
+            # only the ticked fields
             for label in self.LOOKUP_FIELDS:
                 if dialog.apply[label.lower()] and chosen[label.lower()]:
                     self.GetFieldText(label).SetValue(chosen[label.lower()])
@@ -3560,8 +3442,7 @@ class ItemEditBox(DialogBox):
     LOOKUP_FIELDS = ('Artist', 'Title', 'Album', 'Genre')
 
     def UseLookUpValue(self, label, value):
-        # one value of a Look Up's row in its field (its cover: fetched, from the disk when
-        # fetched for its preview), held as the editor's changes are
+        # one value of a Look Up row in its field, held as a change
         if label != 'Cover':
             self.GetFieldText(label).SetValue(value)
             return
@@ -3587,8 +3468,7 @@ class ItemEditBox(DialogBox):
             self.ItemEditPanel.Cover.SetNote(note or 'No cover')
 
     def KeepModified(self, itemIdx, before):
-        # the file's modified date put back as it was before its tags and cover were
-        # written (the panel's KEEP; a rename does not move it); the accessed one too
+        # restore the modified and accessed dates after writing (KEEP)
         if before is None or not self.ItemEditPanel.keep_modified:
             return
         path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
@@ -3677,11 +3557,9 @@ class ItemEditBox(DialogBox):
             self.pending.pop(itemIdx, None)
 
     def UpdateMarks(self):
-        # a changed field's name in the accent and a bar at its left; a field's mark (its
-        # menu) when Look Up has values for it; the tracks changed by the page's number
+        # changed field: accent name and a left bar; a mark when Look Up has values
         panel = getattr(self, 'ItemEditPanel', None)
-        # (not while a page is read in: its fields set from the file and its held changes
-        # over them one at a time, a page's changes taken as none and let go)
+        # not while a page loads: its fields are set one at a time
         if panel is None or getattr(self, 'loading', False):
             return
         ui = macroboxstyle.current().UI
@@ -3722,7 +3600,7 @@ class ItemEditBox(DialogBox):
         return list(picks.items())
 
     def ShowFieldMenu(self, i):
-        # a field's menu: Look Up's values for it, Revert, Apply to All, and the text's own
+        # field menu: Look Up values, Revert, Apply to All, edit items
         panel = self.ItemEditPanel
         label, text = panel.labels[i], panel.TextCtrls[i]
         menu = wx.Menu()
@@ -3754,8 +3632,7 @@ class ItemEditBox(DialogBox):
         menu.Destroy()
 
     def ApplyToAll(self, label, value):
-        # this field's value for every track being edited (held for Save as the page's;
-        # a track whose own is that already left unchanged)
+        # this value for every track, held as each page's change
         listbox = self.parent.parent
         current = self.selectedItems[self.selected_idx]
         for itemIdx in self.selectedItems:
@@ -3783,8 +3660,7 @@ class ItemEditBox(DialogBox):
         self.EndModal(wx.ID_OK)
 
     def WriteItem(self, itemIdx, change):
-        # a track's fields (its file renamed first, its tags under its name after) and its
-        # cover written; the song playing paused for it and played on
+        # rename first, then tags and cover; the playing song paused meanwhile
         listbox = self.parent.parent
         playbox = listbox.parent.PlayBox
         path = listbox.GetItemValueByColumnKey(itemIdx, 'path')
@@ -3825,8 +3701,7 @@ class ItemEditBox(DialogBox):
             playbox.OnResume()
 
     def WriteCover(self, itemIdx, kind, data):
-        # the cover chosen put in the song's tags, or its pictures taken out; the list's and
-        # the player's read again
+        # write or remove the cover in the tags, then reload list and player
         listbox = self.parent.parent
         path = listbox.GetItemValueByColumnKey(itemIdx, 'path')
         try:
@@ -3881,7 +3756,7 @@ class ItemEditBox(DialogBox):
         self.Thaw()
 
     def OnClose(self, event):
-        # Cancel, the window's close, Esc: the changes let go, asked first when there are
+        # Cancel, close or Esc: changes let go, asked first if any
         self.StashPage()
         if self.pending and not confirm_discard_edits(self, len(self.pending)):
             return
@@ -3891,7 +3766,7 @@ class ItemEditBox(DialogBox):
 
 class DiscardEditsBox(ConfirmDialogBox):
 
-    # the editor's changes let go: Discard, or back to them
+    # discard the editor's changes, or go back to them
     def __init__(self, parent, count, answer):
         ConfirmDialogBox.__init__(self, parent)
         self.answer = answer
@@ -3932,11 +3807,11 @@ def confirm_discard_edits(parent, count):
 
 class NoticeBox(ConfirmDialogBox):
 
-    # a few words told, OK alone (the system's message box had none of the dialogs' look)
+    # a short message with OK, in the dialogs' look
     def __init__(self, parent, title, message):
         ConfirmDialogBox.__init__(self, parent)
         self.SetTitle(title)
-        # OK on the footer's right end, where the dialogs' closing button is, in the accent
+        # OK at the footer's right end, in the accent
         self.ApplyButton.Hide()
         self.CloseButton.SetLabelText('OK')
         self.CloseButton.primary = True
@@ -3959,7 +3834,7 @@ class NoticeBox(ConfirmDialogBox):
 
 
 def show_notice(parent, title, message):
-    # told over parent, its middle, as the editor's other questions (confirm_discard_edits)
+    # asked over parent, centred, as confirm_discard_edits
     box = NoticeBox(parent, title, message)
     x, y, w, h = parent.GetRect()
     bw, bh = box.GetSize()
@@ -3979,10 +3854,7 @@ def show_library_results(mainpanel, title, songs):
 
 class LibrarySearchBox(DialogBox):
 
-    # the library (every playlist's songs) searched: words, a BPM within a share of one, a
-    # key and a genre together; what matches goes to the Search tab
-    # (a BPM's low and high, the key and the genre typed before: the BPM as a DJ asks it,
-    # the key in the notation set, the genres the library has)
+    # search the library by words, BPM range, key and genre into Search
     TOLERANCES = (1, 2, 3, 5, 8)
     TOLERANCE = 3
     ANY = 'Any'
@@ -3992,9 +3864,7 @@ class LibrarySearchBox(DialogBox):
         self.mainpanel = mainpanel
         self.SetTitle('Find in Library')
         self.songs = library.collect(self.mainpanel.ListBox)
-        # the dialogs' spacing: names right-aligned in a column PAD in (as wide as its
-        # widest: fit_name_column), a field GAP past its name, rows GAP apart; the footer
-        # under them, the result's words in it
+        # the dialogs' spacing: names right-aligned (fit_name_column)
         name, step = 70, DIALOG_ROW + DIALOG_GAP
         x, y = DIALOG_PAD + name + DIALOG_GAP, DIALOG_PAD
         width = x + 320 + DIALOG_PAD
@@ -4008,7 +3878,7 @@ class LibrarySearchBox(DialogBox):
         label('Words', y)
         self.Words = TextCtrl(self, pos=(x, y), size=(320, DIALOG_ROW), style=style)
         y += step
-        # the BPM and how far from it (DJs' 3% at first), the half and the double too
+        # BPM and a tolerance (3% at first), half and double too
         label('BPM', y)
         self.Tempo = TextCtrl(self, pos=(x, y), size=(60, DIALOG_ROW), style=style)
         StaticText(self, label='\u00b1', pos=(x + 60 + DIALOG_GAP, y + 3), size=(10, -1))
@@ -4021,7 +3891,7 @@ class LibrarySearchBox(DialogBox):
         self.Octave, _ = make_check(self, 'Half and double too', (cx, y + 3), False,
                                     lambda value: None)
         y += step
-        # the 24 keys in the notation the analysis writes them in (Options' key format)
+        # the 24 keys in Options' key format
         label('Key', y)
         self.Key = ComboBox(self, value=self.ANY, choices=[self.ANY] + self.GetKeys(),
                             pos=(x, y), size=(60 + DIALOG_GAP * 2 + 10 + 64, DIALOG_ROW),
@@ -4058,16 +3928,14 @@ class LibrarySearchBox(DialogBox):
         return kind if kind in (0, 1, 2) else 1
 
     def GetKeys(self):
-        # the 24 keys in the format: Camelot's by the wheel (1A, 1B, 2A ...), the notes' a
-        # root's major and minor by the octave (C, Cm, C#, C#m ...)
+        # the 24 keys: Camelot by the wheel, else major and minor per root
         names = mfeats.get_chord_type_definition()[self.GetKeyFormat()]
         if self.GetKeyFormat() == 2:
             return sorted(names, key=lambda v: (int(v[:-1]), v[-1]))
         return [v for k in range(12) for v in (names[k], names[k + 12])]
 
     def GetGenres(self):
-        # the genres the songs' tags have, each once whatever its case, by name (the folders'
-        # names too a while: not genres, the user)
+        # genres from the songs' tags, once whatever the case, by name
         genres = dict()
         for song in self.songs:
             genre = str(song.values.get('genre', '') or '').strip()
@@ -4080,8 +3948,7 @@ class LibrarySearchBox(DialogBox):
         self.FromSong(playbox.GetPlayingTempo(), playbox.GetPlayingKey())
 
     def FromSong(self, tempo, key):
-        # a song's tempo within 3% (its half and double too) and its key with its compatible
-        # ones (the playing one's, or a row's: the list's and the header's menus)
+        # tempo within 3% (half and double too), key with compatible ones
         tempo = library.to_float(tempo)
         if tempo > 0:
             self.Tempo.SetValue(f'{tempo:.1f}')
@@ -4114,8 +3981,7 @@ class LibrarySearchBox(DialogBox):
 
 class LookUpList(wx.Window):
 
-    '''columns: [(title, width, flexible)]; cells(row): its texts; picture(row, column): a
-    bitmap drawn before the cell's text, or None'''
+    '''columns: [(title, width, flexible)]; cells(row); picture(row, column)'''
 
     HEADER = 26
     ROW = 26
@@ -4140,12 +4006,10 @@ class LookUpList(wx.Window):
         self.drag = None
         self.widths = []
         self.hidden = set()
-        # the widths a dragged edge set, a column each (the last shown one takes the rest),
-        # or None for the columns' own; the edge being dragged: (column, x, widths)
+        # dragged widths per column or None; the drag: (column, x, widths)
         self.custom = None
         self.resize = None
-        # the columns scrolled sideways when wider than the list (its width made small):
-        # by how much, and its bar dragged: (x, hoffset)
+        # horizontal scroll when wider than the list; bar drag: (x, hoffset)
         self.hoffset = 0
         self.hdrag = None
         # told: on_select(row), on_activate(row), on_menu(row, column), on_sort(column),
@@ -4187,8 +4051,7 @@ class LookUpList(wx.Window):
         self.sort = (column, ascending)
         self.Refresh(False)
 
-    # the sideways bar's strip under the rows (over the last row, it ran through its text:
-    # the user)
+    # the horizontal bar's strip below the rows
     HBAR = 12
 
     def HasHBar(self):
@@ -4221,8 +4084,7 @@ class LookUpList(wx.Window):
         fixed = sum(w for (_, w, flexible), on in zip(self.columns, shown) if on and not flexible)
         shares = sum(w for (_, w, flexible), on in zip(self.columns, shown) if on and flexible)
         room = max(width - fixed, 0)
-        # (a flexible one never under 0.6 of its own, nor LEAST: the columns past the
-        # list's width scrolled to, not squeezed past reading)
+        # flexible columns never under 0.6 of their width nor LEAST
         widths = [0 if not on else max(int(room * w / shares), int(w * 0.6), self.LEAST)
                   if flexible else w for (_, w, flexible), on in zip(self.columns, shown)]
         last = max((k for k, on in enumerate(shown) if on), default=None)
@@ -4274,7 +4136,7 @@ class LookUpList(wx.Window):
             self.on_columns(set(self.hidden))
 
     def SetCustomWidths(self, custom):
-        # (None, or a width for every column: the kept ones, a column since added at its own)
+        # None, or a width for every column
         if custom is not None and len(custom) != len(self.columns):
             custom = None
         self.custom = custom
@@ -4297,7 +4159,7 @@ class LookUpList(wx.Window):
         return None
 
     def HitTest(self, point):
-        # (row or -1, column or -1); the header's row -2
+        # (row or -1, column or -1); -2 for the header row
         x, y = point
         x += self.hoffset
         column, left = -1, 0
@@ -4459,8 +4321,7 @@ class LookUpList(wx.Window):
                 self.ReleaseMouse()
 
     def DragEdge(self, x):
-        # the edge's column wider, the shown ones past it giving the room (the nearest
-        # first, none under LEAST); narrower, the next one taking it
+        # widen from the next columns (nearest first), narrow into the next
         column, start, widths = self.resize
         widths = list(widths)
         after = [k for k in range(column + 1, len(widths)) if widths[k]]
@@ -4573,14 +4434,12 @@ class WebInfoBox(DialogBox):
     COVER = 200
 
     def __init__(self, parent, candidates, errors, length='', use=None):
-        # its edges dragged to size it (its list the room), the size kept (lookup_size)
+        # resizable by its edges, size kept (lookup_size)
         DialogBox.__init__(self, parent, size=(1150, 340), style=wx.RESIZE_BORDER)
         self.built = False
         # use(field, value): one cell's value put in the editor's field (its menu)
         self.use = use
-        # not double-buffered as the dialogs are (WS_EX_COMPOSITED): Windows' list in such
-        # a window painted without end, the player behind it at 3 to 10 frames a second
-        # while it was open (the user; 59 with it hidden, measured)
+        # not composited (WS_EX_COMPOSITED): Windows' list repaints endlessly
         self.SetDoubleBuffered(False)
         title = f'Look Up: {len(candidates)} found'
         if length:
@@ -4588,37 +4447,32 @@ class WebInfoBox(DialogBox):
         self.SetTitle(title)
         self.candidates = candidates
         self.selected = None
-        # every row's cover fetched while it is open, one after another (the row chosen
-        # first), by address: (picture, note), shown at once when its row is chosen; whether
-        # a row has one told in its Cover column (each row's was fetched only once chosen,
-        # waited for to know if it had one at all: the user)
+        # every row's cover fetched in turn, the chosen row first, by address
         self.covers = dict()
         self.cover_first = 0
         self.closing = False
-        # as tall as the cover and its note under it (the note ran into the footer's line)
+        # as tall as the cover and its note
         self.SetClientSize((self.GetClientSize().width, DIALOG_PAD + self.COVER + DIALOG_GAP
                             + 18 + DIALOG_PAD + self.GetFooterHeight()))
-        # (no smaller than it was made, but for a narrower list)
+        # no smaller than made, but for a narrower list
         least = self.GetClientSize()
         self.SetMinClientSize((least.width - 300, least.height))
         kept = GetPreference('lookup_size')
         if isinstance(kept, tuple) and len(kept) == 2:
             self.SetClientSize((max(kept[0], least.width - 300), max(kept[1], least.height)))
-        # (Cover: none -, fetching ..., failed Failed)
-        # (Cover as wide as a picture's size and ratio beside its thumbnail)
+        # Cover: none -, fetching ..., failed Failed
+        # Cover as wide as a size and ratio text
         columns = (('Source', 72, False), ('Cover', 160, False), ('Artist', 120, True),
                    ('Title', 130, True), ('Album', 110, True), ('Release', 170, True),
                    ('Genre', 90, False), ('Length', 64, False), ('Year', 62, False),
                    ('Score', 64, False))
         self.List = LookUpList(self, columns, self.GetRowCells, self.GetRowPicture)
         self.thumbs = dict()
-        # the rows in the order shown, each an index into candidates (Apply and the menu
-        # are told by it): a header clicked sorts them, again the other way (the user)
+        # shown order as indexes into candidates; header click sorts, again reverses
         self.order = list(range(len(candidates)))
         self.sort_column = None
         self.sort_ascending = True
-        # the Cover column's text by address, for a row a sort has moved; its picture's
-        # size, sorted by
+        # Cover text by address; picture sizes for sorting
         self.cover_cells = dict()
         self.cover_sizes = dict()
         self.List.SetCount(len(candidates))
@@ -4659,9 +4513,7 @@ class WebInfoBox(DialogBox):
         # off until a row is chosen (OnSelected): with nothing found, never on
         self.PageButton.Disable()
         self.YouTubeButton.Disable()
-        # what Apply takes from the row, each field on its own (Tags, the four together,
-        # before: the user), its cover; kept for the next Look Up (a field not set yet as
-        # Tags was)
+        # fields Apply takes from the row, each on its own, and its cover
         tags = GetPreference('lookup_apply_tags') is not False
         self.apply = dict()
         for key in self.APPLY_KEYS:
@@ -4689,7 +4541,7 @@ class WebInfoBox(DialogBox):
     APPLY_KEYS = ('artist', 'title', 'album', 'genre', 'cover')
 
     def OnSize(self, event):
-        # (asked while the dialog is made, before its parts are)
+        # asked while the dialog is made, before its parts
         if getattr(self, 'built', False):
             self.PlaceParts()
             self.Refresh(False)
@@ -4697,8 +4549,7 @@ class WebInfoBox(DialogBox):
             event.Skip()
 
     def PlaceParts(self):
-        # the dialogs' spacing: the list and the cover PAD in and PAD apart, the cover's
-        # note GAP under it; the services' errors a row at the list's foot; the footer
+        # the dialogs' spacing: list and cover PAD in and apart
         width, height = self.GetClientSize()
         bottom = self.GetContentBottom()
         rows = DIALOG_ROW + DIALOG_GAP if self.Errors is not None else 0
@@ -4733,8 +4584,7 @@ class WebInfoBox(DialogBox):
         self.List.Refresh(False)
 
     def GetSortKey(self, k, column):
-        # Length, Year and Score as numbers, Cover by the picture's size, the rest as text
-        # (case aside); None for an empty cell, which goes last either way
+        # Length, Year, Score numeric, Cover by size, the rest text; None last
         v = self.candidates[k]
         if column == 7:
             return v['duration'] or None
@@ -4766,8 +4616,7 @@ class WebInfoBox(DialogBox):
         self.FillRows()
 
     def OnRowMenu(self, idx, column):
-        # a row's menu: its values put in the editor's fields one at a time, the cell under
-        # the pointer copied, its page opened (the right-click opened the page alone)
+        # row menu: values into fields, copy the cell, open its page
         row = self.candidates[self.order[idx]]
         menu = wx.Menu()
 
@@ -4816,8 +4665,7 @@ class WebInfoBox(DialogBox):
         self.EndModal(wx.ID_OK)
 
     def MakeCover(self, data):
-        # the picture fitted in the cover's square on its ground, or the ground alone;
-        # (picture, its own size or None)
+        # picture fitted in the cover square, or the ground alone
         image = None
         if data:
             try:
@@ -4895,8 +4743,7 @@ class WebInfoBox(DialogBox):
             self.SetCover(None, 'Loading...')
 
     def FetchCovers(self):
-        # the rows' covers one at a time (webinfo's limiter between them), the row chosen
-        # first, then the rest in their order; from the disk when fetched before
+        # covers one at a time, the chosen row first; from disk when cached
         done = set()
         while not self.closing:
             order = [self.cover_first] + list(range(len(self.candidates)))
@@ -4920,8 +4767,7 @@ class WebInfoBox(DialogBox):
             return
         bitmap, size = self.MakeCover(data)
         self.covers[url] = (bitmap, label or (format_picture_size(size) if size else 'Not an image'))
-        # its rows told (the same cover may be several releases')
-        # (its ratio told as Look Up Cover's cards tell it)
+        # one cover may be several releases'
         self.cover_cells[url] = format_picture_size(size) if size else 'Failed'
         if size:
             self.cover_sizes[url] = size
@@ -4939,7 +4785,7 @@ class WebInfoBox(DialogBox):
         self.EndModal(wx.ID_CANCEL)
 
     def Destroy(self):
-        # (the covers' fetching ended with it)
+        # cover fetching ends with it
         self.closing = True
         return DialogBox.Destroy(self)
 
@@ -4984,8 +4830,7 @@ NAMED_RATIOS = ((1, 1), (4, 3), (3, 4), (3, 2), (2, 3), (16, 9), (9, 16), (5, 4)
 
 
 def format_picture_size(size):
-    # '640 x 480 (4:3)': a picture's size and its sides' ratio; one a hair off a named
-    # ratio told so ('600 x 598 (~1:1)': it read as square, and was not: the user)
+    # '640 x 480 (4:3)'; near a named ratio: '600 x 598 (~1:1)'
     w, h = size
     if not w or not h:
         return f'{w} x {h}'
@@ -4999,14 +4844,13 @@ def format_picture_size(size):
 
 
 def fit_picture(data, side, ground):
-    '''the picture in data fitted in a square side wide on ground; (bitmap, its own size),
-    or (None, None) when data is not a picture'''
+    '''fit data in a square on ground: (bitmap, size) or (None, None)'''
     image, size = fit_image(data, side, ground)
     return (None, None) if image is None else (wx.Bitmap(image), size)
 
 
 def fit_image(data, side, ground):
-    # (fit_picture's, an image)
+    # fit_picture's, as an image
     image = None
     if data:
         try:
@@ -5025,12 +4869,9 @@ def fit_image(data, side, ground):
 
 class CoverCards(wx.Window):
 
-    '''covers as cards in rows, as many a row as it is wide: picture(k) its image (square,
-    scaled to the cards' size here) or None, lines(k) the two lines under it; one chosen
-    (click, the arrows), opened by a double click or Enter'''
+    '''covers as cards in rows: picture(k), lines(k), one chosen'''
 
-    # the cards no narrower than CARD, GAP apart and from the sides every way, as wide as
-    # the room left makes them (the room went to the gaps before: wide and uneven, the user)
+    # cards no narrower than CARD, GAP apart, widened to fill the row
     CARD = 170
     GAP = 10
     TEXT = 38
@@ -5048,8 +4889,7 @@ class CoverCards(wx.Window):
         self.drag = None
         self.empty = ''
         self.bitmaps = dict()
-        # (box-told) loading(k): its picture still coming; searching: none found yet;
-        # angle: the loading marks' turn
+        # set by the box: loading(k), searching, the loading marks' angle
         self.loading = lambda k: False
         self.searching = False
         self.angle = 0.0
@@ -5074,7 +4914,7 @@ class CoverCards(wx.Window):
             self.on_menu(k)
 
     def GetColumns(self):
-        # (cards a row, their side); the bar's room kept at the right
+        # cards a row and their side; room kept for the bar
         w = self.GetClientSize().width - self.SCROLL
         columns = max(1, (w - self.GAP) // (self.CARD + self.GAP))
         return columns, max(int((w - self.GAP * (columns + 1)) / columns), 1)
@@ -5092,7 +4932,7 @@ class CoverCards(wx.Window):
         return self.GAP + rows * (side + self.TEXT + self.GAP)
 
     def GetBitmap(self, k, side):
-        # its picture at the cards' side, made once a size
+        # its picture at the card size, made once a size
         image = self.picture(k)
         if image is None or not image.IsOk():
             return None
@@ -5265,14 +5105,11 @@ class CoverCards(wx.Window):
 
 class CoverDetails(wx.Window):
 
-    '''the chosen cover as it will be written (preview: its width square, or None) over its
-    release's fields: each field's name over its value (wrapped, 3 lines at most), the
-    empty ones left out'''
+    '''the chosen cover's preview over its release's fields'''
 
     LINES = 3
     SCROLL = 6
-    # the picture and the text this far from its right, the bar's room (over the picture,
-    # it hid its edge: the user)
+    # picture and text kept clear of the bar
     GUTTER = SCROLL + 6
 
     def __init__(self, parent):
@@ -5280,11 +5117,10 @@ class CoverDetails(wx.Window):
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.fields = []
         self.preview = None
-        # (box-told) its picture still coming: a loading mark where it will be, at angle
+        # set by the box: a loading mark at angle while its picture comes
         self.loading = False
         self.angle = 0.0
-        # scrolled by the wheel or its bar when taller than it is (the last fields ran out
-        # of sight: the user): by how much, how tall drawn, its bar dragged (y, offset)
+        # scrolled when taller than it is: offset, drawn height, bar drag
         self.offset = 0
         self.total = 0
         self.drag = None
@@ -5366,7 +5202,7 @@ class CoverDetails(wx.Window):
         dc.SetBackground(wx.Brush(wx.Colour(ui.DIALOG_BG)))
         dc.Clear()
         small, body = uikit.get_font(10), uikit.get_font(uikit.BODY)
-        # the text clear of the bar (always: a field's lines not wrapped again as it shows)
+        # text clear of the bar always, so lines do not rewrap
         tw = w - self.GUTTER
         y = -self.offset
         if self.preview is not None and self.preview.IsOk():
@@ -5393,7 +5229,7 @@ class CoverDetails(wx.Window):
         total = y + self.offset
         if total != self.total:
             self.total = total
-            # (a field set or the window sized: the offset held in the new height)
+            # offset held in the new height
             wx.CallAfter(lambda: self and self.Scroll(self.offset))
         thumb = self.GetThumb()
         if thumb is not None:
@@ -5405,16 +5241,13 @@ class CoverDetails(wx.Window):
 
 class CoverLookUpBox(DialogBox):
 
-    # the covers Look Up finds for tracks, as cards to choose from (the full Look Up's rows
-    # told little of them, its cover one at a time: the user). several tracks gone through
-    # as the tag editor's pages (Prev, Next: one cover for them all before, the user), each
-    # looked up when shown, its card chosen kept; Apply writes each chosen one (results)
+    # covers for tracks as cards, paged by track; Apply writes the chosen
 
     def __init__(self, parent, tracks, keys, start=0):
         # tracks: [dict(path, mdx, artist, title, label)]
         DialogBox.__init__(self, parent, size=(900, 600), style=wx.RESIZE_BORDER)
         self.built = False
-        # (as WebInfoBox: Windows' painting in a composited window kept the player slow)
+        # not composited (as WebInfoBox): Windows' painting slows the player
         self.SetDoubleBuffered(False)
         self.keys = keys
         self.tracks = [dict(v, candidates=None, errors=[], chosen=None, asked=False)
@@ -5426,8 +5259,7 @@ class CoverLookUpBox(DialogBox):
         self.results = []
         self.closing = False
         self.fetching = False
-        # by address: the picture's bytes, its card, its size told ('Failed' when not), what
-        # it is made into (GetOutput)
+        # by address: bytes, card, size text ('Failed'), output (GetOutput)
         self.data = dict()
         self.outputs = dict()
         self.pictures = dict()
@@ -5447,7 +5279,7 @@ class CoverLookUpBox(DialogBox):
         self.Cards.on_menu = self.OnCardMenu
         if self.multi:
             self.Cards.on_page = self.MoveTrack
-        # what the chosen one is (a cover alone did not tell it was the song's: the user)
+        # what the chosen cover is
         self.Details = CoverDetails(self)
         self.Note = None
         self.PageButton = Button(self, label='Open Page')
@@ -5457,7 +5289,7 @@ class CoverLookUpBox(DialogBox):
         self.PrevButton.Bind(wx.EVT_BUTTON, lambda e: self.MoveTrack(-1))
         self.NextButton = Button(self, label='Next')
         self.NextButton.Bind(wx.EVT_BUTTON, lambda e: self.MoveTrack(1))
-        # (shown for one track too, off, as the tag editor's)
+        # shown off for one track too, as the tag editor's
         self.ApplyButton = Button(self, label='Apply', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
         self.ApplyButton.SetToolTip(wx.ToolTip(
@@ -5467,8 +5299,7 @@ class CoverLookUpBox(DialogBox):
         self.CancelButton.Bind(wx.EVT_BUTTON, self.OnCancel)
         self.PageButton.Disable()
         self.ApplyButton.Disable()
-        # what is written made of the chosen picture first, seen in the preview before Apply
-        # (written as it came, at once: the user); kept for the next time
+        # how the chosen picture is made, previewed before Apply; kept
         self.adjust = dict()
         for key, _ in self.ADJUSTS:
             kept = GetPreference(f'cover_lookup_{key}')
@@ -5482,24 +5313,21 @@ class CoverLookUpBox(DialogBox):
             x += used + DIALOG_PAD
         self.checks = [(v, v.GetPosition().y - top) for v in self.GetChildren()
                        if v not in made]
-        # the files' modified date kept as they were (the editor's KEEP, the same setting,
-        # here too: it was kept unseen, by the editor's); how the files are written, not the
-        # picture, so by the buttons, apart from the picture's checks
+        # keep the files' modified date (the editor's KEEP setting)
         self.keep = GetPreference('item_editor_keep_modified') is not False
         made = set(self.GetChildren())
         _, self.keep_width = make_check(self, 'Keep modified date', (0, top + 5), self.keep,
                                         self.SetKeep)
         self.keep_check = [(v, v.GetPosition().x, v.GetPosition().y - top)
                            for v in self.GetChildren() if v not in made]
-        # one cover for every track (an album's songs), under the chosen one's details: a
-        # card chosen chosen for them all; off for one track
+        # one cover for every track, under the chosen one's details; off for one
         self.same = False
         made = set(self.GetChildren())
         make_check(self, f'Same cover for all {len(self.tracks)} tracks' if self.multi
                    else 'Same cover for all tracks', (0, 0), False, self.SetSame)
         self.same_check = [(v, v.GetPosition()) for v in self.GetChildren() if v not in made]
         if not self.multi:
-            # (the box off; its name faint, not Windows' raised grey of a disabled text)
+            # box off, name faint rather than Windows' disabled grey
             for window, _ in self.same_check:
                 if isinstance(window, wx.StaticText):
                     window.SetForegroundColour(macroboxstyle.current().UI.TEXT_FAINT)
@@ -5510,7 +5338,7 @@ class CoverLookUpBox(DialogBox):
         self.PlaceParts()
         self.Spin = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.OnSpin, self.Spin)
-        # (however it is closed, Esc too: no turn asked of it once it is gone)
+        # however it closes, Esc too: no more turns asked of it
         self.Bind(wx.EVT_WINDOW_DESTROY, self.OnDestroy)
         self.ShowTrack(self.index)
 
@@ -5521,7 +5349,7 @@ class CoverLookUpBox(DialogBox):
         event.Skip()
 
     DETAILS = 230
-    # what the chosen picture is made into (listimages.adjust_cover), square alone at first
+    # what the chosen picture is made into, square alone at first
     ADJUSTS = (('scan', 'Fix scan'), ('square', 'Square'), ('contrast', 'Auto contrast'),
                ('brightness', 'Auto brightness'), ('color', 'Auto color'))
 
@@ -5538,7 +5366,7 @@ class CoverLookUpBox(DialogBox):
         self.candidates = list(track['candidates'] or [])
         chosen = track['chosen']
         if chosen is not None and chosen['image'] not in [v['image'] for v in self.candidates]:
-            # (one used for all the tracks, not among this one's own)
+            # one used for all tracks, not among this one's
             self.candidates.append(chosen)
         self.SetNote(track['errors'])
         self.Cards.searching = track['candidates'] is None
@@ -5558,7 +5386,7 @@ class CoverLookUpBox(DialogBox):
         if track['candidates'] is None:
             self.LookUp(index)
         elif index + 1 < len(self.tracks):
-            # the next one looked up meanwhile (ready when Next is pressed)
+            # the next one looked up meanwhile
             self.LookUp(index + 1)
         self.EnsureFetching()
         self.Spin.Start(33)
@@ -5588,8 +5416,7 @@ class CoverLookUpBox(DialogBox):
         threading.Thread(target=work, daemon=True).start()
 
     def OnFound(self, index, candidates, errors):
-        # each cover once (a release's and a track's are often the same); a single track's
-        # first one chosen
+        # each cover once; a single track's first one chosen
         if not self or self.closing:
             return
         seen = set()
@@ -5611,14 +5438,13 @@ class CoverLookUpBox(DialogBox):
         if text and self.Note is None:
             self.Note = StaticText(self, label='', size=(-1, 18))
         if self.Note is not None:
-            # (a name's & as itself, not a mnemonic's mark)
+            # & as itself, not a mnemonic
             self.Note.SetLabel(text.replace('&', '&&'))
             self.Note.Show(bool(text))
         self.PlaceParts()
 
     def UpdateTitle(self):
-        # the track named in the title (a row of its own under the cards before, out of
-        # place: the user), its count and the chosen ones when several
+        # the track named in the title, its count and chosen ones
         track = self.tracks[self.index]
         title = f'Look Up Cover: {track["label"]}'
         if track['candidates'] is not None:
@@ -5681,7 +5507,7 @@ class CoverLookUpBox(DialogBox):
         menu.Destroy()
 
     def UseForAll(self, k):
-        # one cover for every track (an album's songs: the way it was before)
+        # one cover for every track
         for track in self.tracks:
             track['chosen'] = self.candidates[k]
         self.ShowTrack(self.index)
@@ -5736,9 +5562,7 @@ class CoverLookUpBox(DialogBox):
             threading.Thread(target=self.FetchCovers, daemon=True).start()
 
     def FetchCovers(self):
-        # one at a time (webinfo's limiter between them): the shown track's chosen one
-        # first, then its others, then the other tracks' chosen ones; from the disk when
-        # fetched before
+        # one at a time: the shown track's chosen one first, then the rest
         done = set()
         while not self.closing:
             chosen = self.tracks[self.index]['chosen']
@@ -5764,7 +5588,7 @@ class CoverLookUpBox(DialogBox):
         if not self or self.closing:
             return
         ground = wx.Colour(macroboxstyle.current().UI.RAISED_BG).Get()[:3]
-        # (made larger than a card: the cards grow with the window)
+        # larger than a card: the cards grow with the window
         picture, size = fit_image(data, CoverCards.CARD * 2, ground)
         if picture is not None:
             self.data[url] = data
@@ -5784,8 +5608,7 @@ class CoverLookUpBox(DialogBox):
             url not in self.notes for url in [v['image'] for v in self.candidates] + chosen)
 
     def OnSpin(self, event):
-        # the loading marks turned, a turn a second; stopped when all have come (and the
-        # pictures' thread asked again, should it have ended as the track changed)
+        # loading marks turn once a second, stop when all have come
         if not self or self.closing:
             return
         if not self.IsLoading():
@@ -5808,8 +5631,7 @@ class CoverLookUpBox(DialogBox):
             event.Skip()
 
     def PlaceParts(self):
-        # the cards PAD in, the chosen one's details at their right PAD apart, the errors a
-        # row under them, the footer
+        # cards PAD in, details at their right, errors under, then the footer
         if not getattr(self, 'built', False):
             return
         width, height = self.GetClientSize()
@@ -5820,14 +5642,14 @@ class CoverLookUpBox(DialogBox):
             self.Note.SetRect((DIALOG_PAD, bottom - DIALOG_ROW + 3, width - DIALOG_PAD * 2, 18))
         dx = width - DIALOG_PAD - self.DETAILS
         self.Cards.SetRect((DIALOG_PAD, DIALOG_PAD, dx - DIALOG_PAD * 2, top))
-        # (the details above the check for all the tracks, a row at the cards' foot)
+        # details above the all-tracks check
         self.Details.SetRect((dx, DIALOG_PAD, self.DETAILS, top - DIALOG_ROW - DIALOG_GAP))
         for window, (x, y) in self.same_check:
             window.SetPosition((dx + x, DIALOG_PAD + top - DIALOG_ROW + 3 + y))
         top = self.PlaceButtons(right=self.GetButtons())
         for window, below in self.checks:
             window.SetPosition((window.GetPosition().x, top + below))
-        # (KEEP two PADs left of the buttons)
+        # KEEP two PADs left of the buttons
         x = self.PageButton.GetPosition().x - DIALOG_PAD * 2 - self.keep_width
         for window, offset, below in self.keep_check:
             window.SetPosition((x + offset, top + below))
@@ -5843,9 +5665,7 @@ class CoverLookUpBox(DialogBox):
         self.ShowDetails()
 
     def GetOutput(self, url):
-        # the picture to write: the fetched one as the checks make it (a square one not
-        # cut square again, unless its scan fixed first); (bytes, its size, what was
-        # done), kept till a check changes
+        # picture to write as the checks make it: (bytes, size, done), cached
         if url in self.outputs:
             return self.outputs[url]
         data = self.data[url]
@@ -5892,9 +5712,7 @@ class CoverLookUpBox(DialogBox):
 
 
 def look_up_cover(listbox):
-    '''the selected tracks' covers looked up (each by its artist and title, its file name
-    when they are empty) and chosen from cards, one track after another (CoverLookUpBox),
-    the focused one first'''
+    '''look up the selected tracks' covers, the focused one first'''
     items = sorted(listbox.GetSelectedItems())
     if not items:
         return
@@ -5909,17 +5727,16 @@ def look_up_cover(listbox):
 
 
 def look_up_cover_for(listbox, tracks, start=0):
-    '''covers looked up for tracks ([dict(path, mdx, artist, title, label)]: the list's
-    selection, the player's song), chosen from cards, each written to its track'''
+    '''look up covers for tracks, chosen from cards and written'''
     frame = wx.GetTopLevelParent(listbox)
     keys = dict(zip(webinfo.PREFERENCE_KEYS, GetPreferences(webinfo.PREFERENCE_KEYS)))
-    # (AcoustID's matches have no pictures, and its fingerprint takes a while)
+    # AcoustID matches have no pictures and fingerprinting is slow
     keys['acoustid_client_key'] = ''
     if webinfo.get_discogs_auth(keys) is None and not keys.get('lastfm_api_key'):
         show_notice(frame, 'Look Up Cover',
                     'Set a Discogs or Last.fm key in Preference > Web Services first.')
         return
-    # the window first, looking (its mark turning), its cards when found
+    # the window first, its cards when found
     dialog = CoverLookUpBox(frame, tracks, keys, start)
     answer = dialog.ShowModal()
     SetPreference('cover_lookup_size', tuple(dialog.GetClientSize()))
@@ -5930,9 +5747,7 @@ def look_up_cover_for(listbox, tracks, start=0):
 
 
 def write_covers(listbox, results, keep=None):
-    # each (path, mdx, picture) written as its track's cover; the song playing paused for
-    # it and played on, its modified date kept when keep (None: as the editor keeps it,
-    # its KEEP); the list's and the player's covers read again
+    # write each (path, mdx, picture); the playing song paused, dates kept
     playbox = listbox.parent.PlayBox
     images = getattr(listbox.List, 'images', None)
     if keep is None:
@@ -5966,10 +5781,7 @@ def write_covers(listbox, results, keep=None):
 
 class ListBoxPopupHeader(wx.Menu):
 
-    # the header's menu: the columns shown, their widths fitted to what they show or back
-    # to the first ones, each change made in every tab and kept for new ones
-    # (SyncColumnsToAll). built by the columns themselves (an item's place in the menu was
-    # taken for the column's, and the private columns, left out, put them apart)
+    # header menu: shown columns and widths, synced to every tab
 
     def __init__(self, parent):
         wx.Menu.__init__(self)
@@ -6002,7 +5814,7 @@ class ListBoxPopupHeader(wx.Menu):
         listbox.reInitBuffer = True
 
     def OnFit(self, event):
-        # every shown column as wide as its widest text (the edge's double click, each)
+        # every shown column fitted to its widest text
         for i in range(len(self.parent.parent.GetShownColumnsIdx())):
             self.parent.FitColumnWidth(i)
         self.parent.DirectDraw()
@@ -6070,8 +5882,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             single = True
         else:
             single = False
-        # internet radio stations only: played and deleted, nothing of a file (its tags,
-        # its folder, its analysis)
+        # radio stations: play and delete only
         listbox = self.parent.parent
         rows = listbox.innerList[listbox.selectedList].items
         pathIdx = listbox.GetColumnKeyToIdx('path')
@@ -6079,9 +5890,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         stations = bool(selected) and all(
             audio.is_stream_path(rows[i][pathIdx]) for i in selected if i < len(rows))
 
-        # in groups (the user): playing and keeping it | its tags and analysis | finding
-        # songs like it | its file | taken out of the list, last; a station's: played,
-        # kept, taken out
+        # grouped: play and keep | tags and analysis | similar | file | remove
         title = listbox.innerList[listbox.selectedList].title
 
         def add(idx, name):
@@ -6096,13 +5905,13 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         if single:
             add(1, 'Play')
         if not stations:
-            # a song starred (or let go): the favorite tracks (the sidebar's Library)
+            # star or unstar a song in the favorite tracks
             paths = self.GetSelectedPaths()
             starred = set(library.get_favorite_tracks())
             add_item('Remove from Favorite tracks' if paths and all(v in starred for v in paths)
                      else 'Add to Favorite tracks', self.OnToggleFavoriteTracks)
         if stations and title != radio.RADIO_TITLE:
-            # found or put elsewhere: kept in the radio's favorites
+            # kept in the radio's favorites
             add_item('Add to Favorite stations', self.OnAddFavorites)
         if title == radio.RADIO_TITLE:
             add_item('Add Station URL...', self.OnAddStationURL)
@@ -6149,9 +5958,9 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             self.Bind(wx.EVT_MENU, self.OnCheckConvertKeyFormat, self.itemConvertKeyFormat.MenuItems[2])
 
             self.AppendSeparator()
-            # (Edit Track Info as the player's header names it; Edit alone before)
+            # Edit Track Info, as the player's header names it
             add(2, 'Edit Track Info...')
-            # its cover alone, chosen from cards (the full Look Up in the editor)
+            # cover only, chosen from cards
             add_item('Look Up Cover...', lambda e: look_up_cover(self.parent.parent))
             add(4, 'Analyze')
             self.Append(8, 'Convert Tempo Range', self.itemConvertTempoRange)
@@ -6159,13 +5968,13 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             if single:
                 self.AppendSeparator()
                 add(6, 'Find Similar')
-                # Find in Library with this song's tempo and key set (File's starts empty)
+                # Find in Library preset to this song's tempo and key
                 add(7, 'Find in Library...')
                 self.AppendSeparator()
                 add(5, 'Open Containing Folder')
 
         self.AppendSeparator()
-        # (the rows taken out of this list, the files kept: Delete read as the files')
+        # rows removed from the list, files kept
         add(3, 'Remove from List')
 
     def GetSelectedStations(self):
@@ -6264,8 +6073,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         wx.GetTopLevelParent(listbox).OnFindInLibrary(None, song=song)
 
     def FindSimilar(self):
-        # the library ranked against the song on a thread (each song's waveform is read
-        # once), the result in the Similar tab
+        # rank the library against the song on a thread into Similar
         listbox = self.parent.parent
         mainpanel = listbox.parent
         selected = listbox.GetSelectedItems()
@@ -6275,8 +6083,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         songs = library.collect(listbox)
         target = [v for v in songs if v.path == path]
         if target == []:
-            # a song in no playlist (the folder's tab's): its row the song looked for (it
-            # did nothing, told nothing, the user)
+            # a song in no playlist (folder tab): use its row
             inner = listbox.innerList[listbox.selectedList]
             values = dict(zip([v.key for v in inner.columns], inner.items[selected[0]]))
             target = [library.make_song(values, library.get_grid_tempi())]
@@ -6345,7 +6152,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 
 class StatusBox(RectBox):
 
-    # (the sidebar's key is the search row's now: the messages from the left edge)
+    # messages start at the left edge
     MESSAGE_LEFT_X = 8
     PROGRESS_WIDTH = 80
 
@@ -6354,8 +6161,7 @@ class StatusBox(RectBox):
         self.SetBackgroundColour(macroboxstyle.current().UI.BAR_BG)
         self.messages = (u'', u'')
         self.proc = 0
-        # the analysis' run: the most tracks waiting in it, and how many of them are done
-        # (a bar at the right while it runs)
+        # analysis run: most tracks waiting and how many are done
         self.batch = 0
         self.progress = None
         self.alarm = None
@@ -6432,13 +6238,11 @@ class StatusBox(RectBox):
         font.SetFaceName(FONT_ITEM)
         dc.SetFont(font)
         tw, th = dc.GetTextExtent(message_right)
-        # 10 rows over the capitals and 9 under (9 and 10, the middle by the rows, read high:
-        # the user; 7 left 10 and 8 before, measured)
+        # 10 rows over the capitals and 9 under
         ty = 7
         xys = ((self.MESSAGE_LEFT_X, ty), (w - tw - 10, ty),)
         if self.progress is not None:
-            # the run's progress: a thin bar before its text, kept where the run's longest
-            # text puts it (it moved as the count gained a digit)
+            # progress bar before its text, placed by the run's longest text
             widest = self.GetProgressText(self.batch, self.batch, 88)
             ww = max(tw, dc.GetTextExtent(widest)[0])
             bx, bw = w - ww - 10 - 10 - self.PROGRESS_WIDTH, self.PROGRESS_WIDTH
@@ -6449,8 +6253,7 @@ class StatusBox(RectBox):
             dc.DrawRectangle(bx, by, bw, 4)
             dc.SetBrush(wx.Brush(tokens.ACCENT))
             dc.DrawRectangle(bx, by, max(int(bw * self.progress), 2), 4)
-        # told (blue), warned (orange: red was the same as black to red-green colour
-        # blindness on the dark bar), busy analysing (blue)
+        # info blue, warning orange (not red: red-green blindness), busy blue
         tokens = macroboxstyle.current().UI
         if self.alarm_color == 'blue':
             color_left = wx.Colour(tokens.ACCENT)

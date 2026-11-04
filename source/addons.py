@@ -18,10 +18,7 @@ import zipfile
 from utilities import get_user_docapp_path
 
 
-# files the repository may not carry (their licences), fetched from their makers when the
-# player starts and they are missing, into the user's folder. one is used only when it is
-# the very file tested here (sha256): a newer one upstream is not taken, but told in
-# addons.log
+# files the repository may not carry, fetched on start; only the tested sha256 is used
 ADDONS = {
     'bass_aac.dll': dict(
         url='https://www.un4seen.com/files/z/2/bass_aac24.zip',
@@ -44,7 +41,7 @@ def get_addons_path():
 
 
 def find_addon(name):
-    # the file in the user's add-on folder, or None
+    # the file in the add-on folder, or None
     path = os.path.join(get_addons_path(), name)
     return path if os.path.isfile(path) else None
 
@@ -83,8 +80,7 @@ def fetch(name):
 
 
 def fetch_missing(done=None):
-    '''the missing ones fetched together on a thread; done(names fetched) after, on that
-    thread (none missing: nothing done)'''
+    '''fetch the missing ones on a thread, then done(names)'''
     missing = [name for name in ADDONS if find_addon(name) is None]
     if not missing:
         return

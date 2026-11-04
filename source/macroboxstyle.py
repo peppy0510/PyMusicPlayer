@@ -91,9 +91,7 @@ def is_blue(value):
 
 class Default():
 
-    # the dialogs and the standard controls, by their role. a dark style's are the colours of
-    # Windows' dark mode (wx's, measured), which draws the title bar, the menus and the
-    # native controls: what is drawn here matches what it draws
+    # dialogs and standard controls by role; dark matches Windows' dark mode
     class UI():
         DARK = True
         DIALOG_BG = '#191919'
@@ -103,24 +101,21 @@ class Default():
         TEXT_FAINT = '#6D6D6D'
         EDIT_BG = '#191919'
         EDIT_FG = '#FFFFFF'
-        # a dialog's text field: its ground a shade off the dialog's (no native frame), its
-        # edge, lighter while typed in
+        # dialog text field: ground a shade off the dialog's, lighter edge while typing
         FIELD_BG = '#26262B'
         FIELD_EDGE = '#34343A'
         FIELD_FOCUS = '#2F7BEA'
-        # the bars (the control strip, the title, the status line) and what is on them
+        # bars (control strip, title, status line) and what is on them
         BAR_BG = '#1E1E1E'
         BAR_LINE = '#2E2E2E'
         BAR_TEXT = '#E8E8E8'
         BAR_TEXT_DIM = '#8C8C8C'
         CONTROL_BG = '#2B2B2B'
         CONTROL_HOVER = '#3B3B3B'
-        # pressed: under the face at rest (lighter than the hover, then darkened by
-        # draw_face, it came out as the hover)
+        # pressed: under the rest face; draw_face darkens it
         CONTROL_DOWN = '#232323'
         CONTROL_FG = '#BDBDBD'
-        # a control on, the busy and the warned: blue and orange, apart for red-green
-        # colour blindness and by brightness too (never by hue alone)
+        # on, busy and warned: blue and orange, also apart by brightness
         # dark: a light accent with dark text on it
         ACCENT = '#4C9AFF'
         ACCENT_FG = '#101215'
@@ -149,19 +144,16 @@ class Default():
         HIGHLIGHT_BG_COLOR = '#282830'
         HIGHLIGHT_PN_COLOR = '#606060'
         HIGHLIGHT_FG_COLOR = VOLUME_FG_COLOR
-        # where it plays: white edged in black, seen on the blue, the orange and the white
-        # of the waveform alike (red was lost on the orange to red-green colour blindness)
+        # play position: white edged in black, seen on any waveform colour
         PLAYCURSOR_STROKE = 1
         PLAYCURSOR_BG_COLOR = '#FFFFFF'
         PLAYCURSOR_FG_COLOR = '#000000'
-        # the header over the play area (black in every style): the title, the line under
-        # it and the info chips
+        # header over the play area (black in every style)
         TITLE_FG_COLOR = '#F2F2F2'
         TITLE_DIM_COLOR = '#8C8C8C'
         CHIP_BG_COLOR = '#1C1C1C'
         CHIP_FG_COLOR = '#D8D8D8'
-        # the MASTER rack (a plug-in's plate): its ground and edges, its labels, the
-        # readouts' display, the meters' unlit segments and the knobs
+        # master rack plate: ground, edges, labels, readouts, meters, knobs
         RACK_BG_COLOR = '#151518'
         RACK_EDGE_COLOR = '#2A2A30'
         RACK_LABEL_COLOR = '#7E8794'
@@ -175,8 +167,7 @@ class Default():
     class LISTBOX():
         BG_COLOR = '#080808'
         LIST_BG_CONTRAST = 1
-        # the rows on a neutral dark grey, the rack's (a red-brown before: apart from the
-        # blue accent of the selection)
+        # rows on a neutral dark grey
         LIST_BG_COLOR = '#141417'
         LIST_FG_COLOR = '#F0F0F0'
         LIST_PN_COLOR = '#0A0A0C'
@@ -188,10 +179,8 @@ class Default():
         SCROLLBAR_FG_COLOR = '#101010'
         ANALYZE_NONE_COLOR = '#FF0000'
         ANALYZE_PEND_COLOR = '#4444FF'
-        # the selected rows, and the selected playlist in the sidebar: the UI's accent
-        # (red-pink before)
-        # muted (the accent a third over the rows), its bar at the left in the accent itself:
-        # the full accent was the screen's loudest thing
+        # selected rows and sidebar playlist: the UI accent
+        # muted accent on rows, the full accent on the left bar
         SELECTED_BG_COLOR = '#1D3861'
         SELECTED_FG_COLOR = '#FFFFFF'
         SELECTED_BAR_COLOR = '#2F7BEA'
@@ -201,7 +190,7 @@ class Default():
         TOOLBAR_BG_COLOR = '#E0E0E0'
 
     class EDITBOX(LISTBOX):
-        # neutral as the list's rows (a red-brown before)
+        # neutral as the list rows
         EDITOR_BG_COLOR = '#141417'
         EDITOR_FG_COLOR = '#F0F0F0'
         PREVIEW_BG_COLOR = EDITOR_BG_COLOR
@@ -300,7 +289,7 @@ class DarkGray(Default):
 
 class LightGray(Default):
 
-    # light: the colours the dialogs had before (no dark mode)
+    # light: no dark mode
     class UI(Default.UI):
         DARK = False
         DIALOG_BG = '#E6E6E6'
@@ -365,7 +354,7 @@ class LightGray(Default):
 
 class SnowWhite(Default):
 
-    # light: the colours the dialogs had before (no dark mode)
+    # light: no dark mode
     class UI(Default.UI):
         DARK = False
         DIALOG_BG = '#E6E6E6'

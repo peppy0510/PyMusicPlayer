@@ -56,7 +56,7 @@ from wininstance import move_to_virtual_desktop
 
 
 ROW_HEIGHTS = (22, 26, 32, 40, 48)
-# the waveforms' heights (View > Waveform Height, Zoomed Waveform Height; 40 before)
+# waveform heights (View > Waveform Height)
 WAVE_HEIGHTS = (24, 32, 40, 56, 72, 96)
 WAVE_HEIGHT_DEFAULT = 40
 # from dialogbox import LicenseBox
@@ -218,9 +218,7 @@ class KeymapPreset():
             self.keymap_preset = self.MergeKeymap(preset, default_preset)
 
     def MergeKeymap(self, preset, default_preset):
-        # the saved keys by their names, in the default's order: a name new since then with
-        # its default key, none when that key is taken (all the defaults before, whenever
-        # their count changed: the user's own keys lost)
+        # saved keys by name in default order; a new name gets its default key if free
         saved = {v[0]: tuple(v) for v in preset}
         taken = [(v[1], v[3], v[4]) for v in saved.values() if v[2] is not None]
         merged = list()
@@ -261,7 +259,7 @@ class KeymapPreset():
             ('fast_backward', 'S'),
             ('loop_toggle', 'R'),
             ('loud_toggle', 'T'),
-            # (highlight_*: the mode key's now, HIGHLIGHT or SHORT; their names kept, as saved)
+            # highlight_*: the mode key (HIGHLIGHT or SHORT), names kept as saved
             ('highlight_toggle', 'Q'),
             ('mode_switch', 'Shift + Q'),
             ('highlight_decrease', '1'),
@@ -295,7 +293,6 @@ class KeymapPreset():
             'Fast forward',
             'Fast backward',
             'Loop toggle',
-            # (as the player names them now: LOUD is MASTER, the ID3 editor the tag editor)
             'Master toggle',
             'Highlight / Short toggle',
             'Switch Highlight / Short',
@@ -415,9 +412,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         self.Labels = list()
         self.UserInput = list()
         idx = 1
-        # the dialogs' spacing: two columns PAD apart, each a name (right-aligned, NAME
-        # wide) and its field GAP past it, rows GAP apart; Default PAD under them (the
-        # left column the longer: its rows' offset left for it)
+        # two columns of name and field
         name, field = 130, 100
         half = (len(labels) + 1) // 2
         for column, part in enumerate((labels[:half], labels[half:])):
@@ -487,8 +482,7 @@ class ShortcutKeyPanel(DialogPanel, KeymapPreset):
         if shift:
             value = ' + '.join(('Shift', value))
         value = value.replace('  ', ' ')
-        # the keys the player keeps (the list's select all, Always On Top's); ('Ctrl + A')
-        # was a string, A and C in it refused too
+        # keys the player keeps (select all, always on top)
         if value in self.RESERVED_KEYS:
             return
         self.UserInput[idx].SetValue(value)
@@ -612,7 +606,6 @@ class MacroBoxPreference():
     def SetPlayerTopShowOff(self):
         self.playbox_top_show = False
         if self.IsPlayerOnlyModeOn():
-            # (SetMaxSize(...) + 10 raised: the window never got shorter)
             self.SetPlayerOnlyHeight()
         self.OnSize()
 
@@ -645,8 +638,7 @@ class MacroBoxPreference():
         return self.cover_square
 
     def SetCoverSquare(self, square):
-        # the covers shown cut to a square on their middle (the list's and the player's;
-        # the files' own kept as they are)
+        # covers cut to a square on their middle
         self.cover_square = square
         SetPreference('cover_square', square)
         self.MenuBar.itemCoverSquare.Check(square)
@@ -657,7 +649,7 @@ class MacroBoxPreference():
         self.beatgrid_show = show
         SetPreference('beatgrid_show', show)
         self.MenuBar.itemBeatGridShow.Check(show)
-        # the whole song's waveform painted again: its grid's lanes come and go
+        # grid lanes come and go: repaint the waveform
         self.MainPanel.PlayBox.reInitWave = True
         self.MainPanel.PlayBox.Wave.reInitBuffer = True
         self.MainPanel.PlayBox.WaveDetail.reInitBuffer = True
@@ -667,33 +659,29 @@ class MacroBoxPreference():
         return playbox is not None and playbox.Analyzer.shown
 
     def SetAnalyzerShow(self, show):
-        # ANALYZER's module in the rack, from the View menu or the header's spectrum
         if show != self.IsAnalyzerShowOn():
             self.MainPanel.PlayBox.Analyzer.Toggle()
         self.MenuBar.itemAnalyzerShow.Check(self.IsAnalyzerShowOn())
 
     def IsMasterShowOn(self):
-        # MASTER open (always there: its header the rack's bar; folded, its header alone)
+        # master is always there: folded, its header alone
         playbox = getattr(getattr(self, 'MainPanel', None), 'PlayBox', None)
         return playbox is not None and not playbox.Master.folded
 
     def SetMasterShow(self, show):
-        # MASTER's module opened or folded, from the View menu
         if show != self.IsMasterShowOn():
             self.MainPanel.PlayBox.Master.ToggleFold()
         self.MenuBar.itemMasterShow.Check(self.IsMasterShowOn())
 
-    # the list's least height under the player: its search row and a few of its rows
+    # list's least height under the player
     LIST_LEAST = 150
 
     def FitRackRoom(self):
-        # a rack module shown: the window grown for it (the list kept LIST_LEAST tall), as
-        # far as its screen's work area lets it, and moved up when it would run off it
+        # grow the window for a rack module within the work area
         if self.IsPlayerOnlyModeOn() or self.IsMaximized() or self.IsIconized()\
                 or self.MainPanel.PlayBox.Rack.GetHeight() == 0:
             return
-        # MainPanel.SetListRects: the list's column is its height (the frame's client: the
-        # panel's own is not laid out yet at the start) less the player's and 36
+        # frame's client size: the panel's is not laid out yet at the start
         short = self.MainPanel.GetPlayBoxHeight() + 36 + self.LIST_LEAST\
             - self.GetClientSize().height
         if short <= 0:
@@ -705,14 +693,11 @@ class MacroBoxPreference():
         y = max(min(y, area.y + area.height - h), area.y)
         self.SetRect((x, y, w, h))
 
-    # the window's least height (the player's least before)
+    # window's least height
     FRAME_LEAST = 450
 
     def FitLeastHeight(self):
-        '''the window kept as tall as the player, the search row and the status line at
-        least (450 at least), as far as its screen's work area lets it; grown when it is
-        not: the player grows with the header's and the control row's rows at a narrow
-        width and with a rack module (the status line over the waveforms, the user)'''
+        '''keep the window at least as tall as the player needs'''
         if not self or self.IsPlayerOnlyModeOn() or not hasattr(self, 'MainPanel'):
             return
         border = self.GetSize().height - self.GetClientSize().height
@@ -731,8 +716,7 @@ class MacroBoxPreference():
             self.SetRect((x, y, w, least))
 
     def SetPlayerOnlyHeight(self):
-        # the least let go of first, so the least is never over the most while
-        # the height grows or shrinks
+        # min released first so it never exceeds the max
         height = self.GetPlayerOnlyHeight()
         w, _ = self.GetSize()
         self.SetMinSize((550, -1))
@@ -741,7 +725,6 @@ class MacroBoxPreference():
         self.SetSize((w, height))
 
     def GetWaveformHeight(self, kind='whole'):
-        # the whole song's waveform's, or the zoomed one's (kind 'detail')
         return self.waveform_heights[kind]
 
     def SetWaveformHeight(self, kind, height):
@@ -753,7 +736,7 @@ class MacroBoxPreference():
         self.OnSize()
 
     def GetWaveformDetailHeight(self):
-        # the zoomed waveform and the 6 px over the whole one's
+        # zoomed waveform plus its 6 px gap
         if self.IsWaveformDetailShowOn():
             return self.GetWaveformHeight('detail') + 6
         return 0
@@ -762,7 +745,7 @@ class MacroBoxPreference():
         master = self.MainPanel.PlayBox.GetRackHeight() + self.MainPanel.PlayBox.GetHeaderExtra()\
             + self.MainPanel.PlayBox.GetControlExtra()\
             if hasattr(self, 'MainPanel') else 0
-        # (as MainPanel.GetPlayBoxHeight's)
+        # as MainPanel.GetPlayBoxHeight
         wave = self.GetWaveformHeight() + self.GetWaveformDetailHeight()
         if self.IsPlayerTopShowOn():
             return 163 + wave + master
@@ -849,9 +832,7 @@ class MacroBoxPreference():
         self.stored_rect = wx.Rect(self.GetRect())
 
     def PlaceForTest(self):
-        '''a test's launch (wininstance.is_test_launch): in the leftmost monitor's lower half
-        on the second virtual desktop, out of the user's way; this place not kept (the
-        user's next start where they left it)'''
+        '''test launch: lower half of the leftmost monitor, second desktop'''
         self.test_placed = True
         areas = [wx.Display(k).GetClientArea() for k in range(wx.Display.GetCount())]
         area = min(areas, key=lambda rect: rect.x)
@@ -863,7 +844,7 @@ class MacroBoxPreference():
 
     def GetStorableRect(self):
         if getattr(self, 'test_placed', False):
-            # (a test's place: the user's kept as it was)
+            # test place is not stored
             return self.stored_rect or wx.Rect(DEFAULT_RECT)
         if self.IsIconized() is False and self.IsMaximized() is False:
             self.stored_rect = wx.Rect(self.GetRect())
@@ -1201,7 +1182,7 @@ class AppearancePanel(wx.Panel):
         MainPanel.ListBox.SetBackgroundColour(st.LISTBOX.LIST_BG_COLOR)
         MainPanel.ListBox.List.SetBackgroundColour(st.LISTBOX.LIST_BG_COLOR)
         MainPanel.PlayBox.SetBackgroundColour(st.PLAYBOX.PLAY_BG_COLOR)
-        # the waveform's pictures are painted on the scheme's colours
+        # waveform pictures are painted on the scheme colours
         MainPanel.PlayBox.reInitWave = True
         MainPanel.OnSize(None)
 
@@ -1360,8 +1341,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.SetDoubleBuffered(True)
         self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
 
-        # the dialogs' spacing (macroboxlib.DIALOG_PAD and the rest): ROW, the next row;
-        # GROUP, the next group's
+        # ROW, the next row; GROUP, the next group
         ROW, GROUP = DIALOG_ROW + DIALOG_GAP, DIALOG_ROW + DIALOG_PAD
         FIELD = DIALOG_PAD + 200 + DIALOG_GAP
         offset = DIALOG_PAD
@@ -1493,7 +1473,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.PlayerTitleFormat[-1].SetValue(preset[2])
         self.PlayerTitleFormat[-1].Bind(wx.EVT_COMBOBOX, self.OnPlayerTitleFormat)
 
-        # (the waveform detail is shown or not from the View menu)
+        # waveform detail is toggled from the View menu
         offset += GROUP
         label = u'Zoomed Waveform Drag'
         text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
@@ -1518,7 +1498,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         self.AccentColor.SetToolTip(wx.ToolTip(
             'The buttons on, the selected tracks and a field\'s focus.'))
 
-        # GitHub's latest release, looked for once a day (updater; the notice over the list)
+        # latest release check, once a day
         frame = self.parent.parent.parent
         offset += GROUP
         StaticText(self, label='Check for Updates', pos=(DIALOG_PAD, offset + 3),
@@ -1541,7 +1521,7 @@ class PreferenceMFEATSPanel(DialogPanel):
         # if self.IsDefaultPlayer(): self.DefaultPlayer.SetValue(1)
         # self.DefaultPlayer.Bind(wx.EVT_CHECKBOX, self.OnDefaultPlayer)
 
-        # its names' column as wide as its widest (the dialogs' spacing)
+        # name column as wide as its widest
         fit_name_column(self, DIALOG_PAD, 200)
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.OnSize(None)
@@ -1745,7 +1725,7 @@ class PreferenceWebInfoPanel(DialogPanel):
                   'and Discogs Consumer Secret', 'Last.fm API Key', 'AcoustID Client Key')
         values = GetPreferences(webinfo.PREFERENCE_KEYS)
         self.KeyTexts = list()
-        # the dialogs' spacing (as the General page's)
+        # dialog spacing
         offset = DIALOG_PAD
         for label, value in zip(labels, values):
             StaticText(self, label=label, pos=(DIALOG_PAD, offset + 3),
@@ -1768,7 +1748,7 @@ class PreferenceWebInfoPanel(DialogPanel):
         label += u'\nartist and title to Discogs and Last.fm, a fingerprint to AcoustID.'
         text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
         text.SetSize(text.GetBestSize())
-        # its names' column as wide as its widest (the dialogs' spacing)
+        # name column as wide as its widest
         fit_name_column(self, DIALOG_PAD, 200)
 
     def OnSize(self, event):
@@ -1782,7 +1762,7 @@ class PreferenceWebInfoPanel(DialogPanel):
 
 class PreferenceNotebook(wx.Simplebook):
 
-    # the pages without a notebook's tabs (the dialog's SegmentBar chooses them)
+    # pages without tabs: the SegmentBar chooses them
     def __init__(self, parent):
         wx.Simplebook.__init__(self, parent, size=(600, 500))
         self.parent = parent
@@ -1843,19 +1823,18 @@ class PreferenceBox(DialogBox):
 
     def __init__(self, parent):
         # DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 340))
-        # taller for the general panel's last rows (the waveform's)
+        # taller for the general panel's last rows
         DialogBox.__init__(self, parent, wx.ID_ANY, size=(550, 450))
         self.parent = parent
         self.SetTitle('Preference')
         # self.SetBackgroundColour((240, 240, 240))
         self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.Notebook = PreferenceNotebook(self)
-        # its pages chosen as the player's keys are (a notebook's tabs before)
         self.Pages = SegmentBar(self, [self.Notebook.GetPageText(k) for k in
                                        range(self.Notebook.GetPageCount())],
                                 self.Notebook.SetSelection)
 
-        # the settings' names dimmed, their values (the fields) brighter
+        # names dimmed, fields brighter
         dim = macroboxstyle.current().UI.BAR_TEXT_DIM
         stack = list(self.Notebook.GetChildren())
         while stack:
@@ -1875,20 +1854,16 @@ class PreferenceBox(DialogBox):
         # x, y, w, h = self.Notebook.WebLinkPanel.WebLink[-1].GetRect()
         # self.SetClientSize((width, y+h+110))
         # self.SetClientSize((width, 340))
-        # the height is set here, whatever the dialog was made with: taller for
-        # the general panel's last rows (the waveform's)
-        # the dialogs' spacing: the pages' keys PAD in, a page under them (its rows PAD
-        # in from its top and sides), the footer under it; as tall as its tallest page's
-        # rows and PAD under them
+        # height is set here, whatever the dialog was made with
+        # as tall as its tallest page plus PAD
         top = DIALOG_PAD // 2 + self.TABS
         pages = (self.Notebook.MFEATSPanel, self.Notebook.ShortcutKeyPanel,
                  self.Notebook.WebInfoPanel)
         page = max(max(c.GetRect().GetBottom() + 1 for c in p.GetChildren()) for p in pages)
-        # as wide as its widest page's rows, PAD past them (550 wide, 26 to 54 were left
-        # empty at their right); a text by its words, not its box
+        # as wide as its widest page plus PAD; a text by its words
         def right(c):
             w = c.GetSize().width
-            # (a text kept as wide as its longest, whatever it says now: its whole width)
+            # reserved text keeps its whole width
             if isinstance(c, wx.StaticText) and not getattr(c, 'reserved', False):
                 w = min(w, c.GetBestSize().width)
             return c.GetPosition().x + w
@@ -1921,7 +1896,6 @@ class TutorialPanel(DialogPanel):
         self.parent = parent
         width, height = self.parent.GetSize()
         self.SetRect((0, 0, width, 297))
-        # its pages beside the source (packages was never defined: it did not open)
         self.packages = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'packages')
         self.tutorials = sorted(filename for filename in os.listdir(self.packages)
                                 if filename.startswith("tutorial") and filename.endswith("png"))
@@ -1931,16 +1905,13 @@ class TutorialPanel(DialogPanel):
         self.DiaplayImage(0)
 
     def GetPage(self, path):
-        '''a page's picture; in a dark style its lightness turned over, its colours' hues
-        kept (black on white it was, the one light window left: the user)'''
+        '''page picture, lightness inverted in a dark style'''
         image = wx.Image(path)
         if not macroboxstyle.current().UI.DARK:
             return image
         picture = Image.frombytes('RGB', tuple(image.GetSize()), bytes(image.GetData()))
         hue, saturation, value = ImageOps.invert(picture).convert('HSV').split()
-        # the inverted colours' hues turned back half the wheel: red stays red; black lifted
-        # to the dialog's ground (its white was the page's: black on the dialog's ground
-        # read as a hole in it)
+        # hue turned back half the wheel; black lifted to the dialog ground
         hue = hue.point(lambda v: (v + 128) % 256)
         ground = wx.Colour(macroboxstyle.current().UI.DIALOG_BG).GetRGB() & 0xFF
         value = value.point(lambda v: ground + v * (255 - ground) // 255)
@@ -1962,7 +1933,6 @@ class TutorialPanel(DialogPanel):
         self.text.SetLabelText(label)
 
     def PlaceNumber(self, right, y):
-        # its right end at right (the dialog's footer: PAD before Prev)
         self.text.SetPosition((right - self.text.GetSize().width, y))
 
     def OnPrev(self, event):
@@ -1987,7 +1957,7 @@ class TutorialBox(DialogBox):
         DialogBox.__init__(self, parent, size=(536, 380))
         self.parent = parent
         self.SetTitle('Tutorial')
-        # the pictures (297 tall), the footer under them
+        # pictures, then the footer
         self.SetClientSize((self.GetClientSize().width, 297 + self.GetFooterHeight()))
         self.TutorialPanel = TutorialPanel(self)
         self.InitButtons()
@@ -1995,8 +1965,7 @@ class TutorialBox(DialogBox):
         self.Show(True)
 
     def InitButtons(self):
-        # the dialogs' footer under the pictures: its check box at the left, the page's
-        # number PAD before Prev (TutorialPanel)
+        # footer: check box at left, page number before Prev
         self.PrevButton = Button(self, label='Prev')
         self.PrevButton.Bind(wx.EVT_BUTTON, self.OnPrev)
         self.NextButton = Button(self, label='Next')
@@ -2026,7 +1995,7 @@ class MacroBoxMenuBar():
 
     def __init__(self):
         self.MenuBar = MenuBar(self)
-        # (wx.Frame's MenuBar property: assigning it sets the frame's menu bar)
+        # wx.Frame.MenuBar: assigning it sets the frame's menu bar
         self.MarkMenuChecks()
         # self.SetMenuBar(self.MenuBar)
         self.default_style = self.GetWindowStyle()
@@ -2088,8 +2057,7 @@ class MacroBoxMenuBar():
         event.Skip()
 
     def OnFindInLibrary(self, event, song=None):
-        # left open to search again; one at a time. song: (tempo, key) set in it (a row's or
-        # the playing one's menu)
+        # left open to search again; song: (tempo, key) to fill in
         box = getattr(self, 'LibrarySearchBox', None)
         if not box:
             box = self.LibrarySearchBox = LibrarySearchBox(self, self.MainPanel)
@@ -2268,7 +2236,6 @@ class MacroBoxMenuBar():
     #     self.MainPanel.ListBox.reInitBuffer = True
 
     def OnUpdate(self, event):
-        # GitHub's latest release (updater), asked in the Update Check dialog
         self.OnCheckUpdates()
 
     def OnHelp(self, event):
@@ -2396,10 +2363,7 @@ class MenuBar(wx.MenuBar):
             item.Check(bool(checked))
             return item
 
-        # in the window's order, top to bottom, its parts a line apart: the rack's modules,
-        # the header, the waveforms, the tempo strip, the list (in the order they were added
-        # before, the playlist alone apart)
-        # (MASTER over ANALYZER, as the rack has them since)
+        # in the window's order, top to bottom
         playbox = self.parent.MainPanel.PlayBox
         self.itemMasterShow = add('Master', self.parent.IsMasterShowOn())
         self.itemAnalyzerShow = add('Analyzer', self.parent.IsAnalyzerShowOn())
@@ -2411,7 +2375,7 @@ class MenuBar(wx.MenuBar):
         self.itemWaveformDetailShow = add('Zoomed Waveform',
                                           self.parent.IsWaveformDetailShowOn())
         self.itemBeatGridShow = add('Beat Grid', self.parent.IsBeatGridShowOn())
-        # the whole song's waveform's height and the zoomed one's, each its own
+        # each waveform its own height
         self.waveHeightItems = dict()
         for kind, label in (('whole', 'Waveform Height'), ('detail', 'Zoomed Waveform Height')):
             menu = wx.Menu()
@@ -2420,15 +2384,13 @@ class MenuBar(wx.MenuBar):
                 self.waveHeightItems[item.GetId()] = (kind, height)
             self.menuView.AppendSubMenu(menu, label)
         self.menuView.AppendSeparator()
-        # the tempo strip's columns: shown, the control on; hidden, off (its value kept,
-        # back when shown: PlayBox.SetStripColumnShown); TEMPO and KEY on the control row
-        # before
+        # strip columns: hidden turns the control off, value kept
         self.itemTempoControl = add('Tempo Control', playbox.IsStripColumnShown('tempo'))
         self.itemKeyControl = add('Key Control', playbox.IsStripColumnShown('key'))
         self.menuView.AppendSeparator()
         self.itemListTabShow = add('&Playlist', self.parent.IsListTabShowOn())
 
-        # taller rows for the list's cover and waveform columns
+        # taller rows for the cover and waveform columns
         self.menuRowHeight = wx.Menu()
         self.rowHeightItems = dict()
         for height in ROW_HEIGHTS:
@@ -2453,9 +2415,7 @@ class MenuBar(wx.MenuBar):
 
         self.menuOption.AppendSeparator()
 
-        # Play Length: HIGHLIGHT's and SHORT's lengths in one list, as the mode key's menu
-        # (PlayBoxControlButton.PopupMode), chosen its mode on with it; HIGHLIGHT's first
-        # (MenuItems[0 to 4] read as theirs)
+        # highlight and short lengths in one list, as the mode key's menu
         playbox = self.parent.MainPanel.PlayBox
         self.itemHighlightDurationMenu = wx.Menu()
         self.highlightDurationItems = [8, 16, 32, 48, 64]
@@ -2479,7 +2439,7 @@ class MenuBar(wx.MenuBar):
             wx.ID_ANY, playbox.ControlButton.MIX_SET_LABEL)
         self.itemMixSet.Enable(False)
         self.menuOption.Append(wx.ID_ANY, u'Play Length', self.itemHighlightDurationMenu)
-        # its checks as the mode key's at its opening (the keys, the mode key change them)
+        # checks synced to the mode key on open
         self.parent.Bind(wx.EVT_MENU_OPEN, self.OnPlayLengthOpen)
 
         self.itemSkipSilence = wx.MenuItem(
@@ -2505,7 +2465,7 @@ class MenuBar(wx.MenuBar):
         self.itemCheckItemsConsistency = wx.MenuItem(
             self.menuOption, wx.ID_ANY, u'Check File Consistency', wx.EmptyString, wx.ITEM_NORMAL)
         self.menuOption.Append(self.itemCheckItemsConsistency)
-        # the songs analyzed by an older analyzer, analyzed again when asked
+        # songs from an older analyzer, analyzed again when asked
         self.itemCheckAnalyzerVersions = wx.MenuItem(
             self.menuOption, wx.ID_ANY, u'Check Analyzer Versions', wx.EmptyString,
             wx.ITEM_NORMAL)
@@ -2520,7 +2480,7 @@ class MenuBar(wx.MenuBar):
         self.Append(self.menuOption, u"Option")
 
     def OnPlayLengthOpen(self, event):
-        # (any of its menus: a few checks, and the submenu's own event not sure on every wx)
+        # any menu opening: the submenu's own event is not reliable in wx
         event.Skip()
         button = self.parent.MainPanel.PlayBox.ControlButton
         for item, kind, length in self.playLengthItems:

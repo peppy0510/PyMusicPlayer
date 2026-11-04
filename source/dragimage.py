@@ -22,20 +22,17 @@ from PIL import ImageOps
 from utilities import get_user_docapp_path
 
 
-# what is dragged shown over the pointer as the Explorer shows it (the pointer alone
-# before, the user): the first ones' covers as cards stacked up and right, how many on a
-# badge; a window of its own that the pointer and the drop go through (WS_EX_TRANSPARENT),
-# its pixels' own alpha (UpdateLayeredWindow), following the pointer (DragSource)
-# (96 read too large over the list, the user)
+# drag picture: covers stacked as cards, how many on a badge
+# its own layered window the pointer and the drop go through (WS_EX_TRANSPARENT)
 CARD = 64
 STEP = 5
 CARDS_MOST = 3
-# room round the cards for their shadow and the badge over the front one's corner
+# room for the shadow and the badge
 MARGIN = 10
 SHADOW = 2
-# the whole a little see-through (what it is dragged over shows under it)
+# a little see-through
 ALPHA = 225
-# the cards' bottom over the pointer's tip (the row it is dropped on left in sight)
+# above the pointer's tip: the row under it left in sight
 OVER_POINTER = 8
 PLAYLIST_TYPES = ('m3u', 'm3u8', 'pls')
 
@@ -67,8 +64,7 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ('biClrImportant', ctypes.wintypes.DWORD)]
 
 
-# (their handles as pointers: without argtypes a 64-bit handle and HWND_TOPMOST were cut
-# to 32 bits, the call failing without a word)
+# without argtypes 64-bit handles are cut to 32 bits, the call failing silently
 user32.GetDC.restype = HANDLE
 user32.GetDC.argtypes = [HANDLE]
 user32.ReleaseDC.argtypes = [HANDLE, HANDLE]
@@ -93,7 +89,6 @@ gdi32.DeleteDC.argtypes = [HANDLE]
 
 
 def get_kind(path):
-    # what a dragged path's card shows: a station, a folder, a playlist file, else a song
     if audio.is_stream_path(path):
         return 'station'
     if os.path.isdir(path):
@@ -104,8 +99,7 @@ def get_kind(path):
 
 
 def read_picture(path):
-    '''a song's cover as a CARD square (cut to its middle), or None: its tags' (the list's
-    thumbnails are 64 px), else the list's thumbnail'''
+    '''a song's cover as a CARD square, or None'''
     from listimages import read_cover
     data = None
     try:
@@ -129,9 +123,7 @@ def read_picture(path):
 
 
 def draw_card(gc, kind, x, y):
-    '''a card without a cover: a song's (a station's) as the player shows a song with none,
-    its record's label (PlayBoxApic.DrawApic: a note before, the user); a folder's, a
-    playlist's lines on the same ground'''
+    '''a card without a cover'''
     st = macroboxstyle.current().PLAYBOX
     gc.SetPen(wx.NullGraphicsPen)
     gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(st.CHIP_BG_COLOR))))
@@ -169,7 +161,7 @@ def make_picture(paths):
     image.SetAlpha(bytes(width * height))
     gc = wx.GraphicsContext.Create(image)
     tokens = macroboxstyle.current().UI
-    # the cards from the last one behind (up, right) to the front one
+    # from the last one behind to the front one
     front = (MARGIN, MARGIN + depth)
     for k in range(len(shown) - 1, -1, -1):
         x, y = front[0] + k * STEP, front[1] - k * STEP
@@ -183,7 +175,7 @@ def make_picture(paths):
         else:
             draw_card(gc, kind, x, y)
         if k > 0:
-            # (the ones behind dimmed: the front one read as what is held)
+            # the ones behind dimmed
             gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 70))))
             gc.SetPen(wx.NullGraphicsPen)
             gc.DrawRectangle(x, y, CARD, CARD)
@@ -191,8 +183,7 @@ def make_picture(paths):
         gc.SetBrush(wx.NullGraphicsBrush)
         gc.DrawRectangle(x + 0.5, y + 0.5, CARD - 1, CARD - 1)
     if len(paths) > 1:
-        # how many, on the accent over the front card's top right corner (the stack's
-        # corner): its digits by their ink on the badge's middle (uikit.get_text_ink)
+        # badge over the front card's top right corner, digits centered by ink
         font = uikit.get_font(11, bold=True)
         text = f'{len(paths)}'
         offset, ink_width = uikit.get_text_ink(font, text)
@@ -228,7 +219,7 @@ class DragImage():
         self.frame.ShowWithoutActivating()
 
     def Paint(self, image):
-        # the picture as the window's pixels: BGRA, premultiplied by their alpha
+        # BGRA, premultiplied by alpha
         width, height = self.size
         rgb = numpy.frombuffer(bytes(image.GetData()), dtype=numpy.uint8)
         rgb = rgb.reshape(height, width, 3).astype(numpy.uint16)
@@ -263,7 +254,7 @@ class DragImage():
             user32.ReleaseDC(None, screen)
 
     def GetPlace(self):
-        # the front card over the pointer, its middle on it
+        # the front card's middle over the pointer
         x, y = wx.GetMousePosition()
         return x - self.anchor[0], y - self.anchor[1] - OVER_POINTER
 
@@ -287,5 +278,5 @@ class DragSource(wx.DropSource):
     def GiveFeedback(self, effect):
         if self.image is not None:
             self.image.Follow()
-        # (the system's pointers kept: copy, none)
+        # the system's pointers kept
         return False

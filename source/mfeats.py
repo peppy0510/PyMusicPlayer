@@ -47,10 +47,9 @@ MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
 
 
 MFEATS_VERSION = '1.5.1'
-# 3band waveform: a column's seconds (about), where the lows end, the highs begin and end (Hz)
+# 3band waveform: column seconds, band edges (Hz)
 WAVEFORM_COLUMN_SECONDS = 0.01
-# the bands are read over blocks of about this long (a column is too short to tell
-# 200 Hz from 1,500); a frame shorter than two of them is read whole
+# bands read over blocks this long (a column is too short)
 WAVEFORM_BAND_SECONDS = 0.023
 WAVEFORM_LOW_TOP = 200
 WAVEFORM_HIGH_BOTTOM = 1500
@@ -143,8 +142,7 @@ class MFEATS(Struct):
 
 
 def mfeats_single(path, queue=None, on_wave=None):
-    # on_wave: given the song's waveform (and highlight) as soon as they are there,
-    # before the tempo's octave and the key
+    # on_wave: called with the waveform early, before tempo octave and key
     # uses mono data
 
     # tic = time.time()
@@ -180,7 +178,7 @@ def mfeats_single(path, queue=None, on_wave=None):
 
     if hstream == 0:
         error = 1
-    # an empty file, or one with no length to read
+    # empty file or unreadable length
     if hlength <= 0 or hlength == 0xFFFFFFFFFFFFFFFF or duration <= 0:
         error = 1
 
@@ -199,7 +197,7 @@ def mfeats_single(path, queue=None, on_wave=None):
     frame_length = int(1.0 * total_frame_length / waveform_length) * 2
     # if int(frame_length) % 8 != 0:
     #     frame_length += (8 - int(frame_length) % 8)
-    # whole samples of every channel (8 for stereo, as before)
+    # whole samples of every channel
     frame_unit = int(numpy.lcm(8, channel))
     if int(frame_length) % frame_unit != 0:
         frame_length += (frame_unit - int(frame_length) % frame_unit)
@@ -208,15 +206,14 @@ def mfeats_single(path, queue=None, on_wave=None):
     frame_raw = numpy.arange(frame_length, dtype=ctypes.c_short)
     # jump = 1.0 * frame_length / waveform_oversampling
     mix_length = int(frame_length / channel)
-    # the waveform's columns: a frame split into some of about WAVEFORM_COLUMN_SECONDS
+    # waveform columns of about WAVEFORM_COLUMN_SECONDS each
     sub_count = max(int(round(1.0 * mix_length / fs / WAVEFORM_COLUMN_SECONDS)), 1)
     sub_length = int(mix_length / sub_count)
     # waveform = numpy.linspace(0, 0, int(round(waveform_length + gap)))
     waveform = numpy.zeros((int(round(waveform_length + gap)) * sub_count, 5))
     # mix_window = numpy.hanning(mix_length)
     # mix_freqs = numpy.fft.rfftfreq(mix_length, 1.0 / fs)
-    # the bands block by block, each column the block its middle falls in: a frame
-    # is a 5000th of the file, and a three-hour mix had one colour every 2 seconds
+    # bands block by block, each column from the block its middle falls in
     band_length = int(fs * WAVEFORM_BAND_SECONDS)
     if mix_length < band_length * 2:
         band_length = mix_length
@@ -230,20 +227,16 @@ def mfeats_single(path, queue=None, on_wave=None):
                  (mix_freqs >= WAVEFORM_HIGH_BOTTOM) & (mix_freqs < WAVEFORM_HIGH_TOP))
 
     analyze_frame, tempo_frame, tempo_fs = ([], [], 200)
-    # the key on a thread of its own: this pass hands it the frames it reads for the
-    # waveform (mix), thirty seconds at a time, where it handed them to the key
-    # itself before, and goes on (its FFTs let go of the GIL). in this pass the key
-    # held the waveform back (4.5 s of 22 for an hour's mix); read again after it,
-    # the song took a third longer; read again alongside, the two fought for the
-    # GIL. the same frames in the same bunches, in order: the same sums to the bit
+    # key on its own thread, fed this pass's frames in bunches
+    # (its FFTs release the GIL)
     key_frames, key_bunches, key_found = ([], Queue(), [])
 
     def read_key():
-        # the first frame centred at 0, as Essentia's FrameCutter
+        # first frame centred at 0, as Essentia's FrameCutter
         key_length = get_key_frame_length(fs)
         key_hpcp, rest = (numpy.zeros(12), numpy.zeros(int((key_length + 1) / 2)))
         while True:
-            # given up on if this pass is gone (an error in it): no thread left behind
+            # give up if this pass is gone
             try:
                 last, frames = key_bunches.get(timeout=KEY_BUNCH_WAIT)
             except Empty:
@@ -320,7 +313,7 @@ def mfeats_single(path, queue=None, on_wave=None):
     # waveform
 
     # waveform = numpy.int8(waveform / (2**8))
-    # peak and level square-rooted, then each band's share of the sound
+    # peak and level square-rooted, then each band's share
     shares = numpy.sqrt(waveform[:, 2:])
     shares = shares / numpy.maximum(shares.sum(axis=1, keepdims=True), 1e-12)
     waveform = numpy.uint8(numpy.round(255 * numpy.column_stack([
@@ -375,16 +368,15 @@ def mfeats_single(path, queue=None, on_wave=None):
     offset_time = 1.0 * jump * pntadd / (len(highlight_raw_points) / duration)
     highlight = (offset_time, until_duration)
 
-    # the waveform shown while the rest goes on: DeepRhythm (its model loaded in a
-    # new worker, seconds) and the key's pass are still to come
+    # waveform out early, before DeepRhythm and the key
     if on_wave is not None:
-        # the tempo before its octave (for the highlight's length in beats only)
+        # tempo before its octave (highlight length only)
         on_wave(MFEATS(
             mdx=mdx, path=path, duration=duration, highlight=highlight, waveform=waveform,
             tempo=tempo, date=time.time(), version=version, channel=channel, bit=bit,
             error=0, autogain=0.4))
 
-    # the octave from DeepRhythm over the highlight, the value from the spectrum
+    # octave from DeepRhythm over the highlight, value from the spectrum
     seconds = max(until_duration, DEEPRHYTHM_CLIP)
     offset = max(min(highlight[0], duration - seconds), 0)
     tempo = fix_tempo_octave(tempo, read_mono(hstream, fs, channel, offset, seconds), fs)
@@ -562,10 +554,7 @@ def mfeats_single(path, queue=None, on_wave=None):
 
 
 def get_live_waveform_columns(mono, fs):
-    '''waveform columns as mfeats_single makes them (uint8: sqrt peak, sqrt level, the low,
-    mid and high shares), one each WAVEFORM_COLUMN_SECONDS of mono samples (-1 to 1) as they
-    are heard: the radio's, drawn as a track's is. the bands from the samples' last
-    WAVEFORM_BAND_SECONDS'''
+    '''live waveform columns as mfeats_single makes them'''
     size = max(int(fs * WAVEFORM_COLUMN_SECONDS), 1)
     count = len(mono) // size
     if count == 0:
@@ -687,7 +676,7 @@ def convert_chord_type(chord, type_idx):
 
 
 def transpose_chord(chord, semitones):
-    # the key moved by semitones, written as it was (flat, sharp or Camelot)
+    # key moved by semitones, in the same notation
     for names in get_chord_type_definition():
         if chord in names:
             idx = names.index(chord)
@@ -750,9 +739,8 @@ def get_chord_binaries_correlation_lag_score(chroma):
     return (minor_lag + 12, minor_value)
 
 
-# Essentia's KeyExtractor with its defaults (bgate profile) in numpy: whitened spectral
-# peaks of 25 to 3500 Hz into a 12-bin HPCP over the whole song. Same keys as Essentia on
-# 1,413 songs; on 1,526 tagged songs 66% against 36% for the highlight's most frequent chord.
+# Essentia's KeyExtractor (bgate profile) in numpy: whitened spectral
+# peaks of 25 to 3500 Hz into a 12-bin HPCP over the whole song
 
 KEY_FS = 44100
 KEY_FRAME = 4096
@@ -761,10 +749,9 @@ KEY_MAX_FREQUENCY = 3500.0
 KEY_MAX_PEAKS = 60
 KEY_PEAK_THRESHOLD = 0.0001
 KEY_PCP_THRESHOLD = 0.2
-# added to the minor correlations: the library is mostly minor (84% of tags, 94% of 10,916
-# labelled loops); exact 63 to 68% on songs, 44 to 49% on loops, majors 83 to 79% and 43 to 38%
+# added to the minor correlations: the library is mostly minor
 KEY_MINOR_BIAS = 0.05
-# major and minor from A (Faraldo, Jorda and Herrera, AES Semantic Audio 2017)
+# major and minor from A (Faraldo, Jorda and Herrera, AES 2017)
 KEY_PROFILES = (
     (1.00, 0.00, 0.42, 0.00, 0.53, 0.37, 0.00, 0.77, 0.00, 0.38, 0.21, 0.30),
     (1.00, 0.00, 0.36, 0.39, 0.00, 0.38, 0.00, 0.74, 0.27, 0.00, 0.42, 0.23))
@@ -775,7 +762,7 @@ def get_key_frame_length(fs):
 
 
 def get_key_harmonics():
-    '''(semitone, weight) of a peak as the 1st to 5th harmonic of a lower note'''
+    '''(semitone, weight) of a peak as the 1st to 5th harmonic'''
     harmonics = []
     for i in range(5):
         semitone = 12.0 * numpy.log2(i + 1.0)
@@ -792,7 +779,7 @@ def get_key_harmonics():
 
 
 def get_key_hpcp(frames, fs):
-    '''the frames' HPCP summed, from A'''
+    '''summed HPCP of the frames, from A'''
     size = frames.shape[1]
     window = numpy.hanning(size)
     window = window * 2.0 / window.sum()
@@ -823,7 +810,7 @@ def get_key_hpcp(frames, fs):
     magnitude = numpy.take_along_axis(magnitude, order, axis=1)
     frequency = numpy.take_along_axis(frequency, order, axis=1)
 
-    # whitening: a peak's level against the spectrum's envelope, every 100 Hz
+    # whitening: peak level against the spectral envelope
     points = numpy.arange(0.0, KEY_MAX_FREQUENCY * 1.2 + 1, 100.0)
     points = points[points <= fs / 2.0]
     shape = numpy.zeros((len(points), bins))
@@ -863,7 +850,7 @@ def get_key_hpcp(frames, fs):
 
 
 def add_key_frames(hpcp, mix, length, fs, last=False):
-    '''the whole frames of mix added to hpcp, the rest returned (padded and added if last)'''
+    '''add whole frames of mix to hpcp, return the rest'''
     if last and len(mix) % length != 0:
         mix = numpy.concatenate((mix, numpy.zeros(length - len(mix) % length)))
     count = int(len(mix) / length)
@@ -873,7 +860,7 @@ def add_key_frames(hpcp, mix, length, fs, last=False):
 
 
 def get_key_from_hpcp(hpcp):
-    '''the chord index (C to B major, then minor) of the best correlated profile, or None'''
+    '''chord index of the best correlated profile, or None'''
     if numpy.max(hpcp) <= 0:
         return None
     pcp = numpy.array(hpcp) / numpy.max(hpcp)
@@ -929,7 +916,7 @@ class Process(multiprocessing.Process):
         set_process_priority(6)
         # mfeats_single(self.path, self.queue)
         # self.result = self.queue.get()
-        # a failed analysis is kept as an error, or it was tried again on every start
+        # keep a failed analysis as an error, or it retries on every start
         try:
             self.result = mfeats_single(self.path)
         except Exception:
@@ -941,29 +928,25 @@ class Process(multiprocessing.Process):
         pass
 
 
-# how long the key's thread waits for the next frames before it gives up
+# key thread's wait for the next frames
 KEY_BUNCH_WAIT = 120
 
 
 def mfeats_worker(conn, model_address=None):
-    # model_address: deeprhythm_server's, for the tempo's octave (none: the model here)
-    # one process for the songs in a row: torch and its models load once, not a song each.
-    # here, not in macroboxlib: a worker spawned for one there imported macroboxlib first,
-    # met this module importing it back half done (circular import) and died before a song
+    # model_address: deeprhythm_server's (none: the model here)
+    # here, not in macroboxlib: a circular import killed spawned workers
     set_process_priority(6)
     DEEPRHYTHM.address = model_address
-    # DeepRhythm's model is loaded with the first song, after its waveform is out
-    # (mfeats_single's on_wave): loaded on a thread alongside, its imports held the
-    # GIL and the first waveform came at 5.3 s, not 2.2 (done at 5.4 s either way)
+    # DeepRhythm loads with the first song, after its waveform
     while True:
         try:
             path = conn.recv()
         except (EOFError, OSError):
-            # the app is gone (its end of the pipe closed)
+            # app gone (pipe closed)
             return
         if path is None:
             return
-        # ('grid', path): the song is analyzed, only its grid is not
+        # ('grid', path): only the grid is missing
         if isinstance(path, tuple):
             path = path[1]
             resp = getby_key_value('mdx', makemdx(path), waveform=False)
@@ -974,7 +957,7 @@ def mfeats_worker(conn, model_address=None):
             except (EOFError, OSError):
                 return
             continue
-        # a failed analysis is kept as an error, or it was tried again on every start
+        # keep a failed analysis as an error, or it retries on every start
         try:
             result = mfeats_single(path, on_wave=insert_mfeats_wave)
         except Exception:
@@ -1016,23 +999,20 @@ def get_tempo(audata, samplerate, tmin=60, tmax=190):
     return tempo
 
 
-# The spectrum below picks the double of a slow song (its harmonic sum favours 2T),
-# DeepRhythm picks the octave but only whole BPMs, a class low. Measured on 1,530
-# tagged songs: spectrum 79%, DeepRhythm 93%, both 93% and 95% within 0.5 BPM.
+# the spectrum tends to pick a slow song's double; DeepRhythm gets the
+# octave but only whole BPMs
 
 DEEPRHYTHM_FS = 22050
 DEEPRHYTHM_CLIP = 8
 DEEPRHYTHM = Struct(predictor=None, failed=False, lock=threading.Lock(),
                     address=None, client=None, unreachable=0)
-# DeepRhythm in a process of its own for all the workers (deeprhythm_server): in each
-# worker torch and the model were 313 MB of its 437 (24 workers, 10 GB), and a new
-# worker waited seconds for them. a worker given its address sends a clip and gets
-# the BPM; a server starting is waited for, a server gone leaves the spectrum tempo
+# DeepRhythm in one process for all workers (deeprhythm_server);
+# without a server the spectrum tempo is kept
 DEEPRHYTHM_CONNECT_WAIT = 20
-# the most songs' clips through the model at once (a song is 4 to 8 clips of 8 s)
+# most clips through the model at once
 DEEPRHYTHM_BATCH = 16
 DEEPRHYTHM_ANSWER_WAIT = 30
-# not reached: tried again after this long (the scheduler starts it again)
+# retry after this long when not reached
 DEEPRHYTHM_RETRY = 60
 
 
@@ -1041,15 +1021,14 @@ def get_deeprhythm_address(pid):
 
 
 def deeprhythm_server(control, address, threads=None):
-    '''DeepRhythm's BPMs for the workers connected at address, until control ends.
-    threads: torch's own (the cores the workers leave; torch takes them all by default)'''
+    '''DeepRhythm BPMs for the workers at address, until control ends'''
     set_process_priority(6)
     if threads is not None:
         import torch
         torch.set_num_threads(threads)
     listener = Listener(address)
     requests = Queue()
-    # loaded at once: the first clip comes after a song's first pass
+    # load at once
     threading.Thread(target=get_deeprhythm, daemon=True).start()
 
     def serve(client):
@@ -1058,7 +1037,7 @@ def deeprhythm_server(control, address, threads=None):
                 request = client.recv()
             except (EOFError, OSError):
                 break
-            # Beat This! for the grid: answered here, a clip at a time
+            # Beat This! for the grid, a clip at a time
             if len(request) == 3 and request[0] == 'beats':
                 try:
                     answer = predict_beatthis_here(request[1], request[2])
@@ -1080,8 +1059,7 @@ def deeprhythm_server(control, address, threads=None):
         client.close()
 
     def predict():
-        # the clips asked for meanwhile in one batch: one at a time, a clip for each of
-        # 24 workers, one process answered 6.7 a second
+        # batch the clips asked for meanwhile
         while True:
             batch = [requests.get()]
             while len(batch) < DEEPRHYTHM_BATCH:
@@ -1105,7 +1083,7 @@ def deeprhythm_server(control, address, threads=None):
 
     threading.Thread(target=predict, daemon=True).start()
     threading.Thread(target=accept, daemon=True).start()
-    # told to end (None), or the app gone (its end closed)
+    # told to end (None), or the app gone
     try:
         control.recv()
     except (EOFError, OSError):
@@ -1113,8 +1091,7 @@ def deeprhythm_server(control, address, threads=None):
 
 
 def predict_deeprhythm_batch(batch):
-    '''each asked's bpm (None if none): its 8 s clips with all the others' through the
-    model at once, then each song's mean as predict_from_audio takes it'''
+    '''each request's bpm (None if none), all clips in one batch'''
     predictor = get_deeprhythm()
     if predictor is None:
         return
@@ -1132,7 +1109,7 @@ def predict_deeprhythm_batch(batch):
         for asked, part in zip(batch, torch.split(probabilities, counts)):
             asked.bpm = float(class_to_bpm(torch.max(part.mean(dim=0), 0)[1].item()))
     except Exception:
-        # the batch failed (one song's clip): each on its own, as before
+        # batch failed: each on its own
         for asked in batch:
             try:
                 asked.bpm = float(predictor.predict_from_audio(asked.audio, asked.fs))
@@ -1141,7 +1118,7 @@ def predict_deeprhythm_batch(batch):
 
 
 def predict_deeprhythm(audio):
-    '''DeepRhythm's BPM for the clip, from the server when the worker has one; or None'''
+    '''DeepRhythm BPM of the clip, from the server if any; or None'''
     if DEEPRHYTHM.address is None:
         predictor = get_deeprhythm()
         if predictor is None:
@@ -1164,7 +1141,7 @@ def ask_model(request):
                     DEEPRHYTHM.client = Client(DEEPRHYTHM.address)
                 except (FileNotFoundError, ConnectionError, OSError):
                     if time.time() > until:
-                        # not waited for again at every song of this worker
+                        # not waited for again by this worker
                         DEEPRHYTHM.unreachable = time.time() + DEEPRHYTHM_RETRY
                         return None
                     time.sleep(0.2)
@@ -1173,7 +1150,7 @@ def ask_model(request):
             raise TimeoutError
         return DEEPRHYTHM.client.recv()
     except Exception:
-        # gone or stuck: this song keeps the spectrum tempo, the next one connects again
+        # gone or stuck: keep the spectrum tempo, reconnect next song
         try:
             DEEPRHYTHM.client.close()
         except Exception:
@@ -1183,7 +1160,7 @@ def ask_model(request):
 
 
 def get_deeprhythm():
-    '''once a process; None without the package, and the spectrum tempo stays'''
+    '''once a process; None without the package'''
     with DEEPRHYTHM.lock:
         if DEEPRHYTHM.predictor is None and DEEPRHYTHM.failed is False:
             try:
@@ -1208,7 +1185,7 @@ def read_mono(hstream, fs, channel, offset, seconds):
 
 
 def fix_tempo_octave(tempo, mono, fs):
-    '''the spectrum tempo halved or doubled to DeepRhythm's, when one is within 3%'''
+    '''spectrum tempo halved or doubled to DeepRhythm's within 3%'''
     if tempo == 0 or len(mono) < fs * DEEPRHYTHM_CLIP:
         return tempo
     from scipy.signal import resample_poly
@@ -1226,10 +1203,8 @@ def fix_tempo_octave(tempo, mono, fs):
     return bpm
 
 
-# Beat Grid: the tempo to 0.0005 BPM and the beats' phase from the high band's attacks
-# folded on the beat; the quarter of a beat they fall on and the bar's first beat from
-# Beat This! over the highlight. scored on 268 hand-gridded EDM edits (2026-10-20): all
-# within 0.005 BPM, 98-99% of beats within 15 ms, downbeats 87%
+# Beat Grid: tempo and phase from the high band's attacks folded on the
+# beat; quarter beat and bar from Beat This! over the highlight
 
 GRID_VERSION = '1.2.0'
 GRID_TABLE = 'mfeats_grid'
@@ -1239,45 +1214,32 @@ GRID_SEARCH = ((0.3, 0.01), (0.012, 0.0005))
 GRID_BINS = 240
 BEATTHIS_FS = 22050
 BEATTHIS_SECONDS = 60
-# a quarter-beat move of the grid is taken only when Beat This!'s beats sit this
-# close to it and this far from where it was
+# quarter-beat move taken only when Beat This!'s beats are this close
 BEATTHIS_NEAR = 0.030
 BEATTHIS_FAR = 0.060
 BEATTHIS = Struct(predictor=None, failed=False, lock=threading.Lock())
-# the phrase (4 bars): the bar after which the sound changes most, beat by beat 4 beats
-# against the 4 before, summed over the song. 77% on the edits cut at random (85% on
-# the right bar), chance 25%
+# phrase (4 bars): the bar after which the sound changes most
 PHRASE_WINDOW = 4
 PHRASE_BANDS = numpy.geomspace(40, 5000, 13)
-# Beat This!'s bar given up for the one the song's changes fall on (check_grid_bar)
+# Beat This!'s bar given up for the one the changes fall on
 BAR_OVERRIDE = 3.0
-# a phrase drawn only when its score leads the next by this share: 94% right on the edits
-# for the 73% of songs sure enough (all of them, 85%)
+# draw a phrase only when its score leads the next by this share
 PHRASE_SURE = 0.2
-# a drop's start: the low band's rise over its spread more than the chosen start's
-# (refine_highlight_start); a calm bar (breakdown, outro): under this share of the body's
-# level or low band (choose_long_highlight)
+# drop start (refine_highlight_start) and calm bar (choose_long_highlight)
 HIGHLIGHT_LOW_RISE = 1.0
 HIGHLIGHT_CALM = 0.5
-# the radio edit (choose_radio_edit): a 4 bar block of the main part at this share of the
-# body's level, and full: its level, mids and highs together at EDIT_FULL of the body's (an
-# intro or an outro of drums and bass is as loud, but without the mids and highs of the
-# pads, the lead and the voice); a breakdown's block under HIGHLIGHT_CALM of its low band;
-# of a breakdown the first block and the last two (the build) kept, the rest cut in whole
-# 8 bars
+# radio edit (choose_radio_edit): main part level, fullness and
+# breakdown thresholds
 EDIT_MAIN = 0.85
 EDIT_FULL = 0.75
-# and its mids (200 to 1500 Hz: the pads, the lead, the voice) on their own at this share of
-# their body's: a DJ intro's or outro's guide beat (kick and hats) loud and bright enough
-# in the three together was taken for the main part ("up to the guide beats", the user)
+# mids alone too, or a DJ intro's guide beat reads as the main part
 EDIT_MIDS = 0.6
 EDIT_BREAK_HEAD = 1
 EDIT_BREAK_TAIL = 2
 
 
 def read_mono_all(path, fs_out):
-    # the whole song as mono at fs_out, read in pieces (a long mix whole at once
-    # was hundreds of MB of shorts)
+    # whole song as mono at fs_out, read in pieces
     from scipy.signal import resample_poly
     init_bass_decode()
     channel = get_channel(path)
@@ -1329,8 +1291,7 @@ def fold_grid_onset(onset, bpm):
 
 
 def get_fold_grid(mono, seed):
-    '''(bpm, seconds of a beat from the start): the tempo near seed where the high band's
-    attacks line up sharpest on the beat, and where; the half beat told by the kick'''
+    '''(bpm, phase): tempo near seed where high band attacks line up best'''
     high = get_grid_onset(mono, 'high')
     best = None
     for span, step in GRID_SEARCH:
@@ -1343,7 +1304,7 @@ def get_fold_grid(mono, seed):
     _, bpm, folded = best
     period = 60.0 / bpm
     phase = (numpy.argmax(folded) + 0.5) / GRID_BINS * period
-    # off-beat hats are the sharpest in some songs: the kick is on the beat
+    # off-beat hats can be sharpest: the kick is on the beat
     low = fold_grid_onset(get_grid_onset(mono, 'low'), bpm)
 
     def kick(at):
@@ -1356,7 +1317,7 @@ def get_fold_grid(mono, seed):
 
 
 def get_beatthis():
-    '''once a process; None without the package (the grid's own phase and no bar)'''
+    '''once a process; None without the package'''
     with BEATTHIS.lock:
         if BEATTHIS.predictor is None and BEATTHIS.failed is False:
             try:
@@ -1378,8 +1339,7 @@ def predict_beatthis_here(audio, fs):
 
 
 def predict_beatthis(audio):
-    '''(beats, downbeats) in seconds of the clip, from the model's process when the worker
-    has one (the same connection as DeepRhythm's); or None'''
+    '''(beats, downbeats) of the clip from the model's process; or None'''
     if DEEPRHYTHM.address is None:
         return predict_beatthis_here(audio, BEATTHIS_FS)
     answer = ask_model(('beats', audio, BEATTHIS_FS))
@@ -1389,7 +1349,7 @@ def predict_beatthis(audio):
 
 
 def resolve_grid_phase(phase, period, beats):
-    # the quarter-beat move of the grid that Beat This!'s beats sit on, if clearly
+    # quarter-beat move that Beat This!'s beats sit on, if clear
     beats = numpy.asarray(beats)
     if len(beats) < 8:
         return phase
@@ -1402,7 +1362,7 @@ def resolve_grid_phase(phase, period, beats):
 
 
 def get_grid_bar(downbeats, phase, period):
-    # which of four beats the bar starts on, by the most downbeats
+    # bar start by the most downbeats
     if len(downbeats) == 0:
         return None
     beats = numpy.round((numpy.asarray(downbeats) - phase) / period).astype(int) % 4
@@ -1410,9 +1370,7 @@ def get_grid_bar(downbeats, phase, period):
 
 
 def analyze_grid(path, tempo, highlight):
-    '''Struct(bpm, downbeat, source): downbeat, the first bar's start in seconds (0 to
-    four beats); source, 'beatthis' when the bar was found, 'fold' when not. None when the
-    song gives no grid'''
+    '''Struct(bpm, downbeat, source), or None when the song gives no grid'''
     if not tempo or tempo <= 0:
         return None
     mono = read_mono_all(path, GRID_FS * 4)
@@ -1438,8 +1396,7 @@ def analyze_grid(path, tempo, highlight):
     phrase, margin = 0, 0.0
     try:
         change = get_beat_changes(mono, GRID_FS * 4, phase % period, period)
-        # beat numbers from the grid's first beat (phase % period: the quarter-beat move
-        # can take phase past a beat)
+        # beat numbers from the grid's first beat
         bar = (bar + int(round((phase - phase % period) / period))) % 4
         checked = check_grid_bar(change, bar)
         if checked != bar:
@@ -1453,9 +1410,7 @@ def analyze_grid(path, tempo, highlight):
 
 
 def get_highlight_taper(count, duration):
-    '''the author's weight along the song (mfeats_single): its head and its tail eased in and
-    out with a Hamming window, the first and the last quarter of a song over four minutes
-    (60 s of a shorter one), so the highlight is found away from the intro and the outro'''
+    '''author's weight along the song: head and tail eased (mfeats_single)'''
     limit_factor = 1 - (duration - 60.0) / duration
     if limit_factor > 1.00:
         limit_factor = 0.00
@@ -1471,9 +1426,7 @@ def get_highlight_taper(count, duration):
 
 
 def segment_means(values, a, b):
-    '''values[a[i]:b[i]].mean() for each i (0 where b[i] <= a[i], nan where the slice is empty
-    past the end), each segment summed by itself: a mean a bar in a Python loop took 0.6 s on
-    the GUI thread for a 2 hour mix, and a running sum's error grew over it'''
+    '''values[a[i]:b[i]].mean() for each i, vectorized'''
     size = len(values)
     a = numpy.asarray(a, dtype=numpy.int64)
     b = numpy.asarray(b, dtype=numpy.int64)
@@ -1491,7 +1444,7 @@ def segment_means(values, a, b):
 
 
 def segment_mins(values, a, b):
-    # values[a[i]:b[i]].min() for each i, every segment holding one at least
+    # values[a[i]:b[i]].min() for each i
     index = numpy.empty(2 * len(a), dtype=numpy.int64)
     index[0::2], index[1::2] = a, numpy.minimum(b, len(values))
     padded = numpy.append(numpy.asarray(values, dtype=float), numpy.inf)
@@ -1500,16 +1453,12 @@ def segment_mins(values, a, b):
 
 def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=None,
                             earliest=None, latest=None):
-    '''(start, scores) of the highlight on the grid. the author's choice (mfeats_single: the
-    loudest stretch of the length by the mean amplitude, its head and tail eased so it is
-    found away from the intro and the outro) made of phrase starts only (4 bars), and then
-    preferring a stretch that starts on a rise (a drop) and holds (no bar falling away).
-    earliest, latest: the starts allowed (None when none of them fits in the song)'''
+    '''(start, scores) of the highlight on phrase starts of the grid'''
     period = 60.0 / bpm
     bar = period * 4
     phrase = step or period * 16
     columns = len(waveform) / duration
-    # the waveform keeps the level square-rooted: back to the mean amplitude
+    # the waveform keeps the level square-rooted
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     weighted = amplitude * get_highlight_taper(len(amplitude), duration)
     low = waveform[:, 2].astype(float)
@@ -1518,7 +1467,7 @@ def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=
     count = int((duration - first) / bar)
     if count < 8:
         return None, []
-    # (mean's bounds, every bar at once)
+    # mean bounds, every bar at once
     i = numpy.arange(count)
     a = (numpy.maximum(first + i * bar, 0) * columns).astype(numpy.int64)
     b = (numpy.minimum(first + (i + 1) * bar, duration) * columns).astype(numpy.int64)
@@ -1526,15 +1475,14 @@ def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=
     spread = bars.std() + 1e-9
     low_spread = lows.std() + 1e-9
     size = max(1, int(round(length / bar)))
-    # the starts weighed (on past the end while none of them is allowed), then their
-    # measures all at once: a few means a start in the loop took 0.4 s for a 2 hour mix
+    # weigh the starts, then their measures all at once
     starts, bar_index, allowed = [], [], []
     found = False
     start = phrase_start % phrase
     while start + bar * size <= duration + 1e-6 or not found:
         i = int(round((start - first) / bar))
         if i < 0 or i >= count:
-            # (none of its bars: the loop's end; before the first bar, never on the grid)
+            # no bars left
             break
         starts.append(start)
         bar_index.append(i)
@@ -1555,7 +1503,7 @@ def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=
     dip = (inside - segment_mins(bars, i, i + size)) / spread
     held = segment_means(weighted, (numpy.maximum(s, 0) * columns).astype(numpy.int64),
                          (numpy.minimum(s + length, duration) * columns).astype(numpy.int64))
-    # the author's measure first, in the song's own spread; the rest corrects it
+    # the author's measure first; the rest corrects it
     scores = (held - bars.mean()) / spread\
         + 0.25 * (segment_means(lows, i, i + size) - lows.mean()) / low_spread\
         + 0.2 * numpy.clip(rise, 0.0, 2.0) - 0.4 * dip
@@ -1564,8 +1512,7 @@ def choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step=
 
 
 def get_bar_levels(waveform, duration, bar, first):
-    """(level, low) per bar from first: the mean amplitude, and the low band's share of it
-    (kick and bass) in the same amplitude"""
+    """(level, low) per bar from first"""
     columns = len(waveform) / duration
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     low = amplitude * waveform[:, 2].astype(float) / 255.0
@@ -1576,10 +1523,7 @@ def get_bar_levels(waveform, duration, bar, first):
 
 
 def refine_highlight_start(waveform, duration, bpm, start):
-    """start moved a bar on or back to where the kick and bass come back: a drum fill bar
-    before a drop has them pulled out (its start was taken for the drop's when the phrase
-    was a bar off, or any bar could start it). moved only when the low band rises there
-    by HIGHLIGHT_LOW_RISE of its bar to bar spread more than at start"""
+    """start moved a bar to where the kick and bass come back"""
     bar = 4 * 60.0 / bpm
     first = start % bar
     _, lows = get_bar_levels(waveform, duration, bar, first)
@@ -1601,10 +1545,7 @@ def refine_highlight_start(waveform, duration, bpm, start):
 
 def choose_long_highlight(waveform, duration, bpm, phrase_start, length, step, earliest,
                           latest):
-    """start of a highlight longer than the chosen one (choose_phrase_highlight between
-    earliest and latest): the one with the fewest calm bars in it (a breakdown or the outro:
-    the level, or the kick and bass, under HIGHLIGHT_CALM of the song's body, its loudest
-    quarter), then by the author's measure. None when no start is allowed"""
+    """start of a longer highlight with the fewest calm bars, or None"""
     _, scored = choose_phrase_highlight(waveform, duration, bpm, phrase_start, length, step,
                                         earliest, latest)
     if not scored:
@@ -1624,20 +1565,14 @@ def choose_long_highlight(waveform, duration, bpm, phrase_start, length, step, e
 
 
 def get_phrase_start(grid):
-    # the first phrase's start (seconds) of a grid row with its moves (shift, phrase_shift)
+    # first phrase start (seconds) with shift and phrase_shift
     period = 60.0 / grid.bpm
     downbeat = (grid.downbeat + (grid.shift or 0) * period) % (period * 4)
     return downbeat + (((grid.phrase or 0) + (grid.phrase_shift or 0)) % 4) * period * 4
 
 
 def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=None):
-    """(start, end, cuts) of a DJ track played as a radio edit, or None (too short, or no
-    main part): from the first block of its main part (the intro skipped) to the last one's
-    end (the outro skipped), its long breakdowns shortened, cuts [(from, to)] jumped over.
-    blocks of 4 bars from the phrase's start; a cut is whole 8 bars, so the song's phrases
-    go on across it. target: about this many seconds (window_edit: its start and end
-    brought in, no jump added), the edit as it is without. keep: (start, end) seconds played
-    whole whatever is cut (the highlight: SHORT left it out of most songs, the user)"""
+    """(start, end, cuts) of a DJ track played as a radio edit, or None"""
     bar = 4 * 60.0 / bpm
     block = bar * 4
     first = phrase_start % block
@@ -1650,7 +1585,7 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=N
         return None
     level = levels[:count * 4].reshape(count, 4).mean(axis=1) / body
     low = lows[:count * 4].reshape(count, 4).mean(axis=1) / body_low
-    # the mids and the highs in the same amplitude, block by block, against their body's
+    # mids and highs block by block, against the body's
     columns = len(waveform) / duration
     amplitude = (waveform[:, 1].astype(float) / 255.0) ** 2
     full = level.copy()
@@ -1660,13 +1595,13 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=N
     shares = []
     for band in (3, 4):
         share = amplitude * waveform[:, band].astype(float) / 255.0
-        # (an empty slice's mean nan, as .mean() of it)
+        # an empty slice's mean is nan
         values = segment_means(share, a, b)
         values[b <= a] = numpy.nan
         shares.append(values / (numpy.quantile(values, 0.75) + 1e-12))
         full += shares[-1]
     main = (level >= EDIT_MAIN) & (full / 3.0 >= EDIT_FULL) & (shares[0] >= EDIT_MIDS)
-    # two blocks running: a lone loud one in an intro is not its main part
+    # two blocks running: a lone loud one is not the main part
     starts = [i for i in range(count - 1) if main[i] and main[i + 1]]
     if not starts:
         return None
@@ -1699,22 +1634,14 @@ def choose_radio_edit(waveform, duration, bpm, phrase_start, target=None, keep=N
     return (first + head * block, min(first + tail * block, duration), cuts)
 
 
-# a timed edit (window_edit): never shorter than this many blocks (4 bars); a start or an
-# end off a part's (on its 8 bars' steps instead) weighed as this many blocks more off the
-# time asked, a start after the edit's own as one more
+# timed edit (window_edit): least blocks and off-part weights
 EDIT_END_LEAST = 8
 EDIT_OFF_PART = 2
 EDIT_LATE_START = 1
 
 
 def window_edit(first, block, head, tail, cuts, target, low, kept=None):
-    '''(head, tail, cuts) of the edit played about target seconds, its jumps the edit's own
-    (cutting its repeats too, 8 bars here and there, joined parts that did not follow: "the
-    pieces joined awkwardly", the user): of its blocks a stretch from its start or a part's
-    (the kick and bass back) to its end or a part's end (the kick and bass falling: a
-    breakdown's start, the outro's), else on its 8 bars' steps from its start; holding kept
-    (blocks: the highlight) whole; the nearest target, a start or end off a part's and a
-    late start weighed against it (EDIT_OFF_PART, EDIT_LATE_START)'''
+    '''(head, tail, cuts) of the edit played about target seconds'''
     cut = set()
     for a, b in cuts:
         cut.update(range(int(round((a - first) / block)), int(round((b - first) / block))))
@@ -1756,8 +1683,7 @@ def window_edit(first, block, head, tail, cuts, target, low, kept=None):
 
 
 def get_beat_changes(mono, fs, start, period):
-    '''how much the sound changes at each beat from start: 4 beats after against the 4 before
-    (12 bands' log energy and the loudness)'''
+    '''sound change at each beat: 4 beats after against the 4 before'''
     feats = []
     for k in range(int((len(mono) / fs - start) / period)):
         segment = mono[int((start + k * period) * fs):int((start + (k + 1) * period) * fs)]
@@ -1776,9 +1702,7 @@ def get_beat_changes(mono, fs, start, period):
 
 
 def check_grid_bar(change, bar):
-    '''the bar's first beat (0 to 3 from the grid's first beat) the song's biggest changes say,
-    when they say it clearly: the changes on another beat at least BAR_OVERRIDE times those on
-    bar (else bar). 253 of 268 hand-gridded edits against 244 for Beat This! alone'''
+    '''the bar's first beat (0 to 3) the biggest changes clearly point to'''
     peaks = [k for k in range(1, len(change) - 1)
              if change[k] > 0 and change[k] == change[max(0, k - 3):k + 4].max()]
     if len(peaks) < 8:
@@ -1793,8 +1717,7 @@ def check_grid_bar(change, bar):
 
 
 def get_grid_phrase(change, bar):
-    '''(bars 0 to 3 from the bar's first beat to the first phrase's start, how far its score
-    leads the next one's as a share of it)'''
+    '''(bars to the first phrase start, its score lead as a share)'''
     if len(change) < PHRASE_WINDOW * 2 + 16:
         return 0, 0.0
     scores = numpy.array([change[(bar + 4 * q) % 16::16].sum() for q in range(4)])
@@ -1995,7 +1918,7 @@ def deleteby_key_value(key, value, table_name='mfeats', db_name=None):
 
 
 def create_mfeats_index(table_name='mfeats', db_name=None):
-    # rows are looked up by path too (the scheduler's check)
+    # rows are looked up by path too
     if db_name is None:
         db_name = MFEATS_DB
     conn = sqlite3.connect(db_name)
@@ -2005,8 +1928,7 @@ def create_mfeats_index(table_name='mfeats', db_name=None):
 
 
 def getby_key_value(key, value, table_name='mfeats', db_name=None, waveform=True):
-    # waveform=False: the row without its waveform (the biggest blob), for the
-    # list's and the scheduler's checks
+    # waveform=False: the row without its waveform blob
     if db_name is None:
         db_name = MFEATS_DB
     # query = f'''SELECT * FROM {table_name} WHERE {key}="{value}"'''
@@ -2076,7 +1998,7 @@ def update_many_key_values(where, key_values, table_name='mfeats', db_name=None)
     # key_values = [''.join([key, '="', value, '"']) for key, value in key_values]
     # key_values = ','.join(key_values)
     # query = '''UPDATE %s SET %s WHERE %s="%s";''' % (table_name, key_values, where[0], where[1])
-    # values as parameters: a quote in a key or a tempo broke the query
+    # values as parameters: quotes broke the query
     names = ','.join([f'{key}=?' for key, _ in key_values])
     query = f'''UPDATE {table_name} SET {names} WHERE {where[0]}=?;'''
     conn = None
@@ -2098,8 +2020,7 @@ def update_many_key_values(where, key_values, table_name='mfeats', db_name=None)
     #         conn.close()
 
 
-# the waveform of a song still being analyzed (mfeats_single's on_wave), shown
-# before its tempo and key: a table of its own, never taken for an analyzed song
+# waveform of a song still being analyzed, in its own table
 MFEATS_WAVE_TABLE = 'mfeats_wave'
 
 
@@ -2113,7 +2034,7 @@ def insert_mfeats_wave(mfeats_data):
 
 
 def getby_mdx_wave(mdx):
-    # none yet: no table before the first one
+    # no table before the first one
     try:
         return getby_key_value('mdx', mdx, table_name=MFEATS_WAVE_TABLE)
     except sqlite3.Error:
@@ -2124,11 +2045,8 @@ def delete_mfeats_wave(mdx):
     deleteby_key_value('mdx', mdx, table_name=MFEATS_WAVE_TABLE)
 
 
-# the beat grid: a table and a version of its own, so a new grid analyzes no song's
-# waveform, tempo or key again. shift: the user's move of the bar, in beats, kept
-# through a new analysis
-# phrase: bars from the downbeat to the first phrase (4 bars); phrase_shift, the user's
-# move of it, kept as shift is
+# beat grid: its own table and version; shift and phrase_shift are
+# manual moves kept through a new analysis
 GRID_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('bpm', 'REAL'), ('downbeat', 'REAL'),
                    ('shift', 'INTEGER'), ('source', 'TEXT'), ('version', 'TEXT'),
                    ('date', 'REAL'), ('phrase', 'INTEGER'), ('phrase_shift', 'INTEGER'),
@@ -2140,7 +2058,7 @@ def connect_grid():
     conn = sqlite3.connect(MFEATS_DB)
     conn.execute(f'CREATE TABLE IF NOT EXISTS {GRID_TABLE} '
                  f'({",".join([" ".join(field) for field in GRID_DEFINITION])})')
-    # a table made before the phrase: its columns added (at the end, as listed)
+    # older table: add the phrase columns
     columns = [v[1] for v in conn.execute(f'PRAGMA table_info({GRID_TABLE})')]
     for key, kind in GRID_DEFINITION:
         if key not in columns:
@@ -2150,7 +2068,7 @@ def connect_grid():
 
 
 def get_grid(mdx):
-    '''Struct of the song's grid row (bpm 0: none found), or None when not analyzed'''
+    '''the song's grid row (bpm 0: none found), or None'''
     conn = connect_grid()
     try:
         row = conn.execute(f'SELECT * FROM {GRID_TABLE} WHERE mdx=?', (mdx,)).fetchone()
@@ -2162,8 +2080,7 @@ def get_grid(mdx):
 
 
 def get_done_mdx():
-    '''the songs with nothing left to analyze: their analysis this version's, and their grid
-    too (or the analysis failed, so no grid comes)'''
+    '''songs with nothing left to analyze'''
     conn = connect_grid()
     try:
         rows = conn.execute(
@@ -2176,8 +2093,7 @@ def get_done_mdx():
 
 
 def get_analysis_versions():
-    '''{mdx: (its analysis' version, its error, its grid's version or None)} of every song
-    analyzed (Options > Check Analyzer Versions)'''
+    '''{mdx: (version, error, grid version or None)} of every song'''
     conn = connect_grid()
     try:
         rows = conn.execute(
@@ -2197,10 +2113,10 @@ def insert_grid(mdx, grid):
     old = get_grid(mdx)
     if grid is None:
         grid = Struct(bpm=0.0, downbeat=0.0, source='', phrase=0, phrase_margin=0.0)
-    # the user's tempo scale (x2, /2) kept through a new analysis
+    # manual tempo scale kept through a new analysis
     scale = old.bpm_scale if old is not None and old.bpm_scale else 1.0
     shift, phrase_shift = get_kept_moves(old, grid, scale)
-    # a phrase the user set stays set through a new analysis
+    # a manually set phrase stays set
     phrase_set = 1 if old is not None and old.phrase_set else 0
     conn = connect_grid()
     try:
@@ -2214,9 +2130,7 @@ def insert_grid(mdx, grid):
 
 
 def get_kept_moves(old, grid, scale=1.0):
-    '''(shift, phrase_shift) for a new analysis, so that a bar or phrase the user moved stays
-    where they put it in the song (not the same count of beats from a new downbeat); the moves
-    are in beats of the user's tempo scale'''
+    '''(shift, phrase_shift) keeping manual moves at the same place in the song'''
     if old is None or not (old.shift or old.phrase_shift) or not old.bpm or not grid.bpm:
         return 0, 0
     period = 60.0 / (grid.bpm * scale)
@@ -2231,8 +2145,7 @@ def get_kept_moves(old, grid, scale=1.0):
 
 
 def apply_grid_scale(grid):
-    '''the grid as played: its tempo times the user's scale; a phrase found at the analysis'
-    tempo is not known at another (unless the user set it)'''
+    '''the grid as played: tempo times the scale'''
     scale = grid.bpm_scale or 1.0
     if scale == 1.0:
         return grid
@@ -2245,7 +2158,7 @@ def apply_grid_scale(grid):
 
 
 def set_grid_scale(mdx, scale):
-    # a new scale: the moves were in the old one's beats, so they start again
+    # new scale: the moves start again
     conn = connect_grid()
     try:
         conn.execute(f'UPDATE {GRID_TABLE} SET bpm_scale=?, shift=0, phrase_shift=0, phrase_set=0 '
@@ -2256,8 +2169,7 @@ def set_grid_scale(mdx, scale):
 
 
 def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
-    # key: 'shift' (the bar, in beats) or 'phrase_shift' (the phrase, in bars); phrase_set:
-    # the phrase put by the user (1) or back to the analysis (0)
+    # key: 'shift' (beats) or 'phrase_shift' (bars); phrase_set: manual (1)
     conn = connect_grid()
     try:
         conn.execute(f'UPDATE {GRID_TABLE} SET {key}=? WHERE mdx=?', (int(shift) % 4, mdx))
@@ -2270,7 +2182,7 @@ def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
 
 
 def analyze_grid_into_db(path, tempo, highlight):
-    # a failed grid is kept as none (bpm 0), or it was tried again every time it played
+    # keep a failed grid as none (bpm 0), or it retries on every play
     try:
         grid = analyze_grid(path, tempo, highlight)
     except Exception:
@@ -2285,8 +2197,7 @@ def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):
     # resp = getby_key_value('mdx', mfeats_data.mdx)
     # if resp is not None:
     #     deleteby_key_value('mdx', mfeats_data.mdx)
-    # replaced in one statement: deleted then inserted, a reader in between found
-    # no row and queued the file again
+    # replace in one statement: a reader between delete and insert requeued it
 
     field_keys = [v for v, _ in MFEATS_DEFINITION]
     field_types = [v for _, v in MFEATS_DEFINITION]

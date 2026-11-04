@@ -7,9 +7,7 @@ email: peppy0510@hotmail.com
 '''
 
 
-# Imported first by main.pyw for its side effect. wxPython wheels load MSVCP140.dll without
-# shipping it, so a source run on a PC without the Visual C++ Redistributable dies on
-# `import wx`. A frozen build carries its own copy and skips this.
+# imported first by main.pyw: wx wheels load MSVCP140.dll without shipping it
 
 import ctypes
 import os

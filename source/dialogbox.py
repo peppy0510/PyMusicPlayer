@@ -127,7 +127,7 @@ class AboutBox(FancyDialogBox, wx.Timer, FancyDialogBoxGlobalEvent):
         self.SetClientSize((420, 185))
         self.parent = parent
         self.SetTitle('About')
-        # opaque on the dialogs' ground, its button as theirs (a see-through black before)
+        # opaque on the dialogs' ground, its button as theirs
         self.SetBackgroundColour(macroboxstyle.current().UI.DIALOG_BG)
         self.AboutPanel = AboutPanel(self)
         # self.VisitButton = FancyButton(self, label='MUTEKLAB')
@@ -187,7 +187,6 @@ class CheckFilesConsistencyPanel(DialogPanel):
         self.SetRect((0, 0, width, 100))
         width, height = self.GetSize()
         self.text_messages = list()
-        # (worded again: a typo, and one long sentence)
         label = 'Checks the playlist\'s %d tracks for broken links:\n'
         label += 'files that were moved or deleted.\n'
         label += 'It may take a while. Start now?'
@@ -256,7 +255,7 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
 
         self.items_number = self.ListBox.GetTotalItemsNumber()
         self.ConfirmPanel = CheckFilesConsistencyPanel(self)
-        # its words (CheckFilesConsistencyPanel), the footer under them
+        # its words, the footer under them
         self.SetClientSize((self.GetClientSize().width,
                             self.ConfirmPanel.content_height + self.GetFooterHeight()))
 
@@ -319,9 +318,7 @@ class CheckItemsConsistencyConfirmBox(DialogBox):
 
 class AnalyzerVersionBox(DialogBox):
 
-    '''the playlists' songs analyzed by an older analyzer (or their grid by an older one,
-    or not made, or not analyzed at all) counted, and analyzed again when asked (the auto
-    analyzer did it unasked, when it was on; off, they stayed as they were)'''
+    '''songs analyzed by an older analyzer counted, analyzed again when asked'''
 
     WIDTH = 440
 
@@ -345,11 +342,11 @@ class AnalyzerVersionBox(DialogBox):
         self.PlaceButtons(right=(self.ApplyButton, self.CloseButton))
 
     def Count(self):
-        # (the words told, the songs to analyze again): each song once, the stations left out
+        # each song once, the stations left out
         state = mfeats.get_analysis_versions()
         paths = dict()
         for listIdx in range(len(self.ListBox.innerList)):
-            # (a folder's songs looked through: not the playlists')
+            # a folder's songs are not the playlists'
             if self.ListBox.innerList[listIdx].title == library.FOLDER_TITLE:
                 continue
             pathIdx = self.ListBox.GetColumnKeyToIdx('path', listIdx)
@@ -384,8 +381,7 @@ class AnalyzerVersionBox(DialogBox):
         return '\n'.join(lines), outdated
 
     def OnApply(self, event):
-        # marked to be analyzed and queued (as the auto analyzer does: its progress in the
-        # list's status)
+        # queued as the auto analyzer does
         self.parent.MainPanel.MFEATS.QueueOutdated(mfeats.get_done_mdx(), asked=True)
         self.ApplyButton.Disable()
         self.ApplyButton.SetLabel('Queued')
@@ -399,12 +395,7 @@ class AnalyzerVersionBox(DialogBox):
 
 class UpdateCheckBox(DialogBox):
 
-    '''Help > Check for Updates: the Update Check dialog as it was (its words and the bar
-    under them, its button and Close, the automatic check's box), asking GitHub's latest
-    release (updater, MainFrame.OnCheckUpdates) where it asked muteklab's server. taken
-    away with that server on 11-02 for the status line's one line, unasked: brought back
-    (the user); its words a line of what came of it and one of the versions under it, the
-    version run told in every state (the user)'''
+    '''Help > Check for Updates: asks GitHub's latest release (updater)'''
 
     WIDTH = 460
     LINE = 18
@@ -439,8 +430,7 @@ class UpdateCheckBox(DialogBox):
                                              (DIALOG_PAD, top + 5), self.parent.UpdateCheck,
                                              self.parent.SetUpdateCheck)
         self.Tell('Checking for updates\u2026', f'Current version: {self.current}')
-        # the bar going on while the answer is awaited (one request: no steps to count),
-        # slower as it nears the end
+        # one request, no steps to count: the bar slows as it nears the end
         self.Timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.OnTimer, self.Timer)
         self.Timer.Start(20)
@@ -454,7 +444,7 @@ class UpdateCheckBox(DialogBox):
         self.ProgressBar.SetValue(value + max((90 - value) * 0.04, 0))
 
     def ShowResult(self, release, result):
-        # the answer: none to be had, the latest already, or a newer one (its button)
+        # none to be had, the latest already, or a newer one
         self.Timer.Stop()
         self.ProgressBar.SetValue(100)
         if result == 'error':
@@ -466,14 +456,14 @@ class UpdateCheckBox(DialogBox):
             self.release = release
             self.Tell(f'Version {release["version"]} is available',
                       f'Current version: {self.current}')
-            # a copy that can neither download nor pull opens the release's page (updater)
+            # a copy that can neither download nor pull opens the release page
             if release['kind'] == 'page':
                 self.DownloadButton.SetLabel('View Release')
             self.DownloadButton.Enable()
             self.DownloadButton.SetFocus()
 
     def OnDownload(self, event):
-        # the update as the notice's Update now does it (its progress on the notice)
+        # as the notice's Update now does it
         release = self.release
         self.OnClose(None)
         self.parent.ShowUpdate(release)

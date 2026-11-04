@@ -51,8 +51,7 @@ def get_launch_log_path():
 
 
 def write_launch_log(message):
-    # why a start showed nothing (pythonw has no console): the reason, in the
-    # user's app folder
+    # pythonw has no console: log why a start showed nothing
     try:
         with open(get_launch_log_path(), 'a', encoding='utf-8') as file:
             file.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} pid {os.getpid()}: {message}\n')
@@ -62,8 +61,7 @@ def write_launch_log(message):
 
 def launch(filepath=None):
     write_launch_log(f'launching (cwd {os.getcwd()})')
-    # a crash in native code (no Python error) and an error in an event handler
-    # (wx goes on, pythonw shows nothing) are written there too
+    # native crashes and event handler errors logged too
     try:
         crash_log = open(get_launch_log_path(), 'a', encoding='utf-8')
         faulthandler.enable(file=crash_log, all_threads=True)
@@ -77,7 +75,7 @@ def launch(filepath=None):
         write_launch_log('closed')
     except Exception as error:
         write_launch_log('failed\n' + traceback.format_exc())
-        # the log alone left a failed start looking like nothing happened
+        # show a failed start, not just log it
         ctypes.windll.user32.MessageBoxW(
             None, f'PyMusicPlayer could not start.\n\n{type(error).__name__}: {error}\n\n'
             f'Details: {get_launch_log_path()}', 'PyMusicPlayer', 0x10)
@@ -117,8 +115,7 @@ def send_filepath_to_mainapp(filepath):
 
 
 def wait_for_previous(pid):
-    # an update restarts the player; the new copy waits for the old one to go (its
-    # instance check would find it and not start)
+    # after an update the new copy waits for the old one to exit
     import psutil
     try:
         psutil.Process(pid).wait(10)

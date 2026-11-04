@@ -150,7 +150,7 @@ def max_wide_fill_sym(input_data, output_length):
     return output_data
 
 
-# 3band waveform (rekordbox colours): low=1, mid=2, high=4, and where bands overlap
+# 3band waveform colours: low=1, mid=2, high=4 and their overlaps
 WAVEFORM_BAND_COLORS = numpy.array([
     (0, 0, 0), (0, 85, 225), (255, 166, 0), (180, 105, 10),
     (255, 255, 255), (210, 220, 250), (255, 240, 215), (245, 235, 215)], dtype=float)
@@ -160,26 +160,13 @@ WAVEFORM_BAND_SPREAD = 3
 WAVEFORM_PEAK_DIM = 0.4
 
 
-# a column below this peak (-60 dBFS, square-rooted as stored) is silence
+# silence below this peak (-60 dBFS, square-rooted)
 WAVEFORM_SILENCE_PEAK = 8
-# sounds at either end parted from the rest by this much silence, this short
-# together, are clicks (an edit's, a record's) and silence too: 17 of 1,643
-# songs had one of 30 ms or less, some sounds left on purpose last 0.1 to 1 s;
-# one as loud as the music (FLOOR_LOUD) needs only CLICK_LOUD_GAP, a fade's
-# last beats are quieter (0.35 s apart in one)
+# short sounds parted by silence at either end are clicks
 WAVEFORM_CLICK_SECONDS = 0.05
 WAVEFORM_CLICK_GAP = 0.5
 WAVEFORM_CLICK_LOUD_GAP = 0.3
-# the start and the end differ. at the start, a quiet lead-in the music cuts
-# in out of is not the music (a tape's hiss, a hum: 1.2 s at -37 dBFS in one
-# song, -38 to -53 in another; a fade-in rises slowly): below the song's loud
-# level (its columns' 95th percentile in dB) by FLOOR_BELOW, lasting
-# FLOOR_SECONDS (shorter is a note's own start), the music within FLOOR_LOUD
-# of the loud level and FLOOR_RISE above it, its FLOOR_ATTACK before that its
-# own. at the end the last note's decay and a fade are the music; at either
-# end a steady floor is not (-31 dBFS before and after one song): within
-# FLOOR_STEADY of its level, that FLOOR_LOUD below the loud level and
-# FLOOR_STEADY above the silence's
+# not music: a quiet lead-in at the start, a steady floor at either end
 WAVEFORM_FLOOR_BELOW = 30
 WAVEFORM_FLOOR_SECONDS = (0.2, 3.0)
 WAVEFORM_FLOOR_LOUD = 24
@@ -194,9 +181,7 @@ def get_waveform_levels(peaks):
 
 
 def get_waveform_edge_levels(peaks, start, seconds):
-    # dB of the columns from start (peaks as stored, read forwards) as far as
-    # a floor lasts and a little more, silence as the silence peak (a floor
-    # about it stays level, its columns of silence among them)
+    # dB from start as far as a floor lasts, floored at silence
     longest = WAVEFORM_FLOOR_SECONDS[1]
     return numpy.maximum(
         get_waveform_levels(peaks[start:start + int((longest + 0.1) / seconds) + 2]),
@@ -204,7 +189,7 @@ def get_waveform_edge_levels(peaks, start, seconds):
 
 
 def get_waveform_leadin_end(peaks, start, loud, seconds):
-    # the column the music cuts in at past a quiet lead-in from start, or start
+    # column past a quiet lead-in from start, or start
     shortest, longest = WAVEFORM_FLOOR_SECONDS
     levels = get_waveform_edge_levels(peaks, start, seconds)
     music = numpy.nonzero(levels >= loud - WAVEFORM_FLOOR_LOUD)[0]
@@ -216,7 +201,7 @@ def get_waveform_leadin_end(peaks, start, loud, seconds):
     rise = levels[music:music + max(int(0.1 / seconds), 1)].max()
     if quiet.max() > loud - WAVEFORM_FLOOR_BELOW or rise - high < WAVEFORM_FLOOR_RISE:
         return start
-    # where it leaves the lead-in, the music's attack kept
+    # where it leaves the lead-in, keeping the attack
     return start + numpy.nonzero(levels[:music + 1] >= high + 6)[0][0]
 
 
@@ -236,14 +221,12 @@ def get_waveform_steady_end(peaks, start, loud, seconds):
 
 
 def get_waveform_sound_time(waveform, duration):
-    # (offset, finish) of the sound: the leading and trailing silence left out,
-    # with the clicks and the noise floor alone in it
+    # (offset, finish) of the sound without leading and trailing silence
     sound = numpy.nonzero(waveform[:, 0] >= WAVEFORM_SILENCE_PEAK)[0]
     if len(sound) == 0 or duration <= 0:
         return (0.0, duration)
     seconds = 1.0 * duration / len(waveform)
-    # the runs of sound, columns [starts, ends), in groups the silence parts:
-    # runs [heads, tails) of each, and its columns of sound
+    # runs of sound [starts, ends), grouped by silence [heads, tails)
     breaks = numpy.nonzero(numpy.diff(sound) > 1)[0]
     starts = numpy.concatenate(([sound[0]], sound[breaks + 1]))
     ends = numpy.concatenate((sound[breaks], [sound[-1]])) + 1
@@ -257,7 +240,7 @@ def get_waveform_sound_time(waveform, duration):
         first += 1
     while first < last and sounds[last] * seconds <= WAVEFORM_CLICK_SECONDS:
         last -= 1
-    # the loud level from the peaks' counts (a pass, hours of a mix in ms)
+    # loud level: 95th percentile of the peaks
     peaks = waveform[:, 0]
     counts = numpy.cumsum(numpy.bincount(peaks, minlength=256))
     loud = get_waveform_levels(numpy.searchsorted(counts, 0.95 * len(peaks)))
@@ -303,18 +286,14 @@ def is_waveform_3band(waveform):
         and waveform.shape[1] == 5 and len(waveform) > 0
 
 
-# the whole waveform's columns a pixel, kept for the last few (waveform, width): its
-# grounds and its heights painted from them (a long mix's reading them took 70 ms a
-# picture, three a size, its height changed: View > Waveform Height)
+# whole-waveform pixel columns cached by (waveform, width)
 WAVEFORM_COLUMNS_KEPT = 4
 waveform_columns = collections.OrderedDict()
 
 
 def paint_waveform_3band(waveform, width, height, ground=(0, 0, 0), dim=1.0,
                          start=None, end=None, spread=WAVEFORM_BAND_SPREAD):
-    # waveform: uint8 columns of (sqrt peak, sqrt level, low, mid, high shares)
-    # start, end: the columns drawn across (the whole waveform by default)
-    # ground (3 or width x 3) and dim (scalar or width): per pixel column too
+    # waveform: uint8 columns of (sqrt peak, sqrt level, low, mid, high)
     # returns an RGB image (height, width, 3)
     if width <= 0 or height <= 0:
         return numpy.zeros((max(height, 0), max(width, 0), 3), dtype=numpy.uint8)
@@ -345,8 +324,7 @@ def get_waveform_columns(waveform, width, start, end, spread):
     edges = start + (end - start) * numpy.arange(width + 1) / width
     centres = (edges[:-1] + edges[1:]) * 0.5
     inside = (centres >= 0) & (centres < count)
-    # only the columns drawn, and one either side: the whole waveform read every
-    # frame was tens of megabytes a frame for a long mix
+    # only the columns drawn, and one either side
     first = int(min(max(numpy.floor(min(start, end)) - 1, 0), count - 1))
     last = int(min(max(numpy.ceil(max(start, end)) + 2, first + 1), count))
     data = waveform[first:last] / 255.0
@@ -363,7 +341,7 @@ def get_waveform_columns(waveform, width, start, end, spread):
         levels = numpy.add.reduceat(padded[:, 1], edges)[:-1] / sizes
         shares = numpy.add.reduceat(padded[:, 2:], edges, axis=0)[:-1] / sizes[:, None]
     else:
-        # a column over pixels: joined to its neighbour, the bands the nearer one's
+        # a column over pixels: interpolated, bands from the nearer
         at = numpy.clip(centres - 0.5, 0, count - 1)
         i = numpy.floor(at).astype(int)
         j = numpy.minimum(i + 1, count - 1)
@@ -389,8 +367,7 @@ def paint_waveform_columns(peaks, levels, shares, inside, width, height, ground,
     talls[columns, tallest] = numpy.where(inside, numpy.maximum(talls[columns, tallest], 1), 0)
     peak_talls = numpy.where(inside, numpy.maximum(numpy.round(peaks * reach), 1), 0)
 
-    # per column its colours from the outside in: ground, peak, then the bands from
-    # the tallest down, each the colour of the bands that reach that far
+    # colours from the outside in: ground, peak, bands tallest first
     order = numpy.argsort(-talls, axis=1, kind='stable')
     talls = numpy.take_along_axis(talls, order, axis=1)
     keys = numpy.cumsum(WAVEFORM_BAND_BITS[order], axis=1)
@@ -527,13 +504,11 @@ def cheby2_filter(data, lowcut, highcut, fs, order=5, riple=5):
 # pybass.BASS_Init(-1,...)
 # -1 is default device / 0 is no sound / 1 is first real output device
 
-# playback: a short buffer, so a scratch on the waveform is heard as the hand moves
-# (30 ms was clean on the home PC; 40 for a margin), refilled more often than it lasts
+# short playback buffer so a scratch follows the hand
 PLAY_BUFFER_MS = 40
 PLAY_UPDATE_PERIOD_MS = 10
 
-# bass_fx's reverse stream (bundled in assets/dlls, not in pybass): a stream that
-# plays either way, for the scratch
+# bass_fx reverse stream (assets/dlls): plays either way, for scratch
 BASS_ATTRIB_REVERSE_DIR = 0x11000
 BASS_FX_RVS_REVERSE = -1
 BASS_FX_RVS_FORWARD = 1
@@ -556,10 +531,8 @@ def load_bass_fx():
 
 
 def create_play_stream(path, flags, keylock=False, decode=False):
-    # (stream, True) playing either way, or (stream, False) a plain one when
-    # bass_fx is not there. keylock: a tempo stream over the reverse one, its tempo
-    # changed without its pitch (set_tempo_percent). decode: the last of them decoding,
-    # for a mixer (the audio graph's deck: audiograph), not played on its own
+    # (stream, True) reversible, or (stream, False) without bass_fx
+    # keylock: a tempo stream over it, decode: for a mixer
     last = pybass.BASS_STREAM_DECODE if decode else 0
     reverse_create = load_bass_fx()
     if reverse_create:
@@ -585,7 +558,7 @@ def create_play_stream(path, flags, keylock=False, decode=False):
         hstream = reverse_create(source, REVERSE_BLOCK_SECONDS, BASS_FX_FREESOURCE | last)
         if hstream:
             set_direction(hstream, BASS_FX_RVS_FORWARD)
-            # resampled finer (16-point sinc, not 8) for a scratch's far-off speeds
+            # finer resampling for a scratch's far-off speeds
             pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_SRC, 2.0)
             return (hstream, True)
         pybass.BASS_StreamFree(source)
@@ -647,21 +620,19 @@ def set_frequency(hstream, freq):
     pybass.BASS_ChannelSetAttribute(hstream, pybass.BASS_ATTRIB_FREQ, freq)
 
 
-# BASS add-ons in assets/dlls, the ones there loaded (AAC, and HLS for internet radio)
+# BASS add-ons in assets/dlls
 BASS_PLUGINS = ['bass_aac.dll', 'basshls.dll', 'bass_ac3.dll', 'bassape.dll', 'bassflac.dll',
                 'bass_mpc.dll', 'bassopus.dll', 'basswma.dll']
 
 
 def load_bass_plugins():
-    # BASS_PluginLoad takes the file's path (the module and its function type were given,
-    # an argument error swallowed, and no add-on was ever loaded); bass_vst is not an
-    # add-on, loaded into the process as before
+    # BASS_PluginLoad takes a path; bass_vst is not an add-on
     try:
         pybass.bass.load('bass_vst.dll')
     except Exception:
         pass
     for plugin in BASS_PLUGINS:
-        # fetched into the user's folder (addons.py), or in assets
+        # downloaded add-on (addons.py), else in assets
         path = addons.find_addon(plugin)
         if path is None:
             try:
@@ -671,14 +642,12 @@ def load_bass_plugins():
         pybass.BASS_PluginLoad(path.encode('mbcs'), 0)
 
 
-# MASTER: Auto Master (PyWinAudio's, built here from plugin/automaster.c) on a stream as a
-# VST DSP, its parameters as MASTER's panel keeps them (master.get_values)
+# Auto Master VST DSP (built from plugin/automaster.c)
 AUTOMASTER = 'PyMusicPlayerAutoMaster.dll'
 
 
 def set_automaster(hstream, on=True, values=None):
-    '''the VST handle of Auto Master put on the stream (0 when it is not there), bypassed
-    when on is False; values: its parameters (0 to 1), else the plugin's own'''
+    '''put Auto Master on the stream: its VST handle, or 0'''
     try:
         path = pybass.bass.load(AUTOMASTER)[0]._name
     except FileNotFoundError:
@@ -808,9 +777,7 @@ def fbackward(hstream, skip_second):
         set_position(hstream, new_second)
 
 
-# a stream in a mixer (the audio graph's deck: audiograph) decodes ahead of what is
-# heard: its position, a seek, its data and level asked of bassmix, which knows what
-# of it is being heard (a playing stream's own asked of it, as before)
+# a mixer's source decodes ahead: ask bassmix what is being heard
 
 
 def is_mixed(hstream):
@@ -828,14 +795,14 @@ def get_position(hstream):
 def set_position(hstream, second):
     byte_position = pybass.BASS_ChannelSeconds2Bytes(hstream, second)
     if is_mixed(hstream):
-        # (the mixer's buffered data of it dropped: heard at once)
+        # drops the mixer's buffered data: heard at once
         pybassmix.BASS_Mixer_ChannelSetPosition(hstream, byte_position, pybass.BASS_POS_BYTE)
     else:
         pybass.BASS_ChannelSetPosition(hstream, byte_position, False)
 
 
 def get_channel_data(hstream, pointer, length):
-    # what is being heard of it (a mixer's source: what the mixer kept of it)
+    # what is being heard of it
     if is_mixed(hstream):
         return pybassmix.BASS_Mixer_ChannelGetData(hstream, pointer, length)
     return pybass.BASS_ChannelGetData(hstream, pointer, length)
@@ -952,7 +919,7 @@ def get_stream_spectrum_vectorscope_repl(hstream, vs_size=90, channel=2, autogai
     return log_spcetrum, list(set(xys))
 
 
-# the spectrum's bins and their weights by (spectrum length, scale): the same every frame
+# spectrum bins and weights cached by (length, scale)
 SPECTRUM_BINS = {}
 
 
@@ -972,8 +939,7 @@ def get_spectrum_bins(length, spectrum_scale):
     edges = numpy.array([int(v) for v in freqbin])
     values = numpy.array(freqbin[:-1], dtype=float)
     idx = numpy.arange(len(values))
-    # each bin is spectrum[edge:next edge + 1] (the next edge included); a note
-    # just past the spectrum's end at some lengths began a bin out of it
+    # a bin includes the next edge; edges kept inside the spectrum
     starts = numpy.minimum(edges[:-1], length - 1)
     included = numpy.minimum(edges[1:], length - 1)
     weights = numpy.log2(1 + values) * (values**0.25)
@@ -990,8 +956,7 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     amplify = 1.25 * pow(spectrum_scale, 0.5)
     # amplify = 0.99
     fftrex = 1
-    # the file's own rate: the tempo control moves the playing rate, and the
-    # spectrum's length with it
+    # the file's own rate: tempo moves the playing rate
     fs = get_native_fs(hstream) or get_fs(hstream)
     if fs == 0:
         return None, None
@@ -1000,8 +965,7 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     # frame_length = int(round(freqmax * fftrex * 0.075 * (2 / channel) * pow(spectrum_scale, 0.75)))
     fftpnt = int(round(freqmax * fftrex * 0.1))
     # data = numpy.arange(frame_length, dtype=ctypes.c_short)
-    # silence where it is not filled: the length below is in bytes, so half of it
-    # is read, and the rest was arange's ramp, drawn as bars of its own
+    # zeros: the length below is in bytes, so only half is read
     data = numpy.zeros(frame_length, dtype=ctypes.c_short)
     get_channel_data(hstream, data.ctypes.
                                data_as(ctypes.POINTER(ctypes.c_short)), frame_length)
@@ -1018,14 +982,11 @@ def get_stream_spectrum_vectorscope(hstream, vs_size=90, channel=2, autogain=1, 
     spectrum = numpy.fft.fft(dataL * amplify, fftpnt)
     spectrum = spectrum[1:int(len(spectrum) / 2)]
     spectrum = abs(spectrum) / fftpnt / 8192
-    # (the bins and their weights once for each length and scale, the maxima at once)
     starts, included, weights, powers = get_spectrum_bins(len(spectrum), spectrum_scale)
     peaks = numpy.maximum(numpy.maximum.reduceat(spectrum, starts), spectrum[included])
     log_spcetrum = ((peaks * weights)**powers) * 1.5
 
-    # the vectorscope's samples as they are (-1 to 1): its gain and its dots
-    # are its own (PlayBoxVectorScope.SetSamples)
-    # the two sides as long as each other (an odd count of samples split one longer)
+    # vectorscope samples (-1 to 1), both sides the same length
     n = min(len(dataL), len(dataR), 768)
     return log_spcetrum, (dataL[:n] / 32768.0, dataR[:n] / 32768.0)
 

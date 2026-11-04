@@ -144,7 +144,7 @@ def split_artist_title(filename):
 
 
 def find_fpcalc():
-    # fetched into the user's folder (addons.py), else in assets or on PATH
+    # fetched into the app data folder (addons.py), else assets or PATH
     path = addons.find_addon('fpcalc.exe')
     if path is not None:
         return path

@@ -18,19 +18,12 @@ from macroboxlib import RectBox
 from macroboxlib import SetPreference
 
 
-# the rack: the player's zone over the deck (its header and waveforms), its modules
-# one under another as a plug-in's plates (MASTER and
-# ANALYZER). a module: a header (its LED, its name, its state, its own chips and its parts')
-# over its parts, each part folded on its own, the whole module from the control row; what
-# is shown kept (each module's PREFERENCE)
-# a module's header: its chips CHIP high, as far from the line over it as from its parts
-# under it (24 held them 4 px under the line, the parts' names 6 and more under theirs: the
-# header read tighter than what it heads)
+# the rack: modules one under another over the deck, each a header over its parts
+# module header: chips CHIP high, centred between the lines
 HEADER = 32
-# a header's keys as tall as the mute key beside them on MASTER's header (19; 16 before,
-# flat beside it, "the buttons' size looks odd", the user)
+# header keys as tall as master's mute key
 CHIP = 19
-# a header's chips' names when the header is too narrow for them (GetChipLayout)
+# chip names when the header is too narrow (GetChipLayout)
 SHORT_LABELS = {'CONTROLS': 'CTRL', 'SPECTRUM': 'SPEC', 'SPECTROGRAM': 'GRAM',
                 'LIMITER': 'LIMIT', 'METERS': 'METER'}
 
@@ -39,8 +32,7 @@ def colour(value):
     return wx.Colour(*value) if isinstance(value, (tuple, list)) else wx.Colour(value)
 
 
-# (made once a size and weight: made at every call, the rack's modules spent their frames
-# making fonts, and the window stopped answering the mouse)
+# cached per size and weight: making fonts per call stalls the frames
 @functools.lru_cache(maxsize=64)
 def get_font(pixels, bold=False, mono=False):
     face = FONT_PLAYINFO if mono else uikit.FONT_FACE
@@ -49,9 +41,7 @@ def get_font(pixels, bold=False, mono=False):
 
 
 def draw_well(gc, st, rect, edge=None, width=1, radius=None):
-    '''a display set into the rack's plates (an LCD, a meter's, a scope's): darker at its
-    top as a hole's shadow falls, a line of shadow along its top inside, a line of light
-    along its bottom outside; edge: its rim's colour (the mouse on it, a device's colour)'''
+    '''a display set into the plate: inner shadow at top, light below'''
     x, y, w, h = rect
     radius = uikit.RADIUS if radius is None else radius
     lcd = colour(st.LCD_BG_COLOR)
@@ -67,7 +57,7 @@ def draw_well(gc, st, rect, edge=None, width=1, radius=None):
 
 
 def draw_rule(gc, st, x, y, width):
-    # a line between the rack's parts, a whole row in the edge's colour
+    # a line between rack parts, a whole row in the edge colour
     gc.SetPen(wx.NullGraphicsPen)
     gc.SetBrush(gc.CreateBrush(wx.Brush(colour(st.RACK_EDGE_COLOR))))
     gc.DrawRectangle(x, y, width, 1)
@@ -75,11 +65,7 @@ def draw_rule(gc, st, x, y, width):
 
 class Rack():
 
-    '''the rack's modules (made by the player box, its parent) placed at its top, over
-    the header, the first at the top; the zone's height the shown modules' together. a bar
-    over them before (the modules' keys, the output's meter, the volume): MASTER's header
-    has the meter and the volume since, MASTER first and always there ("merge them", the
-    user)'''
+    '''the rack's modules at the player's top, master first'''
 
     def __init__(self, parent, modules):
         self.parent = parent
@@ -98,8 +84,7 @@ class Rack():
         for module in self.modules:
             module.Place(y, width)
             y += module.GetHeight()
-        # (a module's parts wrapped to more rows or fewer at this width: the player as tall
-        # as the rack is now, once the sizing is done)
+        # parts rewrapped at this width: relayout once sizing is done
         if self.GetHeight() != before and not getattr(self, 'relayout_due', False):
             self.relayout_due = True
             wx.CallAfter(self.RelayoutDue)
@@ -109,7 +94,7 @@ class Rack():
         self.Relayout()
 
     def Relayout(self):
-        # the player as tall as the rack needs, the list under it
+        # player as tall as the rack needs, the list under it
         mainpanel = self.parent.parent
         frame = mainpanel.parent
         if frame.IsPlayerOnlyModeOn():
@@ -118,8 +103,7 @@ class Rack():
             frame.FitRackRoom()
         mainpanel.OnSize()
         self.parent.OnSize()
-        # (all of the window painted again, its children too: what stood where the rack
-        # grew or folded stayed on screen, a copy of the tempo strip among it)
+        # repaint the window and children or stale pixels stay
         wx.GetTopLevelParent(self.parent).Refresh()
 
     def CatchEvent(self, event):
@@ -127,24 +111,20 @@ class Rack():
             module.CatchEvent(event)
 
 
-# a knob (RackModule.DrawKnob): its radius; its whole range this many pixels of an up or
-# down drag, a wheel's notch this much of it
+# knob radius; drag pixels for the full range, wheel notch step
 KNOB_RADIUS = 12
 KNOB_DRAG = 160
 KNOB_WHEEL = 0.02
 
 class RackModule(RectBox):
 
-    # its name in the header, where what it shows is kept, and its parts top to bottom:
-    # (key, the chip's label, height[, weight]); ROW: side by side instead, as wide as
-    # their weights, the row as tall as the tallest
+    # (key, chip label, height[, weight]); ROW: side by side by weight
     TITLE = ''
     PREFERENCE = None
     PARTS = ()
     ROW = False
     ROW_GAP = 14
-    # side by side parts: a line between them or not (a module drawing its own plates);
-    # room kept at the sides past the usual 8 (for those plates)
+    # side by side: lines between parts; extra side inset
     ROW_LINES = True
     ROW_INSET = 0
 
@@ -154,7 +134,7 @@ class RackModule(RectBox):
         self.buffer.fps = 30
         kept = GetPreference(self.PREFERENCE) or {}
         self.shown = kept.get('shown', False)
-        # folded: its header alone (its chevron, as PyWinAudio's rack folds a unit)
+        # folded: header alone
         self.folded = bool(kept.get('folded', False))
         self.parts = dict((part[0], kept.get(part[0], True)) for part in self.PARTS)
         self.hits = []
@@ -162,10 +142,10 @@ class RackModule(RectBox):
         self.SetBackgroundColour(self.parent.st.RACK_BG_COLOR)
         self.InitBuffer()
 
-    # what a module tells and does (its own)
+    # what a module tells and does
 
     def IsActive(self):
-        # its LED lit
+        # led lit
         return True
 
     def GetState(self):
@@ -173,8 +153,7 @@ class RackModule(RectBox):
         return None
 
     def GetChips(self):
-        # its own chips at the header's right, right to left: [(key, label, on, warned)],
-        # an action's; [(..., 'switch')] a stage's switch (DrawHeader)
+        # own chips at the header's right: [(key, label, on, warned)]
         return []
 
     def OnChip(self, key):
@@ -183,8 +162,7 @@ class RackModule(RectBox):
     def IsChipEnabled(self, key):
         return True
 
-    # a power key in its header (MASTER on or off), else an icon of what it is (ANALYZER's
-    # meter): PyWinAudio's rack's units and its meter view
+    # power key (master), else an icon (analyzer)
     POWER = False
 
     def IsPowered(self):
@@ -196,7 +174,7 @@ class RackModule(RectBox):
     def DrawIcon(self, gc, cx, cy):
         pass
 
-    # what it shows after its state on its header (MASTER folded: its meters, small)
+    # what it shows after its state on the header
     def GetSummaryWidth(self, dc):
         return 0
 
@@ -204,11 +182,7 @@ class RackModule(RectBox):
         pass
 
     def GetSmallTextRows(self, font, bar):
-        '''(where a small text is drawn from, a bar's top): every small text on the header
-        (the state, MASTER's meters' names and OUT) its letters on the header's middle, as the
-        title's, the bars there too (the state on the title's foot and the meters' names in
-        the middle, two rows apart, the user; all on the foot, the meters sank to the
-        bottom: "they belong in the middle", the user)'''
+        '''(text y, bar top): small header text centred on the title's middle'''
         offset, ink = uikit.get_caps_ink(font)
         middle = HEADER / 2.0
         return int(round(middle - offset - ink / 2.0)), int(middle - bar / 2.0 + 0.5)
@@ -218,9 +192,7 @@ class RackModule(RectBox):
 
     def DrawKnob(self, gc, cx, cy, value, hovered, radius=KNOB_RADIUS, origin=0.0,
                  tint=None, ticks=0):
-        # (MASTER's, INSTRUMENTS' and MIXER's: theirs a size smaller; origin: where its
-        # value's arc starts, a pan's at its centre; tint: its arc's colour (a machine's
-        # own); ticks: marks round it, a hardware knob's scale)
+        # origin: where the arc starts; tint: arc colour; ticks: scale marks
         st = self.parent.st
         tokens = uikit.ui()
         r = radius
@@ -233,9 +205,7 @@ class RackModule(RectBox):
                 angle = start + sweep * k / float(ticks - 1)
                 gc.StrokeLine(cx + math.cos(angle) * (r + 6), cy + math.sin(angle) * (r + 6),
                               cx + math.cos(angle) * (r + 8), cy + math.sin(angle) * (r + 8))
-        # a hardware knob, matte as the keys (uikit.draw_face): seated in the panel by a
-        # soft shadow under it, its cap one colour with a darker skirt round it and a faint
-        # rim of light along its top (lit from above, as the plates), lighter under the mouse
+        # hardware knob: soft shadow, cap with darker skirt, top rim light
         face = colour(st.KNOB_RING_COLOR if hovered else st.KNOB_FACE_COLOR)
         gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateRadialGradientBrush(
@@ -254,8 +224,7 @@ class RackModule(RectBox):
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.mix(face, (255, 255, 255), 0.12))
                                .Width(1)))
         gc.StrokePath(rim)
-        # the range's track and the value's arc just outside it (crisp: a glow read as
-        # a haze)
+        # track and value arc just outside it, crisp
         low, high = min(origin, value), max(origin, value)
         ink = colour(tint or tokens.ACCENT)
         for since, upto, pen in ((0.0, 1.0, wx.GraphicsPenInfo(colour(st.METER_OFF_COLOR))
@@ -267,7 +236,7 @@ class RackModule(RectBox):
             path.AddArc(cx, cy, r + 3, start + sweep * since, start + sweep * upto, True)
             gc.SetPen(gc.CreatePen(pen.Cap(wx.CAP_BUTT)))
             gc.StrokePath(path)
-        # its pointer: a line from near its centre to its rim, a dot at the rim's end
+        # pointer: a line to the rim, a dot at its end
         angle = start + sweep * value
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(colour(st.RACK_TEXT_COLOR)).Width(2)
                                .Cap(wx.CAP_ROUND)))
@@ -275,16 +244,15 @@ class RackModule(RectBox):
                       cx + math.cos(angle) * (cap - 2), cy + math.sin(angle) * (cap - 2))
 
     def GetPartMost(self, key):
-        # side by side (ROW): the widest a part is drawn (its share of a wider rack left
-        # empty at its right); None: its whole share
+        # ROW: widest a part is drawn; None: its whole share
         return None
 
     def IsDragging(self):
-        # a hand on one of its controls: the hover kept where it is
+        # a hand on a control: keep the hover
         return False
 
     def HandleDrag(self, event):
-        # True while a drag is its own (nothing else handled)
+        # True while the drag is its own
         return False
 
     def HandleHit(self, event, hit):
@@ -310,9 +278,7 @@ class RackModule(RectBox):
         return width or self.parent.GetSize()[0]
 
     def GetRowLayout(self, w):
-        '''side by side parts in rows: [[(part, x, width)]]. parts with a widest
-        (GetPartMost) kept at it, the next row taken when the room ends (a narrow window:
-        they were squeezed past use); the others sharing one row by their weights'''
+        '''side by side parts in rows: [[(part, x, width)]]'''
         shown = [part for part in self.PARTS if self.parts[part[0]]]
         if not shown:
             return []
@@ -341,7 +307,7 @@ class RackModule(RectBox):
         return rows
 
     def GetPartHeight(self, key, height):
-        # a part's height (its own, PARTS'), as tall as its contents at this width
+        # part height, as tall as its contents at this width
         return height
 
     def IsPartShown(self, key):
@@ -359,7 +325,7 @@ class RackModule(RectBox):
         self.parent.Rack.Relayout()
 
     def Toggle(self):
-        # shown or folded away, its parts as they were
+        # shown or folded, parts as they were
         self.shown = not self.shown
         self.Keep()
         self.parent.Rack.Relayout()
@@ -370,7 +336,7 @@ class RackModule(RectBox):
         self.parent.Rack.Relayout()
 
     def Place(self, y, width):
-        # (its rows as wide as it will be: its height with them)
+        # layout width first: the height depends on it
         self.layout_width = width
         height = self.GetHeight()
         if height == 0:
@@ -393,20 +359,16 @@ class RackModule(RectBox):
         self.DrawHeader(dc, gc, w)
         if not self.folded:
             self.DrawParts(gc, w)
-        # its line at its bottom only, the one over it the module's above (a line at both
-        # ends drew two between modules); drawn last (first, MASTER's controls' picture laid
-        # over it: none between MASTER and ANALYZER under it, the user); a rectangle a row
-        # tall (a line on the half row drawn at half its colour, fainter than the others)
+        # bottom line only, drawn last, a whole row tall
         draw_rule(gc, st, 0, h - 1, w)
 
     def DrawParts(self, gc, w):
         st = self.parent.st
         shown = [part for part in self.PARTS if self.parts[part[0]]]
-        # the lines between its parts drawn after them (a part's picture laid over its line
-        # hid it: MASTER's METERS and CONTROLS showed none)
+        # lines after the parts: a part's picture would hide them
         lines = []
         if self.ROW:
-            # side by side, a line between them; rows (GetRowLayout) a line apart
+            # side by side, a line between; rows a line apart
             y = HEADER
             for r, row in enumerate(self.GetRowLayout(w)):
                 height = max(self.GetPartHeight(part[0], part[2]) for part, _, _ in row)
@@ -429,16 +391,14 @@ class RackModule(RectBox):
         for line in lines:
             gc.StrokeLine(*line)
 
-    # the header's left as PyWinAudio's rack's (an LED alone before, "make it as
-    # PyWinAudio's", the user): its fold chevron, its power key or its icon, its name
+    # header left as PyWinAudio's rack: chevron, power key or icon, name
     FOLD_X = 14
     ICON_X = 33
     TITLE_X = 46
     HEAD_KEY = 18
 
     def DrawHeadKeys(self, gc):
-        # the chevron (down: open, right: folded), the power key (its glyph in the accent
-        # while it works) or the icon; a key's face under the mouse; hit as 'fold', 'power'
+        # chevron (down: open, right: folded), power key or icon; hits 'fold', 'power'
         st = self.parent.st
         tokens = uikit.ui()
         cy = HEADER / 2.0
@@ -470,7 +430,7 @@ class RackModule(RectBox):
         if not self.POWER:
             self.DrawIcon(gc, self.ICON_X, cy)
             return
-        # the power glyph: a ring open at its top, a line down into it
+        # power glyph: ring open at the top, a line into it
         on = self.IsPowered()
         ink = colour(tokens.ACCENT if on else st.RACK_TEXT_COLOR if
                      self.hovered == ('power', None) else st.RACK_LABEL_COLOR)
@@ -487,43 +447,33 @@ class RackModule(RectBox):
         tokens = uikit.ui()
         self.DrawHeadKeys(gc)
         left = self.TITLE_X
-        # the chips at the right, three kinds told apart (all keys alike, a part shown and a
-        # stage turned on read the same): its own actions at the right (RESET, A/B); its own
-        # switches, a stage of what it does on or off, an LED and a name as the controls'
-        # switches (DrawSwitchChip); its parts' at the left, shown or folded, one group of
-        # joined keys as tabs
+        # chips at the right: actions, stage switches, part tabs
         chips = [chip if len(chip) == 5 else tuple(chip) + ('action',)
                  for chip in self.GetChips()]
-        # (a module of one part: none, nothing to fold)
+        # a single-part module: nothing to fold
         if len(self.PARTS) > 1:
             chips += [(part[0], part[1], self.parts[part[0]], False, 'view')
                       for part in reversed(self.PARTS)]
         font = get_font(10, bold=True)
         title_font = get_font(uikit.BODY, bold=True)
-        # the state a step smaller than the title, dimmed, on the title's line (its letters'
-        # foot on the title's: each in the middle of the header, the smaller sat a pixel
-        # high; as large as the title it read as a second title, the user)
+        # state a step smaller and dimmed on the title's line
         state_font = get_font(uikit.LABEL)
         dc.SetFont(title_font)
         tw = dc.GetTextExtent(self.TITLE)[0]
         state = self.GetState()
         dc.SetFont(state_font)
         sw = dc.GetTextExtent(state[0])[0] + 10 if state is not None else 0
-        # its summary (MASTER's meters) kept at every width ("seen always, even on a small
-        # screen", the user): the room it takes held before what is at the right
+        # summary kept at every width
         summary = self.GetSummaryWidth(dc)
         kept = summary + 10 if summary else 0
-        # what it keeps at the header's right (MASTER's meter and volume: its meter shorter
-        # first), its chips left of that (their room counted: without it the right took it
-        # and the title was cut)
-        # (the chips' own width, the 10 kept before them, the 16 of the line after them)
+        # right side reserved first, then chips, so the title is not cut
+        # chip width plus the gaps around them
         span = 0
         if chips:
             first = self.GetChipLayout(dc, chips, w, font, 0)
             span = w - 8 - first[-1][0][0] + 10 + 16
         right = self.DrawHeaderRight(gc, w, left + tw + kept + span)
-        # narrow, so they never lie over the title (they did): the state left out, then the
-        # keys tighter, then their names short (SHORT_LABELS), then the title cut
+        # narrow: drop the state, tighten keys, short names, then cut the title
         for level in range(4):
             layout = self.GetChipLayout(dc, chips, right + 8, font, level)
             room = layout[-1][0][0] if layout else right
@@ -561,14 +511,11 @@ class RackModule(RectBox):
             self.hits.append((wx.Rect(*rect), 'chip', key))
 
     def DrawHeaderRight(self, gc, w, least):
-        # (a module's own at its header's right end, from no further left than least: the
-        # chips' right edge left of it)
+        # module's own at the header's right end, from least
         return w - 8
 
     def GetChipLayout(self, dc, chips, w, font, level):
-        '''[(rect, chip, corners)] right to left from the header's right: level 2 and over
-        tighter (CHIP_PAD and the gaps), 3 their names short; 6 px between keys, 14 between
-        the kinds, a group's keys joined (their edge shared)'''
+        '''[(rect, chip, corners)] right to left from the header's right'''
         compact = level >= 2
         pad, gap, apart = (10, 3, 8) if compact else (16, 6, 14)
         dc.SetFont(font)
@@ -584,7 +531,7 @@ class RackModule(RectBox):
             after = chips[k + 1][4] if k + 1 < len(chips) else None
             corners = 'all'
             if kind == 'view' and 'view' in (before, after):
-                # (drawn right to left: the group's rightmost first)
+                # right to left: the group's rightmost first
                 corners = 'none' if before == after == 'view' else\
                     'right' if before != 'view' else 'left'
             layout.append(((x, (HEADER - CHIP) // 2, cw, CHIP), chip, corners))
@@ -592,8 +539,7 @@ class RackModule(RectBox):
         return layout
 
     def DrawSwitchChip(self, dc, rect, label, on, hover, font, compact=False):
-        # a stage's switch in the header, as the controls' are (masterbox): an LED (lit, or
-        # a ring) and its name on a key
+        # stage switch in the header: led and name on a key
         st = self.parent.st
         gc = wx.GraphicsContext.Create(dc)
         x, y, w, h = rect
@@ -604,7 +550,7 @@ class RackModule(RectBox):
         else:
             gc.SetPen(wx.Pen(colour(st.RACK_LABEL_COLOR), 1))
             gc.SetBrush(wx.NullGraphicsBrush)
-        # (from a whole row, as the controls' LEDs)
+        # from a whole row, as the controls' leds
         left = 5 if compact else 7
         gc.DrawEllipse(x + left, y + (h - 6) // 2, 6, 6)
         uikit.set_font(gc, font, colour(st.RACK_TEXT_COLOR if on else st.RACK_LABEL_COLOR))
@@ -626,19 +572,16 @@ class RackModule(RectBox):
         hovered = hit[1] if hit and hit[0] == 'chip' else hit
         if hovered != self.hovered and self.IsDragging() is False:
             self.hovered = hovered
-            # (at once where a module can: at the clock's next frame it came late)
+            # repaint now where the module can
             repaint = getattr(self, 'Repaint', None)
             if repaint is not None:
-                # (the mouse alone: nothing edited, INSTRUMENTS' kept pictures kept)
+                # hover only: kept pictures stay
                 self.hover_only = True
                 repaint()
                 self.hover_only = False
             else:
                 self.reInitBuffer = True
-        # a header's key pressed: its face down while it is held, done when it is let go
-        # over it (done on the press before: the module grew or folded under the hand, the
-        # key let go of not the one pressed, no face pressed at all, "odd as it is pressed
-        # and let go", the user)
+        # header key acts on release over it, face down while held
         header = hit is not None and hit[0] in ('fold', 'power', 'chip')
         down = getattr(self, 'key_down', None)
         if down is not None:

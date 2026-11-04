@@ -63,8 +63,7 @@ PRODUCT_LICENSE_CHECK_URL = MUTEKLAB_WEB_URL + 'product/license/check/req/'
 
 TITLE = f'{PRODUCT_NAME} {PRODUCT_EDITION}'
 
-# DEBUG(hang): how often costly things run (mainapp's watchdog writes them); removed
-# once found
+# DEBUG(hang): how often costly things run (mainapp's watchdog writes them)
 COUNTS = collections.Counter()
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer.db'])
 # PREFERENCE_DB = os.path.sep.join([get_user_docapp_path(), 'macroboxplayer'])
@@ -149,11 +148,10 @@ class ListBoxColumn(ColumnDefinition):
                        id3=u'TBPM', width=55, max_width=55)
         self.AddColumn(key='key', title='key', id3=u'TKEY', width=55, max_width=55)
         self.AddColumn(key='type', title='type', show=False, private=True)
-        # the file's size (MB), shown from the header's menu (private, never shown, before)
+        # the file's size (MB)
         self.AddColumn(key='size', title='size', right_align=True, width=80, max_width=90,
                        show=False)
-        # the tags, shown from the header's menu (private, never shown, before); the comment
-        # read from its frame (COMM, audio.get_id3)
+        # the tags; the comment from its COMM frame (audio.get_id3)
         self.AddColumn(key='artist', title='artist', id3=u'TPE1', width=160, show=False)
         self.AddColumn(key='title', title='title', id3=u'TIT2', width=200, show=False)
         self.AddColumn(key='album', title='album', id3=u'TALB', width=160, show=False)
@@ -162,22 +160,22 @@ class ListBoxColumn(ColumnDefinition):
         self.AddColumn(key='bitrate', title='bitrate', show=False, private=True)
         self.AddColumn(key='samplerate', title='samplerate', show=False, private=True)
         self.AddColumn(key='channel', title='channel', show=False, private=True)
-        # the file's path (a station's address), shown from the header's menu (private before)
+        # the file's path, a station's address
         self.AddColumn(key='path', title='path', width=300, show=False)
         self.AddColumn(key='mdx', title='mdx', show=False, private=True)
-        # pictures, not text (listimages): shown from the header's menu
+        # pictures, not text (listimages)
         self.AddColumn(key='cover', title='cover', width=24, min_width=24, max_width=200,
                        show=False, sortable=False)
         self.AddColumn(key='wave', title='wave', width=160, min_width=40, show=False,
                        sortable=False)
 
 
-# columns made public since a list was saved private: their definition's look taken
+# columns once private: their look taken from the definition
 RENEWED_COLUMNS = ('size', 'path', 'artist', 'title', 'album', 'genre')
 
 
 def AddMissingColumns(innerList):
-    # columns added since the list was saved: put at its end, an empty value in each row
+    # new columns put at the end, an empty value in each row
     keys = [v.key for v in innerList.columns]
     defaults = dict((v.key, v) for v in ListBoxColumn())
     for column in innerList.columns:
@@ -279,11 +277,7 @@ def pass_to_another_instance(initfile):
 
 
 def MakeStreamItem(path, order, columns):
-    # an internet radio station's row: its name, tags, country, codec and bitrate as kept
-    # (radio_stations, else radio_seen: found in the directory), no length, no analysis
-    # (status 'stream', never queued)
-    # (radio.get_station: both read once and kept; read here a row at a time, a radio tab
-    # made at the start read them 400 times, 2 s)
+    # an internet radio station's row: no length, no analysis (status 'stream')
     import radio
     station = radio.get_station(path) or {}
     values = dict(status='stream', order=order, filename=station.get('name') or path,
@@ -349,8 +343,7 @@ def MakeMusicFileItem(path, order, columns):
         except Exception:
             tempo = ''
         key = resp.key  # noqa
-        # analyzed by an older version: its values shown, waiting for the analysis
-        # again (marked red, queued by the auto analyzer)
+        # analyzed by an older version: its values shown till analyzed again
         if resp.version == mfeats.MFEATS_VERSION:
             status = 'analyzed'  # noqa
     duration = f'{int(duration / 60):02d}:{int(duration % 60):02d}'
@@ -434,9 +427,7 @@ class CursorEventCatcher():
         return False
 
     def SetCursorARROW(self):
-        # once, as the others: set at every event (25 ms) it was put on the screen at once
-        # under the mouse, and a child's own (the header's resize cursor over a column's
-        # edge) came back after it, the two flickering
+        # set once: set at every event it flickers with a child's own cursor
         if self.cursor_status == 'ARROW':
             return
         self.parent.SetCursor(self.cursor_stock.ARROW)
@@ -465,15 +456,8 @@ class CursorEventCatcher():
 
 
 class ThreadTimer():
-    # wx.Timer's Start/Stop/IsRunning/Notify with its beat from two places, Notify once a
-    # beat on the GUI thread: a thread's CallAfter, and a wx.Timer. a wx.Timer alone comes
-    # as WM_TIMER, which Windows sends only when no other message waits: with the mouse
-    # moving over the window it waited, and the events, the list and the analysis with
-    # it. a CallAfter alone waits in the loops Windows runs on its own (a drag and drop,
-    # a window moved or resized), where WM_TIMER still comes: drag and drop stopped.
-    # the analysis' only (MFEATS_Scheduler). the mouse events (EVENT_Scheduler) keep
-    # their wx.Timer: on this beat, on its own or with the drag's start and the list
-    # tab's sash, a drag in the list failed and the sash hardly followed the mouse
+    # a wx.Timer's beat from a thread's CallAfter and a wx.Timer, whichever comes first
+    # WM_TIMER waits while other messages do; CallAfter waits in Windows' own drag loops
 
     def __init__(self):
         self.timer_interval = 0
@@ -514,7 +498,7 @@ class ThreadTimer():
             if delay > 0:
                 time.sleep(delay)
             else:
-                # behind (the computer was busy): from now on, no catching up
+                # behind: no catching up
                 due = time.perf_counter()
             if self.timer_posted:
                 continue
@@ -530,8 +514,7 @@ class ThreadTimer():
         self.OnTimerBeat()
 
     def OnTimerBeat(self):
-        # the two beats of one: whichever comes first. and not in its own Notify (a
-        # loop Windows runs from it lets the wx.Timer's beat in)
+        # whichever beat comes first, not inside its own Notify
         now = time.perf_counter()
         if self.timer_running is False or now - self.timer_last < self.timer_interval * 0.0006:
             return
@@ -570,10 +553,10 @@ class PopupMenuEventCatcher():
         self.Timer = PopupMenuEventCatcherTimer(self)
 
     def SetPopupMenu(self, obj, xy, closed=None):
-        # closed: called when the menu is gone (its opener's arrow turned back)
+        # called when the menu is gone
         if self.pending_popup_event is not None:
             self.pending_popup_event.object.Destroy()
-            # (one not shown yet, put aside: its opener told too)
+            # one not shown yet: its opener told too
             if getattr(self.pending_popup_event, 'closed', None) is not None:
                 self.pending_popup_event.closed()
         self.pending_popup_event = Struct(object=obj, x=xy[0], y=xy[1], pending=False,
@@ -615,9 +598,7 @@ class PopupMenuEventCatcher():
         for item in self.pending_item_drag.paths:
             data.AddFile(item)
 
-        # what is dragged shown over the pointer, its covers stacked and how many (the
-        # Explorer's way: the pointer alone before, the user); the drag goes on without it
-        # when it cannot be made
+        # the drag picture; the drag goes on without it when it fails
         import dragimage
         try:
             image = dragimage.DragImage(self.pending_item_drag.paths)
@@ -675,12 +656,11 @@ class MFEATS_Scheduler(ThreadTimer):
         self.procpath = []
         self.taskpath = []
         self.proclist = []
-        # asked for again though analyzed (Analyze): all of it, not the grid alone
+        # analyzed again on request: all of it, not the grid alone
         self.forcedpath = set()
         self.stop = False
         self.redraw_pending = False
-        # DeepRhythm's process for the workers (StartModel): started with the first,
-        # ended once they are all gone
+        # DeepRhythm's process, started with the first worker, ended with the last
         self.model = None
         self.model_lock = threading.Lock()
         self.model_address = mfeats.get_deeprhythm_address(os.getpid())
@@ -733,8 +713,7 @@ class MFEATS_Scheduler(ThreadTimer):
     def AutoAnalyzer(self):
         if self.IsAutoAnalyzerOn() is False:
             return
-        # a list's status is saved with it: songs since outdated (a newer analysis, or a
-        # grid not made yet) marked to be analyzed again, ahead of being played
+        # saved statuses may be outdated: marked to be analyzed again
         threading.Thread(target=self.FindOutdated, daemon=True).start()
 
     def FindOutdated(self):
@@ -746,17 +725,14 @@ class MFEATS_Scheduler(ThreadTimer):
         wx.CallAfter(self.QueueOutdated, done, known=known)
 
     def QueueOutdated(self, done, asked=False, known=None):
-        # asked: by Check Analyzer Versions, the auto analyzer on or not; known: the songs
-        # with an analysis of any version (FindOutdated)
+        # asked: by Check Analyzer Versions; known: songs with any analysis
         if not self.parent or (self.IsAutoAnalyzerOn() is False and asked is False):
             return
         import folders
         lists = self.parent.ListBox.innerList
-        # a folder's songs looked through (the sidebar's folders) analyzed when played only,
-        # but under a root chosen for it
+        # a folder's songs analyzed when played only, but under a chosen root
         browsed = [i for i in range(len(lists)) if folders.is_browsed_only(lists[i])]
-        # those analyzed before brought up to date though (an older analysis, no grid yet),
-        # as a playlist's: left as they were, they showed old in the folder (the user)
+        # those analyzed before still brought up to date
         if done is not None and known is not None:
             for listIdx in browsed:
                 pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
@@ -787,8 +763,7 @@ class MFEATS_Scheduler(ThreadTimer):
             if itemsIdx == []:
                 continue
             pathIdx = self.parent.ListBox.GetColumnKeyToIdx('path', listIdx)
-            # one thread for them all: a thread an item was thousands of threads
-            # on a big list, each looking its row up
+            # one thread for them all, not one an item
             paths = [self.parent.ListBox.innerList[listIdx].items[itemIdx][pathIdx]
                      for itemIdx in itemsIdx]
             t = threading.Thread(target=self.AddMFEATSTasks, args=(paths,), daemon=True)
@@ -804,9 +779,7 @@ class MFEATS_Scheduler(ThreadTimer):
             #     t.start()
 
     def AddMFEATSTasks(self, paths):
-        # rows marked to be analyzed whose songs had nothing left to do: their rows told
-        # so (a song done after FindOutdated's look was marked again by QueueOutdated, and
-        # its waiting ring stayed on with nothing queued)
+        # rows marked with nothing left to do: their marks cleared
         done = [path for path in paths
                 if self.AddMFEATSTask(path, urgent=False, redraw=False) is False]
         wx.CallAfter(self.UpdateDoneItems, done)
@@ -826,10 +799,7 @@ class MFEATS_Scheduler(ThreadTimer):
         self.procs_limit = value
 
     def RequestListRedraw(self):
-        # the list drawn again for the analysis at most four times a second, on
-        # the GUI thread (songs are queued from threads too): drawn at once for
-        # every song queued, sent and done it was 20 ms a time, at times 100,
-        # and the visualizers stuttered with it
+        # the list drawn again at most four times a second, on the GUI thread
         if self.redraw_pending:
             return
         self.redraw_pending = True
@@ -845,17 +815,16 @@ class MFEATS_Scheduler(ThreadTimer):
         # a station's stream has nothing to analyze
         if audio.is_stream_path(path):
             return
-        # gone from its folder: nothing to analyze (its row marked so by AddMFEATSTasks; queued,
-        # it waited in the queue at every look)
+        # gone from its folder: nothing to analyze
         if os.path.isfile(path) is False:
             return False
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
         resp = mfeats.getby_key_value('path', path, waveform=False)
-        # analyzed by an older version: analyzed again; analyzed, its grid not: the grid
+        # older version: analyzed again; analyzed, its grid not: the grid
         if resp is not None and resp.version == mfeats.MFEATS_VERSION and forced is False:
             if resp.error != 0 or mfeats.is_grid_current(resp.mdx):
-                # nothing left to do (False: AddMFEATSTasks tells its rows so)
+                # nothing left to do
                 return False
         if forced:
             self.forcedpath.add(path)
@@ -902,7 +871,7 @@ class MFEATS_Scheduler(ThreadTimer):
                     this.conn.recv()
             except (EOFError, OSError):
                 alive = False
-            # its song done, or the worker died with it (the song is left, as a process's was)
+            # its song done, or the worker died with it (the song is left)
             if this.path is not None and (done or alive is False):
                 path, this.path, this.idle = (this.path, None, now)
                 idx = [i for i, v in enumerate(self.procpath) if v == path]
@@ -921,10 +890,10 @@ class MFEATS_Scheduler(ThreadTimer):
                     this.conn.send(None)
                 except (EOFError, OSError):
                     this.proc.terminate()
-        # every worker gone (a new one is in the list before it starts): the model too
+        # every worker gone: the model too
         if self.proclist == [] and self.model is not None:
             self.StopModel()
-        # died with workers left: started again (on a thread, a start is 17 ms)
+        # died with workers left: started again on a thread
         elif self.model is not None and self.model.proc.is_alive() is False:
             threading.Thread(target=self.StartModel, daemon=True).start()
 
@@ -939,13 +908,12 @@ class MFEATS_Scheduler(ThreadTimer):
         # self.proclist.append(Struct(path=path, proc=mfeats.Process(path)))
         # self.proclist.append(Struct(path=path, proc=mfeats.Thread(path)))
         # self.proclist[-1].daemon = True
-        # the process's own flag (the Struct's was set): ended with the app
+        # the process's own flag: ended with the app
         # self.proclist[-1].proc.daemon = True
         # self.proclist[-1].proc.start()
         idle = [v for v in self.proclist if v.path is None and v.retired is False]
         if idle == []:
-            # started on a thread with its song: a start held the window about
-            # 17 ms, a frame of the visualizers
+            # started on a thread: a start holds the GUI thread
             conn, worker_conn = multiprocessing.Pipe()
             this = Struct(proc=None, conn=conn, path=path, idle=0, retired=False)
             self.proclist.append(this)
@@ -973,8 +941,7 @@ class MFEATS_Scheduler(ThreadTimer):
             if self.model is not None:
                 self.model.control.close()
             control, model_control = multiprocessing.Pipe()
-            # torch on the cores the workers leave (it takes them all by default), 4 at
-            # most: on 32 cores it took 30 and the whole computer to 100% at times
+            # torch takes every core by default: the ones the workers leave, at most 4
             threads = max(1, min(MODEL_THREADS_MOST, self.max_cores - self.procs_limit - 1))
             proc = multiprocessing.Process(
                 target=mfeats.deeprhythm_server,
@@ -1001,10 +968,10 @@ class MFEATS_Scheduler(ThreadTimer):
         proc.start()
         worker_conn.close()
         try:
-            # its song as it is now (renamed meanwhile: ResetItemValue)
+            # its song as it is now (renamed meanwhile)
             this.conn.send(self.GetJobMessage(this.path))
         except (EOFError, OSError):
-            # died at once: seen as dead (HandleFinishedJob), its song left
+            # died at once: seen as dead, its song left
             pass
         this.proc = proc
 
@@ -1375,9 +1342,8 @@ KEY_EVENT_TYPES = (wx.EVT_KEY_DOWN.evtType[0], wx.EVT_KEY_UP.evtType[0],
 MOUSE_EVENT_TYPES = tuple(wx.EVT_MOUSE_EVENTS.evtType)
 
 
-# the mouse is read off the whole screen (wx.GetMouseState), not from the player's own
-# events: a press over another window lying on the player (the radio's, a menu) was taken
-# by the box under it too
+# the mouse is read off the whole screen (wx.GetMouseState): a press over another
+# window on the player is taken by the box under it too
 user32 = ctypes.windll.user32 if hasattr(ctypes, 'windll') else None
 if user32 is not None:
     user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
@@ -1399,7 +1365,7 @@ def is_pointer_covered(x, y, window):
 
 
 def pointer_window():
-    # the window right under the pointer (its handle), None when it cannot be told
+    # the window handle under the pointer, or None
     if user32 is None:
         return None
     x, y = wx.GetMousePosition()
@@ -1410,11 +1376,7 @@ def pointer_window():
 
 
 def refresh_pointer_inside():
-    '''every box told again whether the pointer is on it, as it is now: a menu shown takes
-    the pointer (the box under it told it left), and Windows tells it came back only when it
-    moves; a right click on the next row before that was taken for one off the list and
-    every other one opened no menu (the user; a log of 12: 6). BOXES is defined further down
-    and filled as the boxes are made'''
+    '''pointer inside told again: after a menu Windows tells it only when it moves'''
     under = pointer_window()
     if under is None:
         return
@@ -1425,10 +1387,7 @@ def refresh_pointer_inside():
 
 class PressFilter(wx.EventFilter):
 
-    '''the player's own presses (wx's events, any window of it): told to the mouse's poll
-    (EVENT_Scheduler), which reads the button's state only every interval. its timer comes
-    last (a timer's message waits for every other): with the player busy drawing, a click
-    let go before the next read was never seen, a button not pressed at the first click'''
+    '''presses told to the mouse's poll: a quick click falls between its reads'''
 
     TYPES = {wx.wxEVT_LEFT_DOWN: 'left', wx.wxEVT_LEFT_DCLICK: 'left',
              wx.wxEVT_RIGHT_DOWN: 'right', wx.wxEVT_RIGHT_DCLICK: 'right'}
@@ -1441,7 +1400,7 @@ class PressFilter(wx.EventFilter):
         button = self.TYPES.get(event.GetEventType())
         if button is not None:
             self.scheduler.NotePress(button)
-            # (the window pressed is the one under the pointer, told or not that it came in)
+            # the window pressed is the one under the pointer
             window = event.GetEventObject()
             if window is not None and hasattr(window, 'onClient'):
                 window.onClient = True
@@ -1450,8 +1409,7 @@ class PressFilter(wx.EventFilter):
 
 class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
 
-    # a press told by PressFilter: taken as down at the next read when the read finds it
-    # let go already, if it is this new (seconds; older: the read saw it itself)
+    # a press let go before the read taken as down if this new (seconds)
     PRESS_FRESH = 0.4
     # Windows' own (SM_CXDRAG)
     DRAG_LEAST = 4
@@ -1475,13 +1433,13 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
 
     def StopNotify(self):
         self.stop = True
-        # (off wx before the app goes: a filter left in its list crashed it at the end)
+        # removed before the app goes: a filter left in crashes it at exit
         if self.press_filter is not None:
             wx.EvtHandler.RemoveFilter(self.press_filter)
             self.press_filter = None
 
     def NotePress(self, button):
-        # (read at once after wx's press is handled: not at the timer's turn)
+        # read at once after wx's press, not at the timer's turn
         if not self.presses:
             wx.CallAfter(self.Notify)
         self.presses[button] = time.time()
@@ -1527,7 +1485,7 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
         event.RightIsDown = state.RightIsDown()
         event.MiddleIsDown = state.MiddleIsDown()
         event.x, event.y = (state.x, state.y)
-        # a press wx told of, let go before this read: down for this read (up at the next)
+        # a press let go before this read: down for this read, up at the next
         presses, self.presses = self.presses, {}
         now = time.time()
         for button, when in presses.items():
@@ -1601,8 +1559,7 @@ class EVENT_Scheduler(wx.Timer, CursorEventCatcher):
             event.LeftIsDrag = True
         elif event.LeftIsDown:
             event.LeftIsDrag = self.cache.LeftIsDrag
-        # (the right button's a drag once it has gone DRAG_LEAST from where it was pressed:
-        # a pixel's shake of the hand took a right click for a drag, its menu not opened)
+        # the right button drags only past DRAG_LEAST
         rightMoved = isMoved and event.down.x is not None\
             and max(abs(event.x - event.down.x), abs(event.y - event.down.y)) >= self.DRAG_LEAST
         if (event.RightIsDown and self.cache.RightIsDown) and rightMoved:
@@ -1768,8 +1725,7 @@ class EventDistributor():
     def DistributeKeyHookEvent(self, event):
         arrowkeyflags = (21692417, 1095434241, 21823489, 1095565313,
                          21495809, 1095237633, 22020097, 1095761921, 3735553, 1077477377)
-        # Enter too (the window's navigation takes it as the arrows: no key down came for
-        # it), not from a text field (its own: the search, a row's name edited)
+        # Enter too (navigation eats its key down), not from a text field
         enter = event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)\
             and isinstance(wx.Window.FindFocus(), wx.TextCtrl) is False
         if event.GetRawKeyFlags() in arrowkeyflags or enter:
@@ -1896,32 +1852,23 @@ class EventCatcher():
 # LimitTextLength's text widths by (font, text)
 TEXT_EXTENTS = {}
 
-# drawn and not yet on the screen (DirectDraw), put there by PaintUnpainted. Windows
-# paints only when no other message waits: with the mouse moving over the window
-# the list and the buttons waited. each painted at once instead, a sash dragged
-# painted every box at every step and hardly followed the mouse
+# drawn, not yet painted (PaintUnpainted): WM_PAINT waits while other messages do
 UNPAINTED = set()
 # every box, for DrawPending
 BOXES = weakref.WeakSet()
 
 
-# a tick's time for them at most (DrawPending), and a box drawn by them this often at most:
-# the rest at the next tick (when idle comes, OnIdle draws them at once as before)
+# DrawPending's time a tick, and a box's least interval
 PENDING_BUDGET = 0.008
 PENDING_INTERVAL = 0.05
 
 
 def DrawPending():
-    '''the boxes asked to be drawn again (reInitBuffer), drawn and painted now: they were
-    drawn when idle, and idle never came while the visualizers' ticks kept the queue busy
-    (a song clicked was heard at once and shown long after, a scroll followed late). the
-    longest waiting first, PENDING_BUDGET a tick, PENDING_INTERVAL a box: a song skipped 30
-    times a second drew the whole list every tick, and the waveform fell to 8 frames a
-    second'''
+    '''boxes with reInitBuffer drawn now: idle never comes while the visualizers tick'''
     start = time.perf_counter()
     boxes = [box for box in list(BOXES) if box and box.reInitBuffer
              and start - getattr(box, 'pending_lap', 0.0) >= PENDING_INTERVAL]
-    # (those the eye follows first: PENDING_FIRST, the list's rows and the song's title)
+    # PENDING_FIRST boxes first, then the longest waiting
     for box in sorted(boxes, key=lambda box: (getattr(box, 'PENDING_FIRST', False) is False,
                                               getattr(box, 'pending_lap', 0.0))):
         if time.perf_counter() - start > PENDING_BUDGET:
@@ -1936,12 +1883,11 @@ def DrawPending():
 
 
 def PaintUnpainted():
-    '''the boxes drawn since, painted now, once each (from a beat the mouse does
-    not hold back: the visualizers' clock, PlayBoxVisualClock)'''
+    '''the boxes drawn since, painted now, once each'''
     boxes = list(UNPAINTED)
     UNPAINTED.clear()
     for box in boxes:
-        # gone meanwhile (a dialog's)
+        # gone meanwhile
         if box:
             box.Update()
 
@@ -1981,8 +1927,7 @@ class RectRect():
 
     def LimitTextLength(self, dc, string, width, margin=12):
         string = f'{string}'
-        # each text's widths measured once a font: measured at every draw, a sash
-        # dragged drew the list at every step and this was a sixth of all the time
+        # each text's widths taken once a font
         key = (dc.GetFont().GetNativeFontInfoDesc(), string)
         extents = TEXT_EXTENTS.get(key)
         if extents is None:
@@ -2005,8 +1950,7 @@ class RectRect():
         self.SetRectPre()
         width, height = self.GetSize()
         if width > 0 and height > 0:
-            # (the last frame's picture drawn over when it is the size: one made a frame
-            # was half of a frame's setting up)
+            # the last frame's bitmap reused when it is the size
             bmp = self.buffer.bmp
             if bmp is None or bmp.GetSize() != (width, height):
                 self.buffer.bmp = wx.Bitmap(width, height)
@@ -2015,8 +1959,7 @@ class RectRect():
             dc.SetBackgroundMode(wx.TRANSPARENT)
             dc.Clear()
             self.SetRectDraw(dc)
-        # drawn again at the next frame when the drawing asked it (redraw_next: a fading
-        # mark), else not till something changes
+        # drawn again at the next frame when asked (redraw_next)
         self.reInitBuffer = getattr(self, 'redraw_next', False)
         self.redraw_next = False
 
@@ -2053,8 +1996,7 @@ class RectRect():
         # if elapsed_time < 1.0 / self.buffer.fps:
         #     return
         # self.buffer.lap = time.time()
-        # on the beat: a tick a little early still draws, and the next frame is due
-        # a frame after this one was due (not after now), so the fps is kept
+        # on the beat: the next frame due a frame after this one was due
         now = time.time()
         interval = 1.0 / self.buffer.fps
         elapsed_time = now - self.buffer.lap
@@ -2323,11 +2265,7 @@ class TabTextEdit(wx.TextCtrl):
         self.destroy = True
 
 
-# the dialogs' spacing, one ladder for all of them (the tag editor's, Look Up's and the
-# rest each had their own: the user): PAD round a dialog, between its groups (columns,
-# sections) and round its footer's line and buttons; GAP between rows, a name and its
-# field, and buttons side by side; CHECK_GAP from a check box to its name; ROW a field's
-# height, BUTTON_HEIGHT a button's
+# the dialogs' spacing: PAD round a dialog and its groups, GAP between rows
 DIALOG_PAD = 16
 DIALOG_GAP = 8
 DIALOG_CHECK_GAP = 6
@@ -2336,11 +2274,7 @@ DIALOG_BUTTON_HEIGHT = 26
 
 
 def centre_over_owner(dialog):
-    '''a dialog on the middle of the window it was opened from (its parent's top window:
-    the player, or the dialog it was asked from), in whole pixels. placed by each opener
-    before, some were not placed at all (Windows' own corner, Find in Library and the Look
-    Ups) and some at a half pixel, which wxPython 4.3 takes for no place (About and
-    Preference stayed at the player's corner): every popup a place of its own, the user'''
+    '''a dialog on the middle of its owner, in whole pixels (wxPython 4.3 drops halves)'''
     owner = wx.GetTopLevelParent(dialog.GetParent()) if dialog.GetParent() else None
     if not owner or owner.IsShown() is False or owner.IsIconized():
         dialog.CentreOnScreen()
@@ -2352,8 +2286,7 @@ def centre_over_owner(dialog):
 
 class DialogBox(wx.Dialog):
 
-    # the footer: its line PAD over the buttons, the buttons PAD from the bottom and the
-    # sides (OnDialogPaint, PlaceButtons)
+    # the footer's line PAD over the buttons
     footer_gap = DIALOG_PAD + 1
 
     @staticmethod
@@ -2365,8 +2298,7 @@ class DialogBox(wx.Dialog):
         return self.GetClientSize().height - self.GetFooterHeight() - DIALOG_PAD
 
     def PlaceButtons(self, right=(), left=()):
-        '''the footer's buttons: right, their order kept, at its right end; left at its
-        left; GAP between them, PAD from the sides and the bottom; their row's top'''
+        '''the footer's buttons placed: returns their row's top'''
         width, height = self.GetClientSize()
         top = height - DIALOG_PAD - DIALOG_BUTTON_HEIGHT
         x = width - DIALOG_PAD
@@ -2399,16 +2331,14 @@ class DialogBox(wx.Dialog):
         return wx.Dialog.ShowModal(self)
 
     def Show(self, show=True):
-        # (one left open, Find in Library: placed when first shown, where it is moved kept)
+        # placed when first shown, kept where it is moved
         if show and getattr(self, 'placed', False) is False:
             centre_over_owner(self)
             self.placed = True
         return wx.Dialog.Show(self, show)
 
     def OnDialogPaint(self, event):
-        # the footer: a line over the buttons along the dialog's bottom (its actions
-        # apart from what they act on); a window of its own, over the panels (a line
-        # painted on the dialog was under them)
+        # the footer's line in its own window: painted on the dialog, panels cover it
         wx.PaintDC(self)
         w, h = self.GetClientSize()
         tops = [child.GetRect().y for child in self.GetChildren()
@@ -2522,7 +2452,7 @@ class FancyDialogBox(wx.Dialog):
         pass
 
     def ShowModal(self):
-        # (as DialogBox's)
+        # as DialogBox's
         centre_over_owner(self)
         return wx.Dialog.ShowModal(self)
 
@@ -2577,7 +2507,7 @@ class UserInputDialogBox(DialogBox):
         return DialogBox.ShowModal(self)
 
     def OnSize(self, event):
-        # (a size set before its children are made: none to place yet)
+        # a size set before its children are made: none to place yet
         if getattr(self, 'CloseButton', None) is None:
             return
         width, height = self.GetClientSize()
@@ -2648,9 +2578,7 @@ class ConfirmDialogBox(DialogBox):
 
 
 def fit_name_column(parent, x, width):
-    '''names right-aligned in a column width wide at x, their fields past it: the column
-    made as wide as its widest name (that one PAD from the edge, not 30 and more: a fixed
-    column wider than its names, the user), everything past it moved as much; the px saved'''
+    '''the name column fit to its widest name, the rest moved: the px saved'''
     children = list(parent.GetChildren())
     names = [c for c in children if isinstance(c, wx.StaticText)
              and c.GetPosition().x == x and c.GetSize().width == width]
@@ -2670,9 +2598,7 @@ def fit_name_column(parent, x, width):
 
 
 def make_check(parent, label, pos, value, handler):
-    '''a check box and its name, a text of its own CHECK_GAP past the box (the box's own
-    name sat against it: the user), a click on the name checking it too; (box, width).
-    pos: the name's top left as a row's names (the box a pixel lower, on its middle)'''
+    '''a check box and its name CHECK_GAP past it, the name clickable: (box, width)'''
     box = CheckBox(parent, label='', pos=(pos[0], pos[1] + 1))
     box.SetSize(box.GetBestSize())
     box.SetValue(value)
@@ -2689,7 +2615,7 @@ def make_check(parent, label, pos, value, handler):
 
 
 def draw_field(gc, w, h, focused):
-    # a field's ground (as FieldFrame's): rounded, its edge in the accent with the focus
+    # a field's ground, its edge in the accent with the focus
     ui = macroboxstyle.current().UI
     edge = ui.FIELD_FOCUS if focused else ui.FIELD_EDGE
     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
@@ -2699,9 +2625,7 @@ def draw_field(gc, w, h, focused):
 
 class SpinCtrl(wx.Control):
 
-    '''a number in a field with its steps at the right (up and down), as the dialogs'
-    fields: typed, or stepped by them, the arrow keys or the wheel; wx.EVT_SPINCTRL when it
-    changes (GetInt, as a wx.SpinCtrl's)'''
+    '''a number field with steps, as a wx.SpinCtrl'''
 
     STEP = 16
 
@@ -2820,8 +2744,7 @@ class SpinCtrl(wx.Control):
 
 class ProgressBar(wx.Control):
 
-    '''a thin bar of what is done, in the accent on an unlit ground (the status line's,
-    a wx.Gauge's place)'''
+    '''a thin progress bar in place of a wx.Gauge'''
 
     def __init__(self, parent, range=100):
         wx.Control.__init__(self, parent, style=wx.BORDER_NONE)
@@ -2858,9 +2781,7 @@ class ProgressBar(wx.Control):
 
 class Dropdown(wx.Control):
 
-    '''a choice in a field (its arrow at the right), as the dialogs' fields: a click
-    opens its choices as a menu under it; wx.EVT_COMBOBOX when another is chosen
-    (GetString, GetSelection), as a read only wx.ComboBox'''
+    '''a read only wx.ComboBox drawn as the dialogs' fields'''
 
     def __init__(self, parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24),
                  style=0):
@@ -2966,7 +2887,7 @@ class Dropdown(wx.Control):
 
 class NativeComboBox(wx.ComboBox):
 
-    # an editable one (its text typed): the native control
+    # an editable one: the native control
     def __init__(self, parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24), style=0):
         wx.ComboBox.__init__(self, parent, id=id, value=value,
                              choices=choices, pos=pos, size=size, style=style)
@@ -2992,26 +2913,17 @@ def ComboBox(parent, id=-1, value='', choices=[''], pos=(-1, -1), size=(75, 24),
 
 class FieldFrame(wx.Window):
 
-    '''a TextCtrl's frame (the field the dialog places): a rounded ground of its own,
-    the edge in the accent while it is typed in, the text control borderless inside it with
-    its text on the field's middle (a borderless control alone kept its text at the top);
-    read only, its edge alone, the dialog's ground in it (no field at all, the value as text
-    on the dialog's, before: numbers floating in the air, the user)'''
+    '''a TextCtrl's frame: a borderless control alone keeps its text at the top'''
 
-    # the text control at PAD in from the field's edge: its own margin (4 px) adds to it, the
-    # text's ink 8 px in (it was 11 at 7); one row under the middle, so the capitals sit on
-    # the field's middle and Hangul's taller glyphs too (measured: Latin 6 to 14 of 22,
-    # Hangul 5 to 17)
+    # the control's own 4 px margin adds to PAD; a row under the middle
     PAD = 4
-    # its menu's mark at its right (SetMark: a ▾ when it has values to choose from), the
-    # text short of it
+    # its menu's mark at its right, the text short of it
     MARK = 16
 
     def __init__(self, parent, pos, size):
         wx.Window.__init__(self, parent, pos=pos, size=size, style=wx.BORDER_NONE)
         self.text = None
-        # changed (SetChanged: a bar in the accent at its left, not saved yet), its mark's
-        # action (SetMark)
+        # changed: a bar in the accent at its left, not saved yet
         self.changed = False
         self.mark = None
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
@@ -3062,7 +2974,7 @@ class FieldFrame(wx.Window):
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
         gc.SetBrush(wx.NullGraphicsBrush if read_only else
                     gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
-        # (from (0, 0), w - 1: the renderer puts the edge on the outer rows, uikit.draw_face)
+        # w - 1: the renderer puts the edge on the outer rows
         gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
         if self.changed:
             gc.SetPen(wx.NullGraphicsPen)
@@ -3077,8 +2989,7 @@ class FieldFrame(wx.Window):
 
 class TextCtrl(wx.TextCtrl):
 
-    '''a dialog's text field: a borderless text control in a FieldFrame (placed, sized,
-    shown and destroyed with it); SetReadOnly: a value shown in a field of its edge alone'''
+    '''a dialog's text field: a borderless text control in a FieldFrame'''
 
     def __init__(self, parent, id=-1, value='',
                  pos=(-1, -1), size=(75, 24), style=0):
@@ -3148,8 +3059,7 @@ class TextCtrl(wx.TextCtrl):
 
 class CheckBox(wx.Control):
 
-    '''wx.CheckBox's GetValue, SetValue, IsChecked and EVT_CHECKBOX, drawn in the theme's
-    accent (Windows' own ignores it)'''
+    '''a wx.CheckBox in the theme's accent (Windows' own ignores it)'''
 
     SIZE = 14
 
@@ -3266,10 +3176,7 @@ class StaticText(wx.StaticText):
 
 class Button(wx.Control):
 
-    '''a dialog's button drawn as the player's keys (uikit.draw_button: matte, a darker
-    edge); primary, the dialog's own action in the accent. clicked by the mouse, or by the
-    space or enter key while it has the focus (its edge in the accent): wx.EVT_BUTTON, as a
-    wx.Button's'''
+    '''a dialog's button drawn as the player's keys, as a wx.Button'''
 
     def __init__(self, parent, id=-1, label='', pos=(-1, -1), size=(75, 26), style=0,
                  primary=False):

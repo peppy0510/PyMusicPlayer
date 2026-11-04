@@ -17,9 +17,7 @@ from macroboxlib import SetPreference
 from pybass import pybass_vst
 
 
-# MASTER: Auto Master's settings kept (automaster_values: its 17 parameters, 0 to 1) and put
-# on every stream it is on, its levels read from the plugin's shared memory (PyMusicPlayer's
-# own name, plugin/automaster.c), and its A/B there (the original at the same loudness)
+# Auto Master parameters, levels and A/B
 # (index, name, group, kind): kind 'switch' (on or off) or 'knob' (0 to 1)
 PARAMS = (
     (0, 'AGC', 'AGC', 'switch'), (1, 'Target', 'AGC', 'knob'),
@@ -32,8 +30,7 @@ PARAMS = (
     (14, 'Drive', 'Limiter', 'knob'), (15, 'Smooth', 'Limiter', 'switch'),
     (16, 'Attack', 'Limiter', 'knob'))
 GROUPS = ('AGC', 'Stereo', 'Limiter')
-# the plugin's own first values (PARAM_DEFAULTS), and the player's: the limiter pushed to
-# the ceiling as the PyWinAudio rack runs it (about LoudMax's sound)
+# plugin defaults, and the player's with the limiter pushed to the ceiling
 PLUGIN_DEFAULTS = (1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 12.0 / 14.0, 1.0, 1.0, 10.5 / 18.0,
                    8.0 / 12.0, 1.0, 5.0 / 6.0, 0.0, 0.0, 1.0 / 9.0)
 DEFAULTS = PLUGIN_DEFAULTS[:13] + (1.0, 1.0, 1.0) + PLUGIN_DEFAULTS[16:]
@@ -42,8 +39,7 @@ GetParam = pybass_vst.func_type(ctypes.c_float, ctypes.c_ulong, ctypes.c_int)(
     ('BASS_VST_GetParam', pybass_vst.bass_vst_module))
 
 
-# read once and kept here (set_value the only one to write them): GetPreference opens
-# the settings at every call, and MASTER's drawing asked 170 times a second (120 ms)
+# cached: GetPreference opens the settings at every call
 values_kept = None
 
 
@@ -58,7 +54,6 @@ def get_values():
 
 
 def set_value(index, value, handles=()):
-    # kept, and put on the streams it is on now
     global values_kept
     values = get_values()
     values[index] = min(max(float(value), 0.0), 1.0)
@@ -74,7 +69,7 @@ def is_on(value):
     return value >= 0.5
 
 
-# a stage's switches, turned off and on as one from MASTER's header (STEREO: its five)
+# stage switches, toggled as one
 STAGE_SWITCHES = dict(agc=(0,), stereo=(4, 5, 6, 8, 9), limiter=(12,))
 
 
@@ -84,8 +79,7 @@ def is_stage_on(stage, values=None):
 
 
 def toggle_stage(stage, handles=()):
-    '''a stage off (its switches as they were kept: automaster_stages) or on again as
-    they were (all on when none were kept)'''
+    '''stage off, or back on as kept (all on when none kept)'''
     values = get_values()
     switches = STAGE_SWITCHES[stage]
     kept = GetPreference('automaster_stages')
@@ -106,8 +100,7 @@ def toggle_stage(stage, handles=()):
 
 class Probe():
 
-    '''a value told as the plugin tells it (-16.0 LUFS): a silent stream of nothing with
-    the plugin on it, made once, used only for its parameters' texts'''
+    '''parameter texts from the plugin on a silent dummy stream'''
 
     def __init__(self):
         self.handle = 0
@@ -136,8 +129,7 @@ class Probe():
 PROBE = Probe()
 
 
-# the levels, as PyWinAudio reads them (automastermeter.py): the plugin's slots in its
-# shared memory, the one that sounded last
+# plugin levels in shared memory (plugin/automaster.c)
 MAGIC = 0x4D415750
 SLOTS = 8
 NAMES = ('Global\\PyMusicPlayerAutoMaster.v4', 'Local\\PyMusicPlayerAutoMaster.v4')
@@ -191,11 +183,7 @@ class Meters():
         return False
 
     def Read(self, vst=0):
-        '''{agc, limiter, side, balance, loudness} of the plugin on this handle (its slot:
-        its instance the slot's owner), else of the slot that sounded last; None when none
-        did lately (the plugin not on, or silent). the memory is every instance's of this
-        name: another player's (PyMusicStudio's, a test's) read in turn with this one's,
-        WIDTH went between -5.5 and 0 dB'''
+        '''levels of this handle's slot, else the last sounding one; None when stale'''
         if self.block is None and not self.Open():
             return None
         if self.block.magic != MAGIC:
@@ -214,8 +202,6 @@ class Meters():
         if best is None:
             return None
         slot = best[1]
-        # (and the stereo's detail, as PyWinAudio's rack shows it: the delay set between
-        # the channels, and each band's width as it came, as filled and its target)
         return dict(agc=slot.agc_db, limiter=slot.limiter_db, side=slot.side_db,
                     balance=slot.balance_db, loudness=slot.loudness,
                     phase=slot.phase_delay_ms, phase_flip=bool(slot.phase_flip),
@@ -227,7 +213,7 @@ class Meters():
         return bool(self.block is not None and self.block.bypass)
 
     def SetCompared(self, on):
-        # A/B: the original at the same loudness and the same delay
+        # A/B: the original at the same loudness
         if self.block is None and not self.Open():
             return False
         self.block.bypass = 1 if on else 0
@@ -238,8 +224,7 @@ METERS = Meters()
 
 
 def get_owner(vst, kept={}):
-    # the plugin's instance on a BASS_VST handle (BASS_VST_INFO's aeffect: the plugin's
-    # own struct begins with it), 0 when not known
+    # plugin instance (aeffect) of a BASS_VST handle, 0 when unknown
     if not vst:
         return 0
     if vst not in kept:

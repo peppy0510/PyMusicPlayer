@@ -62,7 +62,7 @@ class ListBoxListDnD(wx.FileDropTarget):
         return self.GetDropResult(d)
 
     def GetDropResult(self, d):
-        # the folder's tab takes nothing (OnDropFiles): the pointer told so over it
+        # the folder's tab takes no drop
         if self.parent.parent.GetListTitle() == library.FOLDER_TITLE:
             return wx.DragNone
         return d
@@ -81,8 +81,7 @@ class ListBoxListDnD(wx.FileDropTarget):
         if isInsertable and insertItemIdx is None:
             return 0
         if self.parent.parent.GetListTitle() == library.FOLDER_TITLE:
-            # the folder's tab shows its folder: nothing put in nor moved (as ImportFiles
-            # ends)
+            # the folder's tab: nothing put in nor moved
             self.itemDrag = False
             self.insertItemIdx = None
             self.dropTimer = 0
@@ -148,21 +147,18 @@ class ListBoxListDnD(wx.FileDropTarget):
 
     def ImportFiles(self, inpaths, insertItemIdx=-1,
                     selectedList=None, permit_duplicated=False, filtered=False):
-        # the files read first (their tags, their length, their analysis), the lists usable
-        # meanwhile; locked only while they are joined into the list (locked from the start,
-        # nothing could be done in the lists for as long as the disk took: 40 songs held
-        # them seconds, the user)
+        # files read first unlocked, locked only while joined into the list
         jobsegSize = 100
         if selectedList is None:
             selectedList = self.parent.parent.selectedList
         isLocked = False
-        # (its tab by its id: the tabs may be moved meanwhile)
+        # by id: the tabs may be moved meanwhile
         listId = self.parent.parent.innerList[selectedList].Id
 
         try:
             extended_paths = []
             for path in inpaths:
-                # a station's row dragged here: its address kept as it is
+                # a station's address kept as it is
                 if audio.is_stream_path(path):
                     extended_paths.append(path)
                     continue
@@ -216,7 +212,6 @@ class ListBoxListDnD(wx.FileDropTarget):
                                        self.parent.parent.innerList[selectedList].items)) != []:
                             already_have_count += 1
                             continue
-                    # (its place in the list now it is joined)
                     item = list(item)
                     item[orderIdx] = order
                     order += 1
@@ -279,8 +274,7 @@ class ListBoxListDnD(wx.FileDropTarget):
             message = ' / '.join(message)
             self.parent.parent.parent.StatusBox.alarm_timer = 0
             self.parent.parent.parent.StatusBox.alarm = message
-            # its tab's row lit for a moment in the sidebar, the count put in on it (dropped
-            # on the sidebar, nothing told where the songs went: the user)
+            # flash the tab songs were added to
             wx.CallAfter(self.parent.parent.parent.ListTab.TabList.FlashTab, listId,
                          imported_count)
         finally:
@@ -316,7 +310,7 @@ class ListControl():
         item = self.GetSelectedItem()
         if item is None:
             return
-        # a folder's row (the folder's tab's) opened, not played
+        # a folder row opened, not played
         if folders.is_folder_view(self) and folders.is_folder_item(self, item):
             folders.open_row(self.parent, item)
             return
@@ -544,7 +538,7 @@ class ListControl():
         oldPath = self.GetItemValueByColumnKey(itemIdx, 'path', selectedList)
         if newPath == oldPath:
             return False
-        # a song's file only (a folder's row, the folder's tab's, is never renamed)
+        # a song's file only, never a folder
         if os.path.isdir(oldPath):
             return False
         try:
@@ -609,14 +603,10 @@ class ListControl():
         query = query.split(' ')
         query = [v for v in query if v != '']
         queryLength = len(query)
-        # a list (Python 3's filter is a one-time iterator: the rows could not be drawn
-        # from it), each value as text (the order is a number)
+        # a list: Python 3's filter is a one-time iterator
         items = [v for v in self.innerList[selectedList].filterCache
                  if len([x for x in query if x in str(v[keyIdx]).lower()]) == queryLength]
-        # the starred songs alone (the search row's star, ListBoxSearch.ToggleStarred), the
-        # folder's tab's folders kept ('..' and the subfolders, its way about: hidden, they
-        # were missed, the user); the radio's tabs as they are (their favorites are the
-        # stations')
+        # starred songs alone, folder rows kept, the radio's tabs as they are
         inner = self.innerList[selectedList]
         if getattr(self, 'filter_starred', False) and inner.title not in radio.RADIO_TABS:
             favorites = set(library.get_favorite_tracks())
@@ -670,18 +660,16 @@ class ListControl():
                              ignore_case=ignore_case, selectedList=listIdx)
 
     def SetFilterOffAll(self):
-        # (asked at every event while the search is empty: drawn again only when a filter
-        # was on, the whole list 30 times a second took half the GUI thread)
+        # asked at every event: drawn again only when a filter was on
         filtered = [listIdx for listIdx in range(len(self.innerList))
                     if self.IsFiltered(listIdx)]
         if len(filtered) == 0:
-            # (the search row's hover and focus drawn by its own, HandleEventDrawnControls:
-            # drawn here too at every event it took a list's place in DrawPending)
+            # the search row draws its own hover and focus
             return
         for listIdx in filtered:
             self.SetFilterOff(listIdx)
         self.parent.ListSearch.reInitBuffer = True
-        # the whole list drawn again (the search row alone was)
+        # the whole list drawn again
         if hasattr(self, 'List'):
             self.List.reInitBuffer = True
 
@@ -913,13 +901,12 @@ class ListControl():
     def SetSelectedList(self, idx):
         self.selectedList = idx
         # self.parent.PlayBox.FocusPlayingItem()
-        # the rows, the header and the bars drawn together, the new tab's in one frame
-        # (each on its own idle, they had come a frame or more apart: the user)
+        # the rows, the header and the bars drawn together in one frame
         parts = [getattr(self, name, None) for name in ('List', 'Header', 'SliderH', 'SliderV')]
         if None in parts or self.IsDrawable() is False:
             self.DirectDraw()
             return
-        # (the list box first: its drawing asks its parts again, theirs then answer it)
+        # the list box first: its drawing asks its parts again
         self.Freeze()
         for part in [self] + parts:
             part.InitBuffer()
@@ -1098,7 +1085,7 @@ class ListControl():
         return headerIdx[0]
 
     def GetHeaderIdx(self, x):
-        # a column's edge caught this far either side (5 was hard to catch)
+        # a column's edge caught this far either side
         self.column_splitter_size = 8
         if self.Header.onClient is False:
             return None
@@ -1170,7 +1157,7 @@ class ListControl():
             inner.columns = columns
 
     def SyncColumnsToAll(self):
-        # a column shown, hidden, moved or resized: the same in every tab, and in new tabs
+        # columns the same in every tab, and in new tabs
         if self.innerList[self.selectedList].title in radio.RADIO_TABS:
             return
         self.CloneColumnsDefinitionToAll()
@@ -1620,9 +1607,7 @@ class ListControl():
         self.FocusItem(item)
 
     def ShiftSelectItems(self, item, add=False):
-        # the rows from the anchor (focus.shift: the last clicked without Shift) to item;
-        # add (Ctrl with Shift) keeping those selected besides. a list, not a range: a Ctrl
-        # click after a Shift one added to it or took from it, and did nothing (the user)
+        # from the anchor (focus.shift) to item, add (Ctrl+Shift) keeps the rest
         if item < 0:
             item = 0
         itemsLength = self.GetItemsLength()
