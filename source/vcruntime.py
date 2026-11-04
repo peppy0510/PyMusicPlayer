@@ -14,6 +14,7 @@ import os
 import sys
 import sysconfig
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -24,6 +25,9 @@ from ctypes import wintypes
 MINIMUM_VERSION = (14, 40)
 REDIST_URL = 'https://aka.ms/vc14/vc_redist.{}.exe'
 REDIST_PAGE = 'https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist'
+# a name lookup can fail for a moment on a fresh network
+DOWNLOAD_TRIES = 3
+DOWNLOAD_WAIT = 2.0
 
 MB_YESNO = 0x04
 MB_ICONERROR = 0x10
@@ -120,7 +124,14 @@ def run_elevated(path, parameters):
 def install_runtime():
     architecture = 'arm64' if sysconfig.get_platform().endswith('arm64') else 'x64'
     path = os.path.join(tempfile.gettempdir(), f'vc_redist.{architecture}.exe')
-    urllib.request.urlretrieve(REDIST_URL.format(architecture), path)
+    for attempt in range(DOWNLOAD_TRIES):
+        try:
+            urllib.request.urlretrieve(REDIST_URL.format(architecture), path)
+            break
+        except (OSError, urllib.error.URLError):
+            if attempt == DOWNLOAD_TRIES - 1:
+                raise
+            time.sleep(DOWNLOAD_WAIT)
     try:
         return run_elevated(path, '/install /passive /norestart')
     finally:
@@ -140,12 +151,15 @@ def ensure_runtime():
     if message_box(None, text, name, MB_YESNO | MB_ICONWARNING) != IDYES:
         # let it try anyway; a runtime somewhere other than System32 may still serve wx
         return
+    reason = ''
     try:
         install_runtime()
-    except (OSError, urllib.error.URLError):
-        pass
+    except urllib.error.URLError as error:
+        reason = f'\n\nThe download failed: {error.reason}'
+    except OSError as error:
+        reason = f'\n\nThe download failed: {error}'
     if get_runtime_version() < MINIMUM_VERSION:
-        message_box(None, f'The Microsoft Visual C++ Redistributable was not installed.\n\n'
+        message_box(None, f'The Microsoft Visual C++ Redistributable was not installed.{reason}\n\n'
                     f'Install it from {REDIST_PAGE} and start {name} again.', name, MB_ICONERROR)
         sys.exit(1)
 
