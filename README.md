@@ -44,7 +44,7 @@
 
 ## Supported platforms
 
-* Microsoft Windows 10, Windows 11
+* Microsoft Windows 11
 
 ## License
 
