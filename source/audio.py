@@ -1031,7 +1031,13 @@ def read_m3u(filename):
             continue
         if line.startswith('#EXTINF:'):
             continue
-        paths.append(line.splitlines()[0])
+        path = line.strip()
+        if len(path) == 0:
+            continue
+        # beside the playlist unless absolute or a stream
+        if '://' not in path:
+            path = os.path.join(os.path.dirname(filename), path)
+        paths.append(path)
     f.close()
     return paths
 

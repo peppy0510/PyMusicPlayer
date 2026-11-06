@@ -28,5 +28,8 @@ Source: ".dist\PyMusicPlayer\*"; DestDir: "{app}"; Flags: recursesubdirs
 Name: "{group}\PyMusicPlayer"; Filename: "{app}\PyMusicPlayer.exe"
 Name: "{commondesktop}\PyMusicPlayer"; Filename: "{app}\PyMusicPlayer.exe"
 
+[UninstallRun]
+Filename: "{app}\PyMusicPlayer.exe"; Parameters: "--unregister"; RunOnceId: "Unregister"; Flags: runhidden
+
 [Run]
 Filename: "{app}\PyMusicPlayer.exe"; Description: "Launch PyMusicPlayer"; Flags: nowait postinstall skipifsilent

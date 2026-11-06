@@ -46,6 +46,7 @@ from macroboxlib import MFEATS_Scheduler
 from macroboxlib import PopupMenuEventCatcher
 from macroboxlib import RectRect
 from macroboxlib import SUPPORTED_AUDIO_TYPE
+from macroboxlib import SUPPORTED_PLAYLIST_TYPE
 from macroboxlib import SetPreference
 from macroboxlib import SetPreferences
 from menubar import KeymapPreset
@@ -532,6 +533,9 @@ class MainFrame(wx.Frame, MacroBoxMenuBar, MacroBoxPreference, KeymapPreset):
         if initfile is None:
             return
         file_type = os.path.splitext(initfile)[1][1:].lower()
+        if file_type in SUPPORTED_PLAYLIST_TYPE:
+            self.MainPanel.ListTab.TabList.FileDrop.CreateAndDropToNewTab([initfile])
+            return
         if file_type not in SUPPORTED_AUDIO_TYPE:
             return
         self.MainPanel.PlayBox.cue.path = initfile

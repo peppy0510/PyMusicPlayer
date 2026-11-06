@@ -6,6 +6,7 @@
 
 
 import audio
+import fileassoc
 import images
 import io
 import macroboxstyle
@@ -1760,6 +1761,147 @@ class PreferenceWebInfoPanel(DialogPanel):
         self.Destroy()
 
 
+class PreferenceFileTypesPanel(DialogPanel):
+
+    COLUMNS = 3
+    CELL = (150, 40)
+    ICON = 32
+
+    def __init__(self, parent):
+        DialogPanel.__init__(self, parent)
+        self.parent = parent
+        self.SetDoubleBuffered(True)
+        self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
+        self.icons = GetPreference('file_icons') or {}
+        self.Status = StaticText(self, label='', pos=(DIALOG_PAD, DIALOG_PAD))
+        self.Status.reserved = True
+        self.Status.SetInitialSize((self.COLUMNS * self.CELL[0], DIALOG_ROW))
+
+        self.Icons = dict()
+        self.States = dict()
+        top = DIALOG_PAD + DIALOG_ROW + DIALOG_GAP
+        width, height = self.CELL
+        for index, (ext, name) in enumerate(fileassoc.FILE_TYPES):
+            x = DIALOG_PAD + index % self.COLUMNS * width
+            y = top + index // self.COLUMNS * height
+            icon = wx.StaticBitmap(self, bitmap=self.GetIconBitmap(ext), pos=(x, y),
+                                   size=(self.ICON, self.ICON))
+            icon.SetToolTip(f'Choose an icon for {name} files')
+            icon.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+            icon.Bind(wx.EVT_LEFT_UP, lambda event, ext=ext: self.OnChooseIcon(ext))
+            self.Icons[ext] = icon
+            text = StaticText(self, label=f'.{ext}', pos=(x + self.ICON + DIALOG_GAP, y))
+            text.SetSize(text.GetBestSize())
+            state = StaticText(self, label='', pos=(x + self.ICON + DIALOG_GAP, y + 16))
+            state.reserved = True
+            state.SetInitialSize((width - self.ICON - DIALOG_GAP * 2, 16))
+            self.States[ext] = state
+
+        rows = (len(fileassoc.FILE_TYPES) + self.COLUMNS - 1) // self.COLUMNS
+        offset = top + rows * height + DIALOG_GAP
+        label = u'Windows leaves the choice to you: in the Settings page that opens, choose'
+        label += u'\nPyMusicPlayer for each file type. Click an icon to use your own .ico file.'
+        label += u'\nIcons show on the types PyMusicPlayer opens.'
+        text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
+        text.SetSize(text.GetBestSize())
+        offset += text.GetSize().height + DIALOG_PAD
+
+        self.DefaultButton = Button(self, label='Set as Default', pos=(DIALOG_PAD, offset),
+                                    size=(110, 26), primary=True)
+        self.DefaultButton.Bind(wx.EVT_BUTTON, self.OnSetDefault)
+        x = DIALOG_PAD + 110 + DIALOG_GAP
+        self.ResetButton = Button(self, label='Reset Icons', pos=(x, offset), size=(90, 26))
+        self.ResetButton.Bind(wx.EVT_BUTTON, self.OnResetIcons)
+        x += 90 + DIALOG_GAP
+        self.RemoveButton = Button(self, label='Remove', pos=(x, offset))
+        self.RemoveButton.Bind(wx.EVT_BUTTON, self.OnRemove)
+
+        # back from the Settings page
+        self.GetTopLevelParent().Bind(wx.EVT_ACTIVATE, self.OnActivate)
+        self.UpdateStates()
+
+    def GetIconBitmap(self, ext):
+        path = self.icons.get(ext)
+        if path is None or os.path.exists(path) is False:
+            path = fileassoc.get_file_icon(ext)
+        icon = wx.Icon(path, wx.BITMAP_TYPE_ICO, self.ICON, self.ICON)
+        bitmap = wx.Bitmap(self.ICON, self.ICON, 32)
+        if icon.IsOk():
+            bitmap.CopyFromIcon(icon)
+        return bitmap
+
+    def UpdateStates(self):
+        count = 0
+        dc = wx.ClientDC(self)
+        for ext, name in fileassoc.FILE_TYPES:
+            state = self.States[ext]
+            if fileassoc.is_default(ext):
+                count += 1
+                label = 'Default'
+            else:
+                label = fileassoc.get_default_name(ext) or 'No app'
+            dc.SetFont(state.GetFont())
+            label = wx.Control.Ellipsize(label, dc, wx.ELLIPSIZE_END, state.GetSize().width)
+            state.SetLabelText(label)
+        total = len(fileassoc.FILE_TYPES)
+        self.Status.SetLabelText(f'PyMusicPlayer opens {count} of {total} file types.')
+        self.ResetButton.Enable(len(self.icons) > 0)
+        self.RemoveButton.Enable(fileassoc.is_registered())
+
+    def Register(self):
+        try:
+            fileassoc.register(self.icons)
+        except OSError as error:
+            self.Status.SetLabelText(f'Could not register: {error}')
+            return False
+        return True
+
+    def OnSetDefault(self, event):
+        if self.Register():
+            fileassoc.open_default_apps()
+        self.UpdateStates()
+
+    def OnChooseIcon(self, ext):
+        dialog = wx.FileDialog(self, message=f'Icon for .{ext} files',
+                               wildcard='Icons (*.ico)|*.ico',
+                               style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        if dialog.ShowModal() == wx.ID_OK:
+            self.icons[ext] = dialog.GetPath()
+            self.ApplyIcons()
+        dialog.Destroy()
+
+    def OnResetIcons(self, event):
+        self.icons = {}
+        self.ApplyIcons()
+
+    def ApplyIcons(self):
+        SetPreference('file_icons', self.icons)
+        for ext, icon in self.Icons.items():
+            icon.SetBitmap(self.GetIconBitmap(ext))
+        self.Register()
+        self.UpdateStates()
+
+    def OnRemove(self, event):
+        try:
+            fileassoc.unregister()
+        except OSError as error:
+            self.Status.SetLabelText(f'Could not remove: {error}')
+            return
+        self.UpdateStates()
+
+    def OnActivate(self, event):
+        if event.GetActive():
+            self.UpdateStates()
+        event.Skip()
+
+    def OnSize(self, event):
+        self.SetSize(self.parent.GetClientSize())
+
+    def OnClose(self, event):
+        self.GetTopLevelParent().Unbind(wx.EVT_ACTIVATE, handler=self.OnActivate)
+        self.Destroy()
+
+
 class PreferenceNotebook(wx.Simplebook):
 
     # pages without tabs: the SegmentBar chooses them
@@ -1778,6 +1920,8 @@ class PreferenceNotebook(wx.Simplebook):
         self.AddPage(self.ShortcutKeyPanel, 'Shortcut Key')
         self.WebInfoPanel = PreferenceWebInfoPanel(self)
         self.AddPage(self.WebInfoPanel, 'Web Services')
+        self.FileTypesPanel = PreferenceFileTypesPanel(self)
+        self.AddPage(self.FileTypesPanel, 'File Types')
         # self.WebLinkPanel = WebLinkEditorPanel(self)
         # self.AddPage(self.WebLinkPanel, 'Web Search')
 
@@ -1792,6 +1936,7 @@ class PreferenceNotebook(wx.Simplebook):
         self.MFEATSPanel.OnSize(None)
         self.ShortcutKeyPanel.OnSize(None)
         self.WebInfoPanel.OnSize(None)
+        self.FileTypesPanel.OnSize(None)
         # self.MFEATSPanel.SetSize((width - 20, height - 40))
         # self.AppearancePanel.SetSize((width-20, height-40))
         # self.ShortcutKeyPanel.SetSize((width - 20, height - 40))
@@ -1814,6 +1959,7 @@ class PreferenceNotebook(wx.Simplebook):
         self.MFEATSPanel.OnClose(None)
         self.ShortcutKeyPanel.OnClose(None)
         self.WebInfoPanel.OnClose(None)
+        self.FileTypesPanel.OnClose(None)
         # self.AppearancePanel.OnClose(None)
         # self.WebLinkPanel.OnClose(None)
         self.Destroy()
@@ -1858,7 +2004,7 @@ class PreferenceBox(DialogBox):
         # as tall as its tallest page plus PAD
         top = DIALOG_PAD // 2 + self.TABS
         pages = (self.Notebook.MFEATSPanel, self.Notebook.ShortcutKeyPanel,
-                 self.Notebook.WebInfoPanel)
+                 self.Notebook.WebInfoPanel, self.Notebook.FileTypesPanel)
         page = max(max(c.GetRect().GetBottom() + 1 for c in p.GetChildren()) for p in pages)
         # as wide as its widest page plus PAD; a text by its words
         def right(c):

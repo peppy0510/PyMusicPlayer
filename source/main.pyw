@@ -41,6 +41,9 @@ numpy.finfo(numpy.dtype('float64'))
 
 # MAIN_SOCKET_PORT = 55557
 MAIN_SOCKET_PORT = 55755
+LAUNCH_MUTEX = 'PyMusicPlayerLaunch'
+LAUNCH_WAIT = 30
+ERROR_ALREADY_EXISTS = 183
 
 
 def get_launch_log_path():
@@ -97,14 +100,37 @@ def check_mainapp():
     return True
 
 
-def send_filepath_to_mainapp(filepath):
+def claim_launch():
+    # Explorer starts one process per selected file: one of them starts the player
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CreateMutexW(None, False, LAUNCH_MUTEX)
+    return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+
+
+def connect_mainapp():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(1)
     try:
         sock.connect(('127.0.0.1', get_mainapp_port()))
     except OSError:
         sock.close()
+        return None
+    return sock
+
+
+def send_filepath_to_mainapp(filepath):
+    sock = connect_mainapp()
+    if sock is None and claim_launch():
         launch(filepath)
+        return
+
+    deadline = time.time() + LAUNCH_WAIT
+    while sock is None and time.time() < deadline:
+        time.sleep(0.25)
+        sock = connect_mainapp()
+    if sock is None:
+        write_launch_log(f'not opened: no player answered for {filepath}')
         return
 
     try:
@@ -140,7 +166,13 @@ def main(initfile=None):
         help='filepath',
     )
     parser.add_argument('--after', type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument('--unregister', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.unregister:
+        # the uninstaller's
+        import fileassoc
+        fileassoc.unregister()
+        return
     if args.after is not None:
         wait_for_previous(args.after)
     if args.filepath:
@@ -155,6 +187,7 @@ def main(initfile=None):
         if running:
             write_launch_log(f'not started: already running as {running}')
         else:
+            claim_launch()
             launch()
     # except Exception:
     #     logging.error(traceback.format_exc())
