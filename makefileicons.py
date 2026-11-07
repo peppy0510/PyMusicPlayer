@@ -59,18 +59,18 @@ def get_layout(size):
     return 0.12, 0.02, 0.88, 0.98, 0.25
 
 
-def draw_label(canvas, label, centre, width, height, ink):
-    font = ImageFont.truetype(FONT, 100)
-    font.set_variation_by_name(FONT_VARIATION)
-    left, top, right, bottom = font.getbbox('H')
-    pixels = int(100.0 * height / (bottom - top))
+def get_font(pixels):
     font = ImageFont.truetype(FONT, pixels)
     font.set_variation_by_name(FONT_VARIATION)
+    return font
+
+
+def get_label_font(label, width, height):
+    left, top, right, bottom = get_font(100).getbbox('H')
+    font = get_font(int(100.0 * height / (bottom - top)))
     if font.getlength(label) > width:
-        pixels = int(pixels * width / font.getlength(label))
-        font = ImageFont.truetype(FONT, pixels)
-        font.set_variation_by_name(FONT_VARIATION)
-    ImageDraw.Draw(canvas).text(centre, label, font=font, fill=ink, anchor='mm')
+        font = get_font(int(font.size * width / font.getlength(label)))
+    return font
 
 
 def draw_chevron(canvas, centre, height, ink):
@@ -80,10 +80,10 @@ def draw_chevron(canvas, centre, height, ink):
 
 
 def draw_list(canvas, box, ink):
-    # three rows after a small chevron: a playlist
+    # three rows after a small chevron, which stands above the first: a playlist
     left, top, right, bottom = box
-    height = bottom - top
-    row = height / 5.0
+    row = (bottom - top) / 5.8
+    top += row * 0.8
     draw = ImageDraw.Draw(canvas)
     for index in range(3):
         y = top + row * index * 2
@@ -121,27 +121,31 @@ def draw_glyphs(canvas, size, ext, page):
     left, top, right, bottom, fold = page
     width = right - left
     height = bottom - top
+    centre = left + width / 2.0
+    middle = top + height / 2.0
     white = (255, 255, 255, 255)
-    labelled = size >= 32
-    if labelled:
-        band = height * 0.34
-        glyph = (left + width / 2.0, top + (height - band) * 0.56)
+    label = ext.upper()
+
+    # the ink is centred on the page: the fold is clear of it at every size
+    if size >= 32:
         glyph_height = height * (0.40 if size >= 48 else 0.36)
+        font = get_label_font(label, width * 0.84, height * (0.20 if size >= 48 else 0.25))
+        label_height = -font.getbbox(label, anchor='ms')[1]
+        total = glyph_height + height * 0.10 + label_height
+        glyph_y = middle - total / 2.0 + glyph_height / 2.0
+        ImageDraw.Draw(canvas).text(
+            (centre, middle + total / 2.0), label, font=font, fill=white, anchor='ms')
     else:
-        glyph = (left + width / 2.0, top + height * 0.58)
         glyph_height = height * 0.60
+        glyph_y = middle
 
     if ext == 'm3u':
         half = width * 0.30
-        box = (glyph[0] - half, glyph[1] - glyph_height * 0.45,
-               glyph[0] + half, glyph[1] + glyph_height * 0.45)
+        box = (centre - half, glyph_y - glyph_height / 2.0,
+               centre + half, glyph_y + glyph_height / 2.0)
         draw_list(canvas, box, white)
     else:
-        draw_chevron(canvas, glyph, glyph_height, white)
-
-    if labelled:
-        draw_label(canvas, ext.upper(), (left + width / 2.0, bottom - band * 0.52),
-                   width * 0.84, height * (0.20 if size >= 48 else 0.25), white)
+        draw_chevron(canvas, (centre, glyph_y), glyph_height, white)
 
 
 def render(size, ext):
