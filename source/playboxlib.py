@@ -605,6 +605,15 @@ class AudioControl(threading.Thread):
 
 class PlayBoxControl():
 
+    # the next songs planned once a song has played this long, and again this often
+    AHEAD_SETTLE = 1.0
+    AHEAD_EVERY = 5.0
+    # a song's length till known
+    AHEAD_PERIOD = 180.0
+    ahead_path = None
+    ahead_since = 0.0
+    ahead_lap = 0.0
+
     def __init__(self, parent):
         self.parent = parent
         self.InitControlEvent()
@@ -780,6 +789,7 @@ class PlayBoxControl():
 
         self.HandleEventTrackFinishTime()
         self.HandleEventFadeOut()
+        self.HandleEventAhead()
 
         if not self.AudioControl.pending and self.pending_fffr_prev:
             offset, finish = self.GetTrackTime()
@@ -791,6 +801,27 @@ class PlayBoxControl():
             offset, finish = self.GetTrackTime()
             self.SetPositionTime(offset)
             self.pending_fffr_next = False
+
+    def HandleEventAhead(self):
+        # the songs played next analyzed before they are reached
+        if self.IsPlaying() is False:
+            return
+        now = time.time()
+        if self.ahead_path != self.cue.path:
+            self.ahead_path, self.ahead_since, self.ahead_lap = (self.cue.path, now, 0.0)
+        if now - self.ahead_since < self.AHEAD_SETTLE\
+                or now - self.ahead_lap < self.AHEAD_EVERY:
+            return
+        self.ahead_lap = now
+        scheduler = self.parent.MFEATS
+        count = scheduler.GetAheadCount(self.GetPlayPeriod())
+        scheduler.SetAheadTasks(self.GetCueFilesAhead(count))
+
+    def GetPlayPeriod(self):
+        # how long the next songs will each play
+        if self.IsHighlightOn() and self.GetHighlightStaticPeriodTime():
+            return self.GetHighlightStaticPeriodTime()
+        return self.cue.duration or self.AHEAD_PERIOD
 
     def HandleEventFadeOut(self):
         position = self.GetPositionTime()
@@ -2198,6 +2229,27 @@ class PlayBoxControl():
         targetPath = self.parent.ListBox\
             .GetItemValueByColumnKey(targetItemIdx, 'path', listIdx)
         return targetPath
+
+    def GetCueFilesAhead(self, count):
+        '''the next count songs of the playing list, as they will be reached'''
+        found = self.GetPlayingListItemIdx()
+        if count <= 0 or self.IsLoopOn() or found == []:
+            return []
+        listIdx, itemIdx = found
+        listbox = self.parent.ListBox
+        items = listbox.innerList[listIdx].items
+        pathIdx = listbox.GetColumnKeyToIdx('path', listIdx)
+        paths = []
+        for target in range(itemIdx + 1, itemIdx + len(items)):
+            if self.IsLoopListOn():
+                target %= len(items)
+            elif target >= len(items):
+                break
+            if folders.is_folder_item(listbox, target, listIdx) is False:
+                paths.append(items[target][pathIdx])
+            if len(paths) >= count:
+                break
+        return paths
 
     def GetPlayingListIdx(self):
         for listIdx in range(len(self.parent.ListBox.innerList)):

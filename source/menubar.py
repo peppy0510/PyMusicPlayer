@@ -38,6 +38,7 @@ from macroboxlib import ComboBox
 from macroboxlib import DIALOG_GAP
 from macroboxlib import DIALOG_PAD
 from macroboxlib import DIALOG_ROW
+from macroboxlib import AHEAD_AUTO
 from macroboxlib import fit_name_column
 from macroboxlib import make_check
 from macroboxlib import FONT_ITEM
@@ -300,7 +301,7 @@ class KeymapPreset():
             'Play length -',
             'Play length +',
             'Playlist toggle',
-            'Open tag editor',
+            'Edit Track Info',
             'Look Up Cover'
         )
         return keymap_labels
@@ -1401,6 +1402,21 @@ class PreferenceMFEATSPanel(DialogPanel):
             self.KeyFormat.SetValue(self.key_choices[key_format_type])
         self.KeyFormat.Bind(wx.EVT_COMBOBOX, self.OnKeyFormat)
 
+        offset += ROW
+        StaticText(self, label='Analyze Next Tracks Ahead',
+                   pos=(DIALOG_PAD, offset + 3), size=(200, -1), style=wx.ALIGN_RIGHT)
+        self.ahead_choices = [('Auto', AHEAD_AUTO), ('Off', 0)]\
+            + [(str(v), v) for v in (1, 2, 3, 4, 6, 8, 12, 16)]
+        self.AnalyzeAhead = ComboBox(self, choices=[v[0] for v in self.ahead_choices],
+                                     style=wx.CB_READONLY)
+        self.AnalyzeAhead.SetRect((FIELD, offset, 170, 24))
+        ahead = self.parent.parent.parent.MainPanel.MFEATS.GetAhead()
+        self.AnalyzeAhead.SetValue([k for k, v in self.ahead_choices if v == ahead][0])
+        self.AnalyzeAhead.Bind(wx.EVT_COMBOBOX, self.OnAnalyzeAhead)
+        tooltip = u'Songs after the playing one analyzed before they are reached.'
+        tooltip += u'\nAuto counts them from the analysis time and the play length.'
+        self.AnalyzeAhead.SetToolTip(wx.ToolTip(tooltip))
+
         # offset += 30 + 10
         # label = u'AGC(Auto Gain Control) Headroom (%)'
         # text = StaticText(self, label=label, style=wx.ALIGN_RIGHT)
@@ -1653,6 +1669,10 @@ class PreferenceMFEATSPanel(DialogPanel):
     def OnThreadNumber(self, event):
         value = event.GetInt()
         self.parent.parent.parent.MainPanel.MFEATS.SetProcsLimit(value)
+
+    def OnAnalyzeAhead(self, event):
+        value = dict(self.ahead_choices)[event.GetString()]
+        self.parent.parent.parent.MainPanel.MFEATS.SetAhead(value)
 
     def OnAutoSaveID3Tag(self, event):
         SetPreference('auto_save_tag', event.IsChecked())

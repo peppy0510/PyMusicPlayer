@@ -2000,11 +2000,10 @@ class ListBoxPopupFolder(wx.Menu):
         wx.Menu.__init__(self)
         self.mainpanel = mainpanel
         self.entry = entry
-        self.items = ['Open in Explorer']
+        self.items = ['Open', 'Open in Explorer']
         if entry.kind == 'root':
             self.items += ['', 'Auto Analyze Folder', '', 'Remove from Sidebar']
         elif entry.kind == 'row':
-            self.items = ['Open', 'Open in Explorer']
             if entry.parent is False:
                 self.items += ['', 'Add to Sidebar']
         for i, item in enumerate(self.items):
@@ -2019,7 +2018,9 @@ class ListBoxPopupFolder(wx.Menu):
 
     def OnCheck(self, event):
         item = self.items[event.GetId() - 1]
-        if item == 'Open':
+        if item == 'Open' and self.entry.kind == 'root':
+            folders.open_root(self.mainpanel, self.entry.path)
+        elif item == 'Open':
             folders.open_row(self.mainpanel, self.entry.item)
         elif item == 'Open in Explorer':
             folders.open_in_explorer(self.entry.path)
@@ -2041,7 +2042,7 @@ class ListBoxPopupTab(wx.Menu):
         if self.parent.parent.parent.ListBox.IsFilteredAll():
             self.items = ['Rename', '', 'Delete Playlist']
         else:
-            self.items = ['Rename', '', 'Delete Playlist', 'Import Tracks', 'Export Playlist']
+            self.items = ['Rename', 'Import Tracks', 'Export Playlist', '', 'Delete Playlist']
         for i, item in enumerate(self.items):
             if item == '':
                 self.AppendSeparator()
@@ -2050,7 +2051,8 @@ class ListBoxPopupTab(wx.Menu):
             self.Bind(wx.EVT_MENU, self.OnCheck, self.MenuItems[i])
 
     def OnCheck(self, event):
-        if event.GetId() == 1:
+        item = self.items[event.GetId() - 1]
+        if item == 'Rename':
             self.parent.parent.parent.DialogBox = TabRenameBox(self.parent)
             title = self.parent.GetTabTitle()
             self.parent.parent.parent.DialogBox.UserInput.SetValue(title)
@@ -2067,12 +2069,12 @@ class ListBoxPopupTab(wx.Menu):
             self.parent.parent.parent.DialogBox.Destroy()
             self.parent.parent.parent.DialogBox = None
             self.parent.DirectDraw()
-        if event.GetId() == 3:
+        if item == 'Delete Playlist':
             selectedList = self.parent.parent.parent.ListBox.selectedList
             if confirm_delete_tab(self.parent, selectedList):
                 self.parent.parent.parent.ListBox.DeleteInnerList(selectedList)
             # self.parent.parent.ListTab.SetTabTextEditOn()
-        if event.GetId() == 4:
+        if item == 'Import Tracks':
             cwd = os.getcwd()
             self.parent.parent.parent.DialogBox = FileOpenDialog(self.parent)
             x, y, w, h = self.parent.parent.parent.parent.GetRect()
@@ -2086,7 +2088,7 @@ class ListBoxPopupTab(wx.Menu):
             self.parent.parent.parent.ListBox.List.FileDrop.DropFromOutside(paths)
             self.parent.parent.parent.DialogBox.Destroy()
             self.parent.parent.parent.DialogBox = None
-        if event.GetId() == 5:
+        if item == 'Export Playlist':
             cwd = os.getcwd()
             self.parent.parent.parent.DialogBox = FileSaveDialog(self.parent)
             self.parent.parent.parent.DialogBox.ShowModal()

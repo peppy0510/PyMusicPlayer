@@ -14,6 +14,7 @@ import ctypes
 import ctypes.wintypes
 import hashlib
 import macroboxstyle
+import math
 import uikit
 import mfeats
 import multiprocessing
@@ -641,6 +642,13 @@ class PopupMenuEventCatcher():
 MFEATS_WORKER_IDLETIME = 10.0
 # the DeepRhythm model process's torch threads at most (StartModel)
 MODEL_THREADS_MOST = 4
+# songs analyzed ahead of the play: counted by GetAheadCount
+AHEAD_AUTO = 'auto'
+AHEAD_MOST = 16
+AHEAD_WORKERS_MOST = 4
+# a song's analysis in seconds till measured, and a new measure's share
+AHEAD_JOB_TIME = 20.0
+AHEAD_JOB_WEIGHT = 0.2
 
 
 class MFEATS_Scheduler(ThreadTimer):
@@ -658,6 +666,14 @@ class MFEATS_Scheduler(ThreadTimer):
         self.proclist = []
         # analyzed again on request: all of it, not the grid alone
         self.forcedpath = set()
+        # queued only for being played next: let go when they no more are
+        self.aheadpath = []
+        # songs analyzed ahead of the play: a number, or AHEAD_AUTO
+        self.ahead = GetPreference('analyze_ahead')
+        if self.ahead is None:
+            self.ahead = AHEAD_AUTO
+        # a song's analysis in seconds, measured
+        self.job_time = AHEAD_JOB_TIME
         self.stop = False
         self.redraw_pending = False
         # DeepRhythm's process, started with the first worker, ended with the last
@@ -820,12 +836,10 @@ class MFEATS_Scheduler(ThreadTimer):
             return False
         if redraw:
             wx.CallAfter(self.RequestListRedraw)
-        resp = mfeats.getby_key_value('path', path, waveform=False)
-        # older version: analyzed again; analyzed, its grid not: the grid
-        if resp is not None and resp.version == mfeats.MFEATS_VERSION and forced is False:
-            if resp.error != 0 or mfeats.is_grid_current(resp.mdx):
-                # nothing left to do
-                return False
+        if forced is False and self.IsAnalysisDone(path):
+            return False
+        # asked for: not let go with the plan
+        self.aheadpath = [v for v in self.aheadpath if v != path]
         if forced:
             self.forcedpath.add(path)
         pnt = [i for i, v in enumerate(self.taskpath) if v == path]
@@ -841,6 +855,13 @@ class MFEATS_Scheduler(ThreadTimer):
             for i in range(len(pnt) - 1, -1, -1):
                 self.taskpath.pop(pnt[i])
             self.taskpath.insert(0, path)
+
+    def IsAnalysisDone(self, path):
+        # older version: analyzed again; analyzed, its grid not: the grid
+        resp = mfeats.getby_key_value('path', path, waveform=False)
+        if resp is None or resp.version != mfeats.MFEATS_VERSION:
+            return False
+        return resp.error != 0 or mfeats.is_grid_current(resp.mdx)
 
     def IsPathProcessing(self, path):
         if path in self.GetProcPath():
@@ -873,6 +894,8 @@ class MFEATS_Scheduler(ThreadTimer):
                 alive = False
             # its song done, or the worker died with it (the song is left)
             if this.path is not None and (done or alive is False):
+                if done:
+                    self.job_time += (now - this.since - self.job_time) * AHEAD_JOB_WEIGHT
                 path, this.path, this.idle = (this.path, None, now)
                 idx = [i for i, v in enumerate(self.procpath) if v == path]
                 if idx != []:
@@ -915,7 +938,8 @@ class MFEATS_Scheduler(ThreadTimer):
         if idle == []:
             # started on a thread: a start holds the GUI thread
             conn, worker_conn = multiprocessing.Pipe()
-            this = Struct(proc=None, conn=conn, path=path, idle=0, retired=False)
+            this = Struct(proc=None, conn=conn, path=path, idle=0, retired=False,
+                          since=time.time())
             self.proclist.append(this)
             threading.Thread(target=self.StartWorker, args=(this, worker_conn), daemon=True).start()
             self.procpath.append(path)
@@ -929,6 +953,7 @@ class MFEATS_Scheduler(ThreadTimer):
             self.taskpath.insert(0, path)
             return
         idle[0].path = path
+        idle[0].since = time.time()
         self.procpath.append(path)
         self.UpdateItemsValue(path)
 
@@ -1000,6 +1025,8 @@ class MFEATS_Scheduler(ThreadTimer):
                 proc.path = new_path
 
     def UpdateItemsValue(self, path):
+        import folders
+        folders.forget_row(path)
         mdx = audio.makemdx(path)
         resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
         # the list's waveform cell made again from the new analysis
@@ -1059,6 +1086,48 @@ class MFEATS_Scheduler(ThreadTimer):
 
     def get_procs_path(self):
         return self.procpath
+
+    def GetAhead(self):
+        return self.ahead
+
+    def SetAhead(self, value):
+        self.ahead = value
+        SetPreference('analyze_ahead', value)
+
+    def GetAheadCount(self, period):
+        # period: a song's playing time; auto: a song a worker, and those played during one
+        if self.ahead != AHEAD_AUTO:
+            return self.ahead
+        count = math.ceil(self.job_time / max(period, 1.0))
+        return min(count + min(self.procs_limit, AHEAD_WORKERS_MOST), AHEAD_MOST)
+
+    def SetAheadTasks(self, paths):
+        # on a thread: each song's row is read
+        threading.Thread(target=self.FindAheadTasks, args=(paths,), daemon=True).start()
+
+    def FindAheadTasks(self, paths):
+        due = [v for v in paths if audio.is_stream_path(v) is False
+               and os.path.isfile(v) and self.IsAnalysisDone(v) is False]
+        wx.CallAfter(self.QueueAhead, due)
+
+    def QueueAhead(self, due):
+        # after the playing song, before the queue; in place: threads append to it
+        if not self.parent:
+            return
+        playing = self.parent.PlayBox.cue.path
+        due = [v for v in due if v != playing and v not in self.procpath]
+        for path in [v for v in self.aheadpath if v not in due]:
+            if path in self.taskpath:
+                self.taskpath.remove(path)
+        queued = set(self.taskpath)
+        self.aheadpath = [v for v in due if v in self.aheadpath or v not in queued]
+        for path in due:
+            if path in queued:
+                self.taskpath.remove(path)
+        first = 1 if self.taskpath[:1] == [playing] else 0
+        self.taskpath[first:first] = due
+        if due:
+            self.RequestListRedraw()
 
     def terminate(self):
         self.stop = True

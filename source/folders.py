@@ -8,12 +8,16 @@ email: peppy0510@hotmail.com
 
 
 import audio
+import collections
+import itertools
 import library
 import os
 import radio
 import re
 import stat
+import subprocess
 import threading
+import time
 import wx
 
 from macroboxlib import GetPreference
@@ -36,8 +40,21 @@ STARTED = [None]
 PLACES = dict()
 PLACES_MOST = 500
 HIDDEN = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
-# rows filled in from their files at a time
-FILL_BATCH = 25
+# rows put in from their files at most this often, in seconds
+FILL_EVERY = 0.2
+# the rows of folders left, for the way back: {folder: Struct(rows, keys, stamps)}
+KEPT = dict()
+KEPT_ROWS_MOST = 100000
+# the shown folder's songs: {path: (size, modified)}
+STAMPS = [dict()]
+# songs analyzed since their rows were kept
+ANALYZED = set()
+# the paths of the rows in view, read first
+VIEW = [[]]
+# when the folder being opened was asked for
+OPENING = [None]
+# a quick folder shows no spinner
+OPENING_SHOWN = 0.15
 # a folder row's status, and the parent's name
 FOLDER_STATUS = 'folder'
 PARENT_NAME = '..'
@@ -76,30 +93,34 @@ def get_name(path):
     return os.path.basename(path.rstrip('\\/')) or path
 
 
-def sort_key(path):
+def sort_key(name):
     # as the Explorer sorts: numbers by value (2 before 10)
-    return [int(v) if v.isdigit() else v for v in re.split(r'(\d+)', get_name(path).lower())]
+    return [int(v) if v.isdigit() else v for v in re.split(r'(\d+)', name.lower())]
 
 
 def read_dir(path):
-    '''(subfolders, songs as (path, size)), hidden and system left out, or None'''
+    '''(subfolders, songs as (path, size, created, modified, name)), hidden and system left
+    out, or None'''
     folders, songs = [], []
     try:
         with os.scandir(path) as entries:
             for entry in entries:
                 try:
-                    if entry.stat().st_file_attributes & HIDDEN:
+                    # from the directory's listing: a stat a file takes seconds in a big one
+                    stats = entry.stat()
+                    if stats.st_file_attributes & HIDDEN:
                         continue
                     if entry.is_dir():
                         folders.append(entry.path)
                     elif os.path.splitext(entry.name)[1][1:].lower() in SUPPORTED_AUDIO_TYPE:
-                        songs.append((entry.path, entry.stat().st_size))
+                        songs.append((entry.path, stats.st_size, stats[stat.ST_CTIME],
+                                      stats.st_mtime_ns, entry.name))
                 except OSError:
                     continue
     except OSError:
         return None
-    folders.sort(key=sort_key)
-    songs.sort(key=lambda v: sort_key(v[0]))
+    folders.sort(key=lambda v: sort_key(get_name(v)))
+    songs.sort(key=lambda v: sort_key(v[4]))
     return folders, songs
 
 
@@ -198,6 +219,11 @@ def open_in_explorer(path):
         pass
 
 
+def show_in_explorer(path):
+    # the song's folder, the song selected
+    subprocess.call(rf'''Explorer /select, "{path}"''', shell=False)
+
+
 def open_folder(mainpanel, path, focus=None):
     '''rows at once from the names, the songs' tags filled in after'''
     state = get_state()
@@ -205,17 +231,41 @@ def open_folder(mainpanel, path, focus=None):
     SetPreference('folder_current', path)
     JOB[0] += 1
     job = JOB[0]
+    listbox = mainpanel.ListBox
+    keep_rows(listbox)
+    keys = get_keys(listbox)
+    set_opening(mainpanel, path)
 
     def read():
         found = read_dir(path)
         if JOB[0] != job:
             return
         folders, songs = found if found is not None else ([], [])
-        wx.CallAfter(show_folder, mainpanel, path, folders, songs, found is not None, focus,
-                     job)
-        fill_rows(mainpanel, [v[0] for v in songs], job)
+        made = make_rows(path, folders, songs, keys)
+        if JOB[0] != job:
+            return
+        wx.CallAfter(show_folder, mainpanel, path, made, found is not None, focus, job)
+        fill_rows(mainpanel, made.waiting, job)
 
     threading.Thread(target=read, daemon=True).start()
+
+
+def set_opening(mainpanel, path):
+    # told at once, the spinner only if it takes a while
+    OPENING[0] = time.time()
+    status = mainpanel.StatusBox
+    status.alarm = status.alarm_color = None
+    status.reading = (f'Opening {get_name(path)} ...', 0, 0)
+    wx.CallLater(int(OPENING_SHOWN * 1000) + 10, redraw_opening, mainpanel)
+
+
+def redraw_opening(mainpanel):
+    if mainpanel and is_opening():
+        mainpanel.ListBox.List.reInitBuffer = True
+
+
+def is_opening():
+    return OPENING[0] is not None and time.time() - OPENING[0] >= OPENING_SHOWN
 
 
 def open_root(mainpanel, root):
@@ -248,6 +298,14 @@ def open_row(mainpanel, item):
 
 def is_folder_view(listbox):
     return listbox.innerList[listbox.selectedList].title == library.FOLDER_TITLE
+
+
+def find_tab(listbox):
+    # the folder's tab, or None
+    for inner in listbox.innerList:
+        if inner.title == library.FOLDER_TITLE:
+            return inner
+    return None
 
 
 def is_folder_item(listbox, item, listIdx=None):
@@ -293,12 +351,73 @@ def make_folder_row(path, name, order, keys):
     return tuple(values.get(k, '') for k in keys)
 
 
-def make_quick_row(path, size, order, keys):
+def make_quick_row(path, name, size, created, order, keys):
     # from its name alone, its file read after
-    values = dict(status='', order=order, path=path, mdx=audio.makemdx(path) or '',
-                  filename=os.path.splitext(os.path.basename(path))[0],
-                  size=f'{size / 1024.0 ** 2:.2f} MB')
-    return tuple(values.get(k, '') for k in keys)
+    values = dict(status='', order=order, path=path, mdx=audio.makemdx(path, created) or '',
+                  filename=os.path.splitext(name)[0], size=f'{size / 1024.0 ** 2:.2f} MB')
+    return tuple(map(values.get, keys, itertools.repeat('')))
+
+
+def get_keys(listbox):
+    inner = find_tab(listbox)
+    return [v.key for v in (ListBoxColumn() if inner is None else inner.columns)]
+
+
+def keep_rows(listbox):
+    # the shown folder's rows, tags read and all, for the way back
+    path, stamps, inner = SHOWN[0], STAMPS[0], find_tab(listbox)
+    if path is None or inner is None or not stamps:
+        return
+    key = get_key(path)
+    KEPT.pop(key, None)
+    KEPT[key] = Struct(rows=inner.filterCache or inner.items,
+                       keys=[v.key for v in inner.columns], stamps=stamps)
+    while len(KEPT) > 1 and sum(len(v.rows) for v in KEPT.values()) > KEPT_ROWS_MOST:
+        KEPT.pop(next(iter(KEPT)))
+
+
+def get_kept(path, keys, stamps):
+    '''{path: row} of the songs kept and not changed since'''
+    kept = KEPT.get(get_key(path))
+    if kept is None or kept.keys != keys:
+        return dict()
+    pathIdx, durationIdx = keys.index('path'), keys.index('duration')
+    return dict((row[pathIdx], row) for row in kept.rows
+                if row[durationIdx] and row[pathIdx] not in ANALYZED
+                and stamps.get(row[pathIdx]) == kept.stamps.get(row[pathIdx]))
+
+
+def forget_row(path):
+    # analyzed: its kept row read again
+    ANALYZED.add(path)
+
+
+def make_rows(path, folders, songs, keys):
+    '''the rows, on the reading thread: thousands hold the window for seconds'''
+    rows = []
+    owner = get_owner(path)
+    if owner is not None and is_same(owner, path) is False:
+        rows.append(make_folder_row(os.path.dirname(path.rstrip('\\/')), PARENT_NAME, 1, keys))
+    for folder in folders:
+        rows.append(make_folder_row(folder, get_name(folder), len(rows) + 1, keys))
+    stamps = dict((v[0], (v[1], v[3])) for v in songs)
+    kept = get_kept(path, keys, stamps)
+    orderIdx = keys.index('order')
+    waiting = []
+    for song, size, created, _, name in songs:
+        order = len(rows) + 1
+        row = kept.get(song)
+        if row is None:
+            row = make_quick_row(song, name, size, created, order, keys)
+            waiting.append(song)
+            ANALYZED.discard(song)
+        else:
+            row = row[:orderIdx] + (order,) + row[orderIdx + 1:]
+        rows.append(row)
+    pathIdx = keys.index('path')
+    index = dict((os.path.normcase(row[pathIdx]), i) for i, row in enumerate(rows))
+    return Struct(rows=rows, keys=keys, index=index, waiting=waiting, folders=len(folders),
+                  songs=len(songs), stamps=stamps)
 
 
 def get_tab(listbox):
@@ -309,7 +428,7 @@ def get_tab(listbox):
     return len(listbox.innerList) - 1
 
 
-def show_folder(mainpanel, path, folders, songs, readable, focus, job):
+def show_folder(mainpanel, path, made, readable, focus, job):
     if not mainpanel or JOB[0] != job:
         return
     listbox = mainpanel.ListBox
@@ -321,6 +440,10 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
     index = get_tab(listbox)
     inner = listbox.innerList[index]
     keys = [v.key for v in inner.columns]
+    if keys != made.keys:
+        # a column moved while the folder was read
+        open_folder(mainpanel, path, focus)
+        return
     pathIdx = keys.index('path')
     # first shown: the rows saved are the folder open when the player closed
     previous = SHOWN[0] if SHOWN[0] is not None or not inner.items else STARTED[0]
@@ -333,14 +456,7 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
             PLACES.pop(next(iter(PLACES)))
     place = PLACES.get(get_key(path))
     offset, cursor = place if place is not None else (0, None)
-    rows = []
-    owner = get_owner(path)
-    if owner is not None and is_same(owner, path) is False:
-        rows.append(make_folder_row(os.path.dirname(path.rstrip('\\/')), PARENT_NAME, 1, keys))
-    for folder in folders:
-        rows.append(make_folder_row(folder, get_name(folder), len(rows) + 1, keys))
-    for song, size in songs:
-        rows.append(make_quick_row(song, size, len(rows) + 1, keys))
+    rows = made.rows
     inner.items = rows
     inner.filterCache = None
     inner.filterQuery = None
@@ -348,48 +464,73 @@ def show_folder(mainpanel, path, folders, songs, readable, focus, job):
     inner.lastSortedColumn = [keys.index('order') if 'order' in keys else None, 1]
     inner.rects.offset.y = offset
     SHOWN[0] = path
+    STAMPS[0] = made.stamps
+    OPENING[0] = None
     listbox.SetSelectedList(index)
     # rows may be fewer now: the scroll kept in them
     listbox.SetVirtualPositionY(listbox.GetVirtualPositionY())
     # the folder come from, else the row selected when left, else the first
     focus = focus if focus is not None else cursor
-    found = [i for i, row in enumerate(rows)
-             if focus is not None and is_same(row[pathIdx], focus)]
+    found = made.index.get(get_key(focus)) if focus is not None else None
     # come back to: the scroll as left, the selected row not scrolled to
     if rows and place is not None:
-        item = found[0] if found else 0
+        item = found or 0
         inner.selectedItems = [item]
         inner.focus.item = inner.focus.shift = item
     elif rows:
-        listbox.SelectAndFocusItem(found[0] if found else 0)
+        listbox.SelectAndFocusItem(found or 0)
     # the search field's hint
-    search.SetMode(search.GetMode(), force=True)
+    mode = search.GetMode()
+    if mode == search.mode:
+        search.SetFolderHints()
+    else:
+        search.SetMode(mode, force=True)
+    set_view(listbox, inner)
+    status = mainpanel.StatusBox
+    status.reading = None
     if readable is False:
         radio.tell(mainpanel, f'{path} cannot be read', warn=True)
     else:
-        radio.tell(mainpanel, f'{len(folders)} folders, {len(songs)} tracks in '
+        radio.tell(mainpanel, f'{made.folders} folders, {made.songs} tracks in '
                               f'{get_name(path)}')
     mainpanel.ListTab.TabList.reInitBuffer = True
     mainpanel.ListTab.SliderV.reInitBuffer = True
 
 
+def set_view(listbox, inner):
+    # the rows in view: read before the others
+    if listbox.innerList[listbox.selectedList] is not inner:
+        VIEW[0] = []
+        return
+    pathIdx = [v.key for v in inner.columns].index('path')
+    rows = inner.items
+    VIEW[0] = [rows[i][pathIdx] for i in listbox.GetShownItemsIdx() if i < len(rows)]
+
+
 def fill_rows(mainpanel, paths, job):
-    # read from their files, put in by path in batches on the GUI thread
+    # read from their files, the rows in view first, put in by path on the GUI thread
     columns = ListBoxColumn()
     keys = [v.key for v in columns]
     found = dict()
-    for path in paths:
+    order, waiting = collections.deque(paths), set(paths)
+    total, lap = len(paths), time.time()
+    while waiting:
         if JOB[0] != job:
             return
+        path = next((v for v in VIEW[0] if v in waiting), None)
+        if path is None:
+            path = order.popleft()
+            if path not in waiting:
+                continue
+        waiting.discard(path)
         item = MakeMusicFileItem(path, 0, columns)
-        if item is None:
-            continue
-        found[path] = dict(zip(keys, item))
-        if len(found) >= FILL_BATCH:
-            wx.CallAfter(put_rows, mainpanel, found, job)
+        if item is not None:
+            found[path] = dict(zip(keys, item))
+        if time.time() - lap >= FILL_EVERY:
+            lap = time.time()
+            wx.CallAfter(put_rows, mainpanel, found, job, total - len(waiting), total)
             found = dict()
-    if found:
-        wx.CallAfter(put_rows, mainpanel, found, job)
+    wx.CallAfter(put_rows, mainpanel, found, job, total, total)
     wx.CallAfter(queue_rows, mainpanel, job)
 
 
@@ -400,22 +541,25 @@ def queue_rows(mainpanel, job):
     mainpanel.MFEATS.AutoAnalyzer()
 
 
-def put_rows(mainpanel, found, job):
+def put_rows(mainpanel, found, job, done, total):
     if not mainpanel or JOB[0] != job:
         return
     listbox = mainpanel.ListBox
-    for inner in listbox.innerList:
-        if inner.title != library.FOLDER_TITLE:
-            continue
-        keys = [v.key for v in inner.columns]
-        pathIdx = keys.index('path')
-        # rows are tuples, replaced whole; their order kept (sorted, or moved)
-        for rows in (inner.items, inner.filterCache or []):
-            for i, row in enumerate(rows):
-                values = found.get(row[pathIdx])
-                if values is None:
-                    continue
-                rows[i] = tuple(row[k] if key == 'order' else values.get(key, row[k])
-                                for k, key in enumerate(keys))
+    inner = find_tab(listbox)
+    if inner is None:
+        return
+    keys = [v.key for v in inner.columns]
+    pathIdx = keys.index('path')
+    # rows are tuples, replaced whole; their order kept (sorted, or moved)
+    for rows in (inner.items, inner.filterCache or []):
+        for i, row in enumerate(rows):
+            values = found.get(row[pathIdx])
+            if values is None:
+                continue
+            rows[i] = tuple(row[k] if key == 'order' else values.get(key, row[k])
+                            for k, key in enumerate(keys))
+    set_view(listbox, inner)
+    mainpanel.StatusBox.reading = (f'Reading tags {done:,} of {total:,}', done, total)\
+        if done < total else None
     listbox.reInitBuffer = True
     listbox.List.reInitBuffer = True

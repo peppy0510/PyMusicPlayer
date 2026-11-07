@@ -78,6 +78,7 @@ from wininstance import write_instance_port
 LOGGING = False
 
 BOOT_NETWORK_SCHEDULER = False
+GIL_SWITCH_INTERVAL = 0.0005
 
 MULTIPROCESSING_FORK = '--multiprocessing-fork'
 
@@ -763,6 +764,8 @@ def mainapp(initfile=None):
     if sys.platform.startswith('win'):
         multiprocessing.freeze_support()
 
+    # a busy thread otherwise holds up each wx call for a whole turn
+    sys.setswitchinterval(GIL_SWITCH_INTERVAL)
     set_master_path()
     # ghost_name = 'macrobox.exe'
     # if is_ghost_runnung(ghost_name):

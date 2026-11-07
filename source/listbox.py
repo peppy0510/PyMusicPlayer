@@ -19,7 +19,6 @@ import mfeats
 import os
 import radio
 import stat
-import subprocess
 import sys
 import threading
 import time
@@ -321,6 +320,29 @@ def toggle_favorite_tracks(listbox, paths):
     radio.tell(mainpanel, 'Added to Favorite tracks' if starred else 'Removed from Favorite tracks')
 
 
+def find_similar(listbox, path, values):
+    # rank the library against the song on a thread into Similar
+    mainpanel = listbox.parent
+    songs = library.collect(listbox)
+    target = [v for v in songs if v.path == path]
+    if target == []:
+        # a song in no playlist (folder tab): use its row
+        target = [library.make_song(values, library.get_grid_tempi())]
+    mainpanel.StatusBox.alarm = f'Finding songs like {os.path.basename(path)} ...'
+    mainpanel.StatusBox.alarm_timer = 0
+
+    def work():
+        found = library.similar(songs, target[0])
+        wx.CallAfter(done, found)
+
+    def done(found):
+        show_library_results(mainpanel, library.SIMILAR_TITLE, [target[0]] + found)
+        mainpanel.StatusBox.alarm = f'{len(found)} songs like it in the Similar tab'
+        mainpanel.StatusBox.alarm_timer = 0
+
+    threading.Thread(target=work, daemon=True).start()
+
+
 def get_shared_gc(dc, shared):
     # one GraphicsContext shared by a list's rows: one a row is slow
     if not shared:
@@ -488,6 +510,10 @@ class ListBoxList(RectBox):
         self.DrawListItem(dc)
         self.DrawInsertItemLine(dc)
         self.DrawTextEdit(dc)
+        if folders.is_opening():
+            w, h = self.GetClientSize()
+            draw_spinner(dc, w / 2.0, h / 2.0, 14, (time.time() % 1.2) / 1.2 * math.pi * 2,
+                         macroboxstyle.current().UI.ACCENT)
 
     def InitBuffer(self):
         # redraw only the changed rows when nothing else changed
@@ -508,7 +534,8 @@ class ListBoxList(RectBox):
         inner = lb.innerList[listIdx]
         columns = lb.GetShownColumns()
         if any(getattr(column, 'key', None) in ('cover', 'wave') for column in columns)\
-                or getattr(self, 'spinning', False) or self.TextEdit is not None\
+                or getattr(self, 'spinning', False) or folders.is_opening()\
+                or self.TextEdit is not None\
                 or self.FileDrop.insertItemIdx is not None or self.buffer.bmp is None:
             return None
         playbox = lb.parent.PlayBox
@@ -1197,7 +1224,7 @@ class ListBoxList(RectBox):
 
     def CATCH_EVT_GLOBAL(self, event):
         # only when a turning icon was in the rows last drawn
-        turning = getattr(self, 'spinning', False)
+        turning = getattr(self, 'spinning', False) or folders.is_opening()
         if turning and time.time() - getattr(self, 'spin_lap', 0.0) >= self.SPIN_INTERVAL:
             self.spin_lap = time.time()
             self.reInitBuffer = True
@@ -2407,10 +2434,7 @@ class ListBoxSearch(RectBox):
             self.query_columnKey = self.FAVORITE_KEYS[0][1]
             self.chooser_width = 96
         elif mode == 'folder':
-            # the open folder in the hint, filtered as a playlist
-            path = folders.get_current() or ''
-            self.SetHints(f'Filter {path}' if path else 'Filter this folder',
-                          f'Filter {folders.get_name(path)}' if path else 'Filter')
+            self.SetFolderHints()
             self.query_columnKey = getattr(self, 'playlist_key', 'filename')
             combo.Set(list(combo.choices))
             combo.SetStringSelection(self.query_columnKey.capitalize()
@@ -2671,6 +2695,12 @@ class ListBoxSearch(RectBox):
         self.text_best = self.SearchText.GetBestSize().height
         self.text_xys = ((10, 5),)
         self.DirectDraw()
+
+    def SetFolderHints(self):
+        # the open folder in the hint, filtered as a playlist
+        path = folders.get_current() or ''
+        self.SetHints(f'Filter {path}' if path else 'Filter this folder',
+                      f'Filter {folders.get_name(path)}' if path else 'Filter')
 
     def SetHints(self, full, short):
         # the field's hint, its short one when the field is narrow (FitHint)
@@ -6073,33 +6103,13 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         wx.GetTopLevelParent(listbox).OnFindInLibrary(None, song=song)
 
     def FindSimilar(self):
-        # rank the library against the song on a thread into Similar
         listbox = self.parent.parent
-        mainpanel = listbox.parent
         selected = listbox.GetSelectedItems()
         if selected == []:
             return
-        path = listbox.GetItemValueByColumnKey(selected[0], 'path')
-        songs = library.collect(listbox)
-        target = [v for v in songs if v.path == path]
-        if target == []:
-            # a song in no playlist (folder tab): use its row
-            inner = listbox.innerList[listbox.selectedList]
-            values = dict(zip([v.key for v in inner.columns], inner.items[selected[0]]))
-            target = [library.make_song(values, library.get_grid_tempi())]
-        mainpanel.StatusBox.alarm = f'Finding songs like {os.path.basename(path)} ...'
-        mainpanel.StatusBox.alarm_timer = 0
-
-        def work():
-            found = library.similar(songs, target[0])
-            wx.CallAfter(done, found)
-
-        def done(found):
-            show_library_results(mainpanel, library.SIMILAR_TITLE, [target[0]] + found)
-            mainpanel.StatusBox.alarm = f'{len(found)} songs like it in the Similar tab'
-            mainpanel.StatusBox.alarm_timer = 0
-
-        threading.Thread(target=work, daemon=True).start()
+        inner = listbox.innerList[listbox.selectedList]
+        find_similar(listbox, listbox.GetItemValueByColumnKey(selected[0], 'path'),
+                     dict(zip([v.key for v in inner.columns], inner.items[selected[0]])))
 
     def EditSelectedItem(self):
         self.parent.parent.parent.DialogBox = ItemEditBox(self.parent)
@@ -6137,17 +6147,7 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
         self.parent.parent.reInitBuffer = True
 
     def OpenContainingFolder(self):
-        path = self.parent.parent.GetSelectedItemsKeyValue('path')[0]
-        dirname = os.path.dirname(path)
-        # filename = os.path.splitext(os.path.basename(path))[0]
-        # upath = path.encode(sys.getfilesystemencoding())
-        if sys.platform == 'darwin':
-            cmd = rf'''open -- "{dirname}"'''
-        elif sys.platform == 'linux2':
-            cmd = rf'''gnome-open -- "{dirname}"'''
-        elif sys.platform.startswith('win'):
-            cmd = rf'''Explorer /select, "{path}"'''
-        subprocess.call(cmd, shell=False)
+        folders.show_in_explorer(self.parent.parent.GetSelectedItemsKeyValue('path')[0])
 
 
 class StatusBox(RectBox):
@@ -6167,6 +6167,8 @@ class StatusBox(RectBox):
         self.alarm = None
         self.alarm_color = None
         self.alarm_timer = 0
+        # a folder being opened or read: (text, done, total)
+        self.reading = None
         self.rects = ()
         self.InitBuffer()
 
@@ -6209,6 +6211,8 @@ class StatusBox(RectBox):
         self.proc = proc
         if self.alarm is not None:
             message_left = self.alarm
+        elif self.reading is not None:
+            message_left = self.reading[0]
         else:
             message_left = f'Selected {selected} / {total} tracks {filtered}'
         waiting = task + proc
@@ -6266,6 +6270,16 @@ class StatusBox(RectBox):
         else:
             color_right = wx.Colour(tokens.BAR_TEXT_DIM)
         dc.DrawTextList(self.messages, xys, foregrounds=(color_left, color_right))
+        if self.reading is not None and self.reading[2] and self.alarm is None:
+            # the left text's own bar, as the analysis' on the right
+            bx = self.MESSAGE_LEFT_X + dc.GetTextExtent(message_left)[0] + 10
+            by = ty + th // 2 - 2
+            dc.SetPen(wx.TRANSPARENT_PEN)
+            dc.SetBrush(wx.Brush(tokens.CONTROL_BG))
+            dc.DrawRectangle(bx, by, self.PROGRESS_WIDTH, 4)
+            dc.SetBrush(wx.Brush(tokens.ACCENT))
+            done = self.reading[1] / self.reading[2]
+            dc.DrawRectangle(bx, by, max(int(self.PROGRESS_WIDTH * done), 2), 4)
 
     def OnSize(self, event=None):
         self.DirectDraw()

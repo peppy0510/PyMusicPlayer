@@ -7,8 +7,10 @@
 
 import audio
 import ctypes
+import folders
 import images
 import io
+import library
 import listimages
 import math
 import mutagen
@@ -329,18 +331,47 @@ class PlayBox(RectBox, PlayBoxControl):
             # after the event: the editor is modal
             wx.CallAfter(self.OpenTrackEditor)
         elif event.RightUp and box is not None and self.IsClickedOn(box, event):
-            menu = wx.Menu()
-            item = menu.Append(wx.ID_ANY, 'Edit Track Info...')
-            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.OpenTrackEditor), item)
-            # Find in Library with the playing tempo and key
-            find = menu.Append(wx.ID_ANY, 'Find in Library...')
-            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(
-                wx.GetTopLevelParent(self).OnFindInLibrary, None,
-                song=(self.GetPlayingTempo(), self.GetPlayingKey())), find)
-            # Look Up Cover for this song
-            cover = menu.Append(wx.ID_ANY, 'Look Up Cover...')
-            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.LookUpCover), cover)
-            self.parent.SetPopupMenu(menu, (event.x, event.y))
+            self.parent.SetPopupMenu(self.MakeTrackMenu(), (event.x, event.y))
+
+    def MakeTrackMenu(self):
+        # the list's song menu, its groups in its order, without what acts on a selection
+        menu = wx.Menu()
+
+        def add(name, handler):
+            menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(handler),
+                      menu.Append(wx.ID_ANY, name))
+
+        path = self.cue.path
+        starred = path in library.get_favorite_tracks()
+        add('Remove from Favorite tracks' if starred else 'Add to Favorite tracks',
+            self.ToggleFavoriteTrack)
+        menu.AppendSeparator()
+        add('Edit Track Info...', self.OpenTrackEditor)
+        add('Look Up Cover...', self.LookUpCover)
+        add('Analyze', self.AnalyzeTrack)
+        menu.AppendSeparator()
+        add('Find Similar', self.FindSimilarTrack)
+        # Find in Library with the playing tempo and key
+        add('Find in Library...', lambda: wx.GetTopLevelParent(self).OnFindInLibrary(
+            None, song=(self.GetPlayingTempo(), self.GetPlayingKey())))
+        menu.AppendSeparator()
+        add('Open Containing Folder', lambda: folders.show_in_explorer(path))
+        return menu
+
+    def ToggleFavoriteTrack(self):
+        # imported here: listbox imports this module
+        import listbox
+        listbox.toggle_favorite_tracks(self.parent.ListBox, [self.cue.path])
+
+    def AnalyzeTrack(self):
+        threading.Thread(target=self.parent.MFEATS.AddMFEATSTask, args=(self.cue.path,),
+                         kwargs=dict(urgent=True, forced=True), daemon=True).start()
+
+    def FindSimilarTrack(self):
+        import listbox
+        keys = [v.key for v in self.item_column]
+        listbox.find_similar(self.parent.ListBox, self.cue.path,
+                             dict(zip(keys, self.cue.item or ())))
 
     def CheckControlRows(self):
         rows = self.GetControlRows()
