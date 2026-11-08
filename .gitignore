@@ -17,6 +17,7 @@ source/scipy
 desktop.ini
 .sublime-workspace
 *.sublime-workspace
+*.sublime-project
 /CLAUDE.md
 # fetched or put by the user into %LOCALAPPDATA%\PyMusicPlayer\addons, never in the repository
 assets/dlls/LoudMax*.dll
