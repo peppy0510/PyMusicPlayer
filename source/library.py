@@ -256,21 +256,41 @@ def show_favorites(listbox, select=True):
     return show_paths(listbox, FAVORITES_TITLE, get_favorite_tracks(), select)
 
 
+def find_rows(listbox, paths):
+    '''{path: values} of the paths' rows already read in any tab, the playlists first'''
+    wanted, found = set(paths), dict()
+    tabs = sorted(listbox.innerList, key=lambda v: v.title in (
+        SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE, RECENT_TITLE, FOLDER_TITLE))
+    for inner in tabs:
+        keys = [v.key for v in inner.columns]
+        if 'path' not in keys or 'duration' not in keys:
+            continue
+        pathIdx, durationIdx = keys.index('path'), keys.index('duration')
+        for rows in (inner.items, inner.filterCache or ()):
+            for row in rows:
+                # a folder row waiting for its tags has no duration yet
+                if row[pathIdx] in wanted and row[pathIdx] not in found and row[durationIdx]:
+                    found[row[pathIdx]] = dict(zip(keys, row))
+    return found
+
+
 def show_paths(listbox, title, paths, select=True):
+    # reading files held the window for each song starred outside the playlists
     from macroboxlib import ListBoxColumn
     from macroboxlib import MakeMusicFileItem
-    songs = dict((v.path, v) for v in collect(listbox))
-    keys = [v.key for v in ListBoxColumn()]
-    found = []
+    found = find_rows(listbox, paths)
+    columns = ListBoxColumn()
+    keys = [v.key for v in columns]
+    songs = []
     for path in paths:
-        song = songs.get(path)
-        if song is None:
-            item = MakeMusicFileItem(path, 0, ListBoxColumn())
+        values = found.get(path)
+        if values is None:
+            item = MakeMusicFileItem(path, 0, columns)
             if item is None:
                 continue
-            song = Struct(path=path, values=dict(zip(keys, item)))
-        found.append(song)
-    return show_results(listbox, title, found, select)
+            values = dict(zip(keys, item))
+        songs.append(Struct(path=path, values=values))
+    return show_results(listbox, title, songs, select)
 
 
 def show_results(listbox, title, songs, select=True):
