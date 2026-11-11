@@ -62,7 +62,8 @@ class ListBoxTabDnD(wx.FileDropTarget):
         self.downTabIdx = None
         self.insertTabIdx = None
         self.dropInsertIdx = None
-        self.dropEdge = 0.3
+        # a row's top and bottom share making a new playlist; the rest drops into it
+        self.dropEdge = 0.15
         self.dropEdgeLap = None
         self.dropEdgeWait = 0.4
         # something dragged over the sidebar: no hover, the drop's marks alone
