@@ -25,7 +25,7 @@ import urllib.request
 from utilities import get_user_docapp_path
 
 
-USER_AGENT = 'PyMusicPlayer/1.6.0 +https://github.com/peppy0510/PyMusicPlayer'
+USER_AGENT = 'PyMusicPlayer/1.7.0 +https://github.com/peppy0510/PyMusicPlayer'
 CACHE_SECONDS = 60 * 60 * 24 * 30
 TIMEOUT = 15
 
