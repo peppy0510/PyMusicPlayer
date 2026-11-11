@@ -22,6 +22,7 @@ import mutagen
 import mutagen.id3
 import mutagen.mp3
 import os
+import sqlite3
 import stat
 import sys
 import threading
@@ -40,6 +41,7 @@ from utilities import get_user_appdata_path
 from utilities import get_user_docapp_path
 from utilities import open_shelve
 from utilities import open_shelves
+from utilities import path_mdx
 from utilities import save_shelve
 from utilities import save_shelves
 
@@ -192,6 +194,25 @@ def AddMissingColumns(innerList):
         for rows in (getattr(innerList, 'items', None), getattr(innerList, 'filterCache', None)):
             for i in range(len(rows or [])):
                 rows[i] = tuple(rows[i]) + ('',)
+    RenewMDX(innerList)
+
+
+def RenewMDX(innerList):
+    # rows saved with the key of before (path and creation time): the path's now
+    keys = [v.key for v in innerList.columns]
+    if 'mdx' not in keys or 'path' not in keys:
+        return
+    mdxIdx, pathIdx = keys.index('mdx'), keys.index('path')
+    for rows in (getattr(innerList, 'items', None), getattr(innerList, 'filterCache', None)):
+        for i in range(len(rows or [])):
+            path = rows[i][pathIdx]
+            if not path or audio.is_stream_path(path):
+                continue
+            mdx = path_mdx(path)
+            if rows[i][mdxIdx] != mdx:
+                row = list(rows[i])
+                row[mdxIdx] = mdx
+                rows[i] = tuple(row)
 
 
 class InnerList():
@@ -680,7 +701,15 @@ class MFEATS_Scheduler(ThreadTimer):
         self.model = None
         self.model_lock = threading.Lock()
         self.model_address = mfeats.get_deeprhythm_address(os.getpid())
+        # new and changed files told by their bytes on a thread of their own
+        mfeats.start_checks(lambda path: wx.CallAfter(self.OnFileKnown, path))
         self.Start(self.interval)
+
+    def OnFileKnown(self, path):
+        # its sound known on the checks' thread: its rows shown with the analysis
+        if self.stop or not self.parent:
+            return
+        self.UpdateItemsValue(path)
 
     def SetOptimalProcsLimit(self):
         max_cores = multiprocessing.cpu_count()
@@ -895,7 +924,7 @@ class MFEATS_Scheduler(ThreadTimer):
                 alive = False
             # its song done, or the worker died with it (the song is left)
             if this.path is not None and (done or alive is False):
-                # a copied analysis is no measure of one
+                # a sound known already ('known') is no measure of an analysis
                 if done and isinstance(reply, tuple) is False:
                     self.job_time += (now - this.since - self.job_time) * AHEAD_JOB_WEIGHT
                 path, this.path, this.idle = (this.path, None, now)
@@ -1030,18 +1059,28 @@ class MFEATS_Scheduler(ThreadTimer):
         import folders
         folders.forget_row(path)
         mdx = audio.makemdx(path)
+        if mdx is None:
+            return
+        # the other files of its sound too: one analysis for them all
+        try:
+            same = mfeats.get_sound_files(mdx)
+        except sqlite3.Error:
+            same = [mdx]
+        for each in same:
+            self.UpdateItemsValueByMDX(each)
+        self.RequestListRedraw()
+
+    def UpdateItemsValueByMDX(self, mdx):
         resp = mfeats.getby_key_value('mdx', mdx, waveform=False)
         # the list's waveform cell made again from the new analysis
         images = getattr(self.parent.ListBox.List, 'images', None)
         if images is not None:
             images.Forget(mdx)
+        listbox = self.parent.ListBox
         if resp is None:
             # analyzing status uses GetProcPath
-            self.parent.ListBox.SetListItemsValueWhereColumnKey(
-                ('mdx', mdx), ('status', ''))
-            self.RequestListRedraw()
+            listbox.SetListItemsValueWhereColumnKey(('mdx', mdx), ('status', ''))
             return
-
         key = resp.key
         tempo = resp.tempo
         duration = resp.duration
@@ -1052,15 +1091,10 @@ class MFEATS_Scheduler(ThreadTimer):
             tempo = ''
         # an older version's row: not analyzed yet (MakeMusicFileItem)
         status = 'analyzed' if resp.version == mfeats.MFEATS_VERSION else ''
-        self.parent.ListBox.SetListItemsValueWhereColumnKey(
-            ('mdx', mdx), ('status', status))
-        self.parent.ListBox.SetListItemsValueWhereColumnKey(
-            ('mdx', mdx), ('tempo', tempo))
-        self.parent.ListBox.SetListItemsValueWhereColumnKey(
-            ('mdx', mdx), ('key', key))
-        self.parent.ListBox.SetListItemsValueWhereColumnKey(
-            ('mdx', mdx), ('duration', duration))
-        self.RequestListRedraw()
+        listbox.SetListItemsValueWhereColumnKey(('mdx', mdx), ('status', status))
+        listbox.SetListItemsValueWhereColumnKey(('mdx', mdx), ('tempo', tempo))
+        listbox.SetListItemsValueWhereColumnKey(('mdx', mdx), ('key', key))
+        listbox.SetListItemsValueWhereColumnKey(('mdx', mdx), ('duration', duration))
 
     def HasTask(self):
         return self.taskpath != []

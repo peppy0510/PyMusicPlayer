@@ -620,6 +620,12 @@ def get_first_box(picture, square=True):
 
 def write_cover(path, data):
     '''put the picture in the tags as the front cover'''
+    # its tags only: still known as it is (mfeats)
+    with mfeats.tags_written(path):
+        put_cover(path, data)
+
+
+def put_cover(path, data):
     cover = make_cover(data)
     if cover is None:
         raise ValueError('not a picture')
@@ -659,6 +665,11 @@ def write_cover(path, data):
 
 def remove_cover(path):
     '''remove every picture from the song's tags'''
+    with mfeats.tags_written(path):
+        take_cover(path)
+
+
+def take_cover(path):
     kind = os.path.splitext(path)[1].lower()
     if kind == '.mp3':
         try:

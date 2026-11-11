@@ -17,7 +17,6 @@ import pywintypes  # noqa # pre-load dll for win32
 import re
 import shelve
 import socket
-import stat
 import struct
 import subprocess
 import sys
@@ -224,19 +223,21 @@ def get_most_common_element(values):
 
 
 def makemdx(path, created_time=None):
-    if created_time is None:
-        try:
-            stats = os.stat(path)
-        except Exception:
-            return None
-        created_time = stats[stat.ST_CTIME]
-    # path = os.path.abspath(path).encode(sys.getfilesystemencoding())
-    path = os.path.abspath(path)
-    value = ''.join([path, str(created_time)])
-    value = value.encode(sys.getfilesystemencoding())
-    # mdx = string2md5(value)
-    # return mdx.encode('utf-8')
-    return string2md5(value)
+    '''the file's key: its path alone, None when no file (its sound: mfeats)'''
+    # created_time: from a listing, the file known to be there
+    if created_time is None and os.path.exists(path) is False:
+        return None
+    return path_mdx(path)
+
+
+def path_mdx(path):
+    return string2md5(os.path.normcase(os.path.abspath(path)).encode('utf-8'))
+
+
+def legacy_mdx(path, created_time):
+    # the key of rows made before the file table: path and creation time
+    value = ''.join([os.path.abspath(path), str(created_time)])
+    return string2md5(value.encode(sys.getfilesystemencoding()))
 
 
 def file2md5(filename):

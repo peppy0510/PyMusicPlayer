@@ -4288,7 +4288,9 @@ class ItemEditBox(DialogBox):
         path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
         try:
             if os.stat(path).st_mtime_ns != before.st_mtime_ns:
-                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                # its dates only: still known as it is (mfeats)
+                with mfeats.tags_written(path):
+                    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         except OSError as error:
             show_notice(self, 'Modified', f'The modified date was not kept.\n{error}')
 
@@ -6737,9 +6739,11 @@ def write_covers(listbox, results, keep=None):
             playbox.OnPause()
         try:
             before = os.stat(path)
-            listimages.write_cover(path, data)
-            if keep:
-                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            # its tags and dates only: still known as it is (mfeats)
+            with mfeats.tags_written(path):
+                listimages.write_cover(path, data)
+                if keep:
+                    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         except Exception as error:
             failed.append(f'{os.path.basename(path)}: {error}')
         if playing:

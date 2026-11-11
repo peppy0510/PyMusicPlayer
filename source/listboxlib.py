@@ -182,15 +182,14 @@ class ListBoxListDnD(wx.FileDropTarget):
             orderIdx = self.parent.parent.GetColumnKeyToIdx('order', selectedList)
             statusIdx = self.parent.parent.GetColumnKeyToIdx('status', selectedList)
             columns = self.parent.parent.innerList[selectedList].columns
-            made = []
+            made, unknown = [], []
             for path in extended_paths:
                 item = MakeMusicFileItem(path, 0, columns)
-                # the same sound analyzed under another path: its analysis shown at once
-                if item is not None and item[statusIdx] != 'analyzed'\
-                        and mfeats.carry_sound(path):
-                    item = MakeMusicFileItem(path, 0, columns)
                 if item is not None:
                     made.append((path, item))
+                    # not known as it is: read on mfeats' checks thread, shown after
+                    if item[statusIdx] != 'analyzed':
+                        unknown.append(path)
 
             # If blocking is 0, the thread will return
             # If blocking is 1, the thread will block and wait
@@ -280,6 +279,8 @@ class ListBoxListDnD(wx.FileDropTarget):
             self.insertItemIdx = None
             self.parent.parent.reInitBuffer = True
             self.parent.parent.SetListUnLock(selectedList)
+            # the rows in the list now: a sound known later finds them
+            mfeats.check_files(unknown)
             # self.parent.parent.parent.Event.SetCursorARROW()
             self.parent.parent.parent.MFEATS.AutoAnalyzer()
             gc.collect(2)
@@ -634,10 +635,11 @@ class ListControl():
         if newValue == oldValue or os.path.isdir(path):
             return False
         try:
-            mutagen_mp3 = mutagen.mp3.MP3(path)
-            attr = getattr(mutagen.id3, id3Key)
-            mutagen_mp3[id3Key] = attr(encoding=3, text=[newValue])
-            mutagen_mp3.save()
+            with mfeats.tags_written(path):
+                mutagen_mp3 = mutagen.mp3.MP3(path)
+                attr = getattr(mutagen.id3, id3Key)
+                mutagen_mp3[id3Key] = attr(encoding=3, text=[newValue])
+                mutagen_mp3.save()
         except Exception:
             return False
         self.SetListItemsValueWhereColumnKey(
@@ -646,6 +648,8 @@ class ListControl():
             key_values = [(columnKey, newValue)]
             mdx = self.GetItemValueByColumnKey(itemIdx, 'mdx', selectedList)
             mfeats.update_many_key_values(('mdx', mdx), key_values)
+            # the sound's: its other files' rows too
+            self.parent.MFEATS.UpdateItemsValue(path)
         return True
 
     # Filter Control

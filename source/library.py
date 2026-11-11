@@ -63,13 +63,9 @@ def to_float(value):
 def get_grid_tempi():
     # grid tempo, finer than the analysis' 0.1 BPM
     try:
-        conn = mfeats.connect_grid()
-        rows = conn.execute(f'SELECT mdx, bpm FROM {mfeats.GRID_TABLE} '
-                            'WHERE version = ? AND bpm > 0', (mfeats.GRID_VERSION,)).fetchall()
-        conn.close()
+        return mfeats.get_grid_tempi()
     except sqlite3.Error:
         return dict()
-    return dict(rows)
 
 
 def collect(listbox, skip_titles=(SEARCH_TITLE, SIMILAR_TITLE, FAVORITES_TITLE,
