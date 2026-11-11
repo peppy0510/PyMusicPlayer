@@ -551,8 +551,11 @@ class AudioControl(threading.Thread):
 
         self.parent.cue.hStream = self.hStream
         audio.set_volume(self.hStream, 0.0)
+        # opened at a guess of the edit's start: set exactly with the analysis (SkipLeadingSilence)
+        self.parent.cue.opened_at = None
         if self.resume == 0.0 and is_position_set is False:
             self.resume = self.GetSoundOffsetTime()
+            self.parent.cue.opened_at = self.resume
         if self.resume is not None:
             resume = self.resume
             if self.resume < 0:
@@ -669,7 +672,7 @@ class PlayBoxControl():
                           volume=1.0,
                           auto_next=True, highlight_on=False, highlight_skip=False,
                           highlight_offset=None, highlight_variable=None, highlight_static=32,
-                          edit_skip=False,
+                          edit_skip=False, opened_at=None,
                           order=None, listId=None, item=None, agc_headroom=1.0,)
         self.item_column = ListBoxColumn()
         self.live_trace = radio.LiveTrace()
@@ -1437,7 +1440,15 @@ class PlayBoxControl():
         if self.IsHighlightOn() and self.IsHighlightSkipOn() is False:
             return
         offset = self.GetTrackOffsetTime()
-        if self.GetPositionTime() < offset:
+        position = self.GetPositionTime()
+        opened = getattr(self.cue, 'opened_at', None)
+        # opened at the guess and not moved since: the edit's own start, back too
+        if self.IsRadioEditActive() and opened is not None:
+            self.cue.opened_at = None
+            if 0.0 <= position - opened < 5.0:
+                self.SetPositionTime(offset)
+                return
+        if position < offset:
             self.SetPositionTime(offset)
 
     def SetOriginalTrackTime(self):
