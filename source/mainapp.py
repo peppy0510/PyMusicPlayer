@@ -8,7 +8,7 @@ email: peppy0510@hotmail.com
 
 
 __appname__ = 'PyMusicPlayer'
-__version__ = '1.5.0'
+__version__ = '1.6.0'
 __author__ = 'Taehong Kim'
 __email__ = 'peppy0510@hotmail.com'
 __license__ = ''

@@ -187,8 +187,7 @@ class ListBoxTabDnD(wx.FileDropTarget):
         if place and place[0] == 'starred':
             self.StarDropped(inpaths)
             return 0
-        if self.parent.parent.parent.ListBox.IsFilteredAll():
-            return 0
+        # filtered lists take them too (ImportFiles puts them under the filter)
         # if self.parent.parent.ListBox.IsFilteredAll():
         #   filtered = True
         # else: filtered = False

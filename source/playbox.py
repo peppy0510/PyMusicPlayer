@@ -348,6 +348,12 @@ class PlayBox(RectBox, PlayBoxControl):
         menu.AppendSeparator()
         add('Edit Track Info...', self.OpenTrackEditor)
         add('Look Up Cover...', self.LookUpCover)
+        import listbox
+        add('Copy Cover', lambda: listbox.copy_cover(self.parent, path))
+        menu.MenuItems[-1].Enable(listbox.read_cover_of(path) is not None)
+        add('Paste Cover', lambda: listbox.paste_cover(
+            self.parent.ListBox, [(path, getattr(self.cue, 'mdx', None))]))
+        menu.MenuItems[-1].Enable(listbox.has_copied_cover())
         add('Analyze', self.AnalyzeTrack)
         menu.AppendSeparator()
         add('Find Similar', self.FindSimilarTrack)

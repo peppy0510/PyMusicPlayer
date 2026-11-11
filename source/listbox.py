@@ -16,6 +16,7 @@ import listimages
 import macroboxstyle
 import math
 import mfeats
+import mutagen
 import os
 import radio
 import stat
@@ -46,6 +47,7 @@ from macroboxlib import ConfirmDialogBox
 from macroboxlib import NativeComboBox
 from macroboxlib import DialogBox
 from macroboxlib import DialogPanel
+from macroboxlib import DIALOG_BUTTON_HEIGHT
 from macroboxlib import DIALOG_GAP
 from macroboxlib import DIALOG_PAD
 from macroboxlib import DIALOG_ROW
@@ -3050,6 +3052,94 @@ class CoverDrop(wx.FileDropTarget):
         return True
 
 
+# every cover's menu items, in this order
+COVER_ITEMS = ('Copy Cover', 'Fix Scan', 'Crop to Square', 'Edit Cover...', 'Undo Cover Change')
+COVER_PRESETS = {'Fix Scan': 'scan', 'Crop to Square': 'square'}
+COVER_TIP = 'Click to edit the cover; right-click for more'
+COVER_HOVER_WORD = 'Edit'
+
+
+def draw_cover_edge(gc, x, y, w, h, hover):
+    # quiet edge; hovered: dimmed, an Edit pill
+    ui = macroboxstyle.current().UI
+    if hover:
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 60))))
+        gc.DrawRoundedRectangle(x, y, w, h, uikit.RADIUS)
+        uikit.set_font(gc, uikit.get_font(uikit.LABEL, bold=True), wx.WHITE)
+        tw, th = gc.GetTextExtent(COVER_HOVER_WORD)[:2]
+        pw, ph = tw + 20, th + 10
+        px, py = x + (w - pw) / 2.0, y + (h - ph) / 2.0
+        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 170))))
+        gc.DrawRoundedRectangle(px, py, pw, ph, ph / 2.0)
+        gc.DrawText(COVER_HOVER_WORD, px + 10, py + 5)
+    gc.SetBrush(wx.NullGraphicsBrush)
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.FIELD_EDGE)).Width(1)))
+    gc.DrawRoundedRectangle(x, y, w, h, uikit.RADIUS)
+
+
+class CoverPicture(wx.Window):
+
+    '''a cover picture, hovered as every cover'''
+
+    def __init__(self, parent, size):
+        wx.Window.__init__(self, parent, size=size, style=wx.BORDER_NONE)
+        self.bitmap = None
+        self.hover = False
+        self.active = False
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_ENTER_WINDOW, lambda e: self.SetHover(True))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(False))
+
+    def SetBitmap(self, bitmap):
+        self.bitmap = bitmap
+        self.Refresh()
+
+    def SetActive(self, active):
+        if active == self.active:
+            return
+        self.active = active
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND if active else wx.CURSOR_ARROW))
+        self.SetToolTip(COVER_TIP if active else '')
+        self.Refresh()
+
+    def SetHover(self, hover):
+        self.hover = hover
+        self.Refresh()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.GetClientSize()
+        if self.bitmap is not None and self.bitmap.IsOk():
+            dc.DrawBitmap(self.bitmap, (w - self.bitmap.GetWidth()) // 2,
+                          (h - self.bitmap.GetHeight()) // 2)
+        draw_cover_edge(wx.GraphicsContext.Create(dc), 0, 0, w - 1, h - 1,
+                        self.hover and self.active)
+
+
+def append_cover_items(menu, shown, changed, act):
+    '''COVER_ITEMS into menu, act(name) after it'''
+    picture = shown is not None and listimages.is_square(shown) is not None
+    for name in COVER_ITEMS:
+        enable = changed if name == 'Undo Cover Change' else picture
+        if name == 'Crop to Square':
+            enable = picture and listimages.is_square(shown) is False
+        item = menu.Append(wx.ID_ANY, name)
+        item.Enable(enable)
+        menu.Bind(wx.EVT_MENU, lambda e, name=name: wx.CallAfter(act, name), item)
+
+
+def preset_cover(source, edit, preset, autos=None):
+    '''the edit with Fix Scan or Crop to Square in it, None if not a picture'''
+    picture = listimages.open_picture(source)
+    if picture is None:
+        return None
+    return listimages.preset_edit(picture, edit, preset, autos)
+
+
 class CoverField(wx.Window):
 
     '''the editor's cover: the song's or a chosen one, marked NEW or REMOVE'''
@@ -3066,10 +3156,12 @@ class CoverField(wx.Window):
         self.note = ''
         self.bitmap = None
         self.hover = False
+        # (picture, edit, edited picture) of the last edit made here
+        self.edited = None
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.SetCursor(wx.Cursor(wx.CURSOR_HAND))
-        self.SetToolTip(wx.ToolTip('Click to choose an image, or drop one here; right-click to'
-                                   ' remove the cover.\nChanged in the file\'s tags when saved.'))
+        self.SetToolTip(wx.ToolTip(f'{COVER_TIP}\nWithout one: click to choose an image, or drop'
+                                   ' one here. Changed in the file\'s tags when saved.'))
         self.SetDropTarget(CoverDrop(self))
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Bind(wx.EVT_LEFT_UP, self.OnClick)
@@ -3090,6 +3182,7 @@ class CoverField(wx.Window):
         self.path = path
         self.chosen = None
         self.remove = False
+        self.edited = None
         self.SetData(data, '' if data else 'No cover')
 
     def SetData(self, data, note=''):
@@ -3139,31 +3232,57 @@ class CoverField(wx.Window):
         # the editor's menu (ItemEditBox.MakeMenu), the cover's items in it
         self.GetTopLevelParent().ShowMenu(self)
 
+    def GetShown(self):
+        return self.chosen if self.chosen is not None else None if self.remove else self.data
+
     def AppendMenu(self, menu):
+        # what puts a picture here, then the items every cover has
         choose = menu.Append(wx.ID_ANY, 'Choose Cover Image...')
-        menu.Bind(wx.EVT_MENU, lambda e: self.OnClick(None), choose)
+        menu.Bind(wx.EVT_MENU, lambda e: self.ChooseImage(), choose)
+        paste = menu.Append(wx.ID_ANY, 'Paste Cover')
+        paste.Enable(has_copied_cover())
+        menu.Bind(wx.EVT_MENU, lambda e: self.SetChosen(copied_cover['data']), paste)
         remove = menu.Append(wx.ID_ANY, 'Remove Cover')
         remove.Enable(bool(self.data) and not self.remove or self.chosen is not None)
         menu.Bind(wx.EVT_MENU, lambda e: self.SetRemove(), remove)
-        # fix a scan or cut to a square on its subject, as a new change
-        shown = self.chosen if self.chosen is not None else None if self.remove else self.data
-        square = bool(shown) and listimages.is_square(shown) is False
-        for label, asked, enable in (('Fix Scan', dict(scan=True), bool(shown)),
-                                     ('Crop to Square', dict(square=True), square)):
-            item = menu.Append(wx.ID_ANY, label)
-            item.Enable(enable)
-            menu.Bind(wx.EVT_MENU, lambda e, asked=asked: self.CutCover(shown, asked), item)
-        # back to the song's own, the change not saved
-        undo = menu.Append(wx.ID_ANY, 'Undo Cover Change')
-        undo.Enable(self.HasChange() and self.path is not None)
-        menu.Bind(wx.EVT_MENU, lambda e: self.SetSong(self.path), undo)
+        menu.AppendSeparator()
+        shown = self.GetShown()
+        append_cover_items(menu, shown, self.HasChange() and self.path is not None,
+                           lambda name: self.DoCoverItem(name, shown))
 
-    def CutCover(self, data, asked):
-        cut = listimages.cut_cover(data, **asked)
-        if cut is None:
+    def DoCoverItem(self, name, shown):
+        if name == 'Copy Cover':
+            # the main panel
+            copy_cover(self.GetTopLevelParent().parent.parent.parent, self.path, shown)
+        elif name in COVER_PRESETS:
+            source, edit = self.GetEditSource(shown)
+            edit = preset_cover(source, edit, COVER_PRESETS[name])
+            result = None if edit is None else listimages.edit_cover(source, edit)
+            self.SetEdit(source, edit, result)
+        elif name == 'Edit Cover...':
+            self.EditByHand(shown)
+        elif name == 'Undo Cover Change':
+            # back to the song's own, the change not saved
+            self.SetSong(self.path)
+
+    def GetEditSource(self, data):
+        # (picture, edit): an edit of ours opened again from its own picture
+        if self.edited is not None and self.edited[2] == data:
+            return self.edited[:2]
+        return data, None
+
+    def SetEdit(self, source, edit, result=None):
+        if result is None:
             self.SetNote('Not an image')
             return
-        self.SetChosen(cut)
+        self.SetChosen(result)
+        self.edited = (source, edit, result)
+
+    def EditByHand(self, data):
+        source, edit = self.GetEditSource(data)
+        made = edit_cover_by_hand(self.GetTopLevelParent(), source, edit)
+        if made is not None:
+            self.SetEdit(source, made[1], made[0])
 
     def ChooseFile(self, path):
         try:
@@ -3175,6 +3294,13 @@ class CoverField(wx.Window):
         self.SetChosen(data)
 
     def OnClick(self, event):
+        shown = self.GetShown()
+        if shown is not None:
+            wx.CallAfter(self.EditByHand, shown)
+        else:
+            self.ChooseImage()
+
+    def ChooseImage(self):
         dialog = wx.FileDialog(self.GetTopLevelParent(), 'Choose a cover image',
                                wildcard=self.WILDCARD, style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
         if dialog.ShowModal() == wx.ID_OK:
@@ -3188,14 +3314,18 @@ class CoverField(wx.Window):
         dc.Clear()
         w, h = self.GetClientSize()
         gc = wx.GraphicsContext.Create(dc)
-        edge = ui.ACCENT if self.chosen is not None else ui.WARN if self.remove else\
-            ui.FIELD_FOCUS if self.hover else ui.FIELD_EDGE
+        edge = ui.ACCENT if self.chosen is not None else ui.WARN if self.remove else ui.FIELD_EDGE
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
         gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_BG))))
         gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
         if self.bitmap is not None:
             bw, bh = self.bitmap.GetSize()
             gc.DrawBitmap(self.bitmap, (w - bw) // 2, (h - bh) // 2, bw, bh)
+            if self.hover:
+                # as every cover; its own edge (NEW, REMOVE) drawn again over it
+                draw_cover_edge(gc, 0, 0, w - 1, h - 1, True)
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+                gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
         if self.chosen is not None or self.remove:
             # NEW or REMOVE in a chip at the top left, not by colour alone
             chip, face, ink = ('NEW', ui.ACCENT, uikit.colour(ui.ACCENT_FG)) \
@@ -3223,6 +3353,638 @@ class CoverField(wx.Window):
             for line, lh in zip(lines, heights):
                 gc.DrawText(line, (w - gc.GetTextExtent(line)[0]) / 2.0, y)
                 y += lh + 4
+
+
+class CoverEditCanvas(wx.Window):
+
+    '''the picture and its crop box'''
+
+    HANDLE = 9
+    # least side, view picture px
+    LEAST = 12
+
+    def __init__(self, parent, square, changed):
+        wx.Window.__init__(self, parent, style=wx.BORDER_NONE | wx.WANTS_CHARS)
+        self.image = None
+        self.size = (1, 1)
+        self.box = [0.0, 0.0, 1.0, 1.0]
+        self.square = square
+        self.changed = changed
+        self.bitmap = None
+        self.drag = None
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_SIZE, self.OnSize)
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnDown)
+        self.Bind(wx.EVT_LEFT_UP, self.OnUp)
+        self.Bind(wx.EVT_MOTION, self.OnMotion)
+        self.Bind(wx.EVT_MOUSEWHEEL, self.OnWheel)
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKey)
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: self.OnUp(None))
+
+    def SetPicture(self, image, box=None):
+        # a new view picture (wx.Image); box (its px) when its shape changed
+        self.image = image
+        self.size = (image.GetWidth(), image.GetHeight())
+        if box is not None:
+            self.box = [float(v) for v in box]
+        self.bitmap = None
+        self.Refresh()
+
+    def GetShares(self):
+        pw, ph = self.size
+        left, top, right, bottom = self.box
+        return (left / pw, top / ph, right / pw, bottom / ph)
+
+    def GetFit(self):
+        # (scale, left, top) of the picture in the window
+        w, h = self.GetClientSize()
+        pw, ph = self.size
+        scale = max(min((w - 2.0) / pw, (h - 2.0) / ph), 1e-6)
+        return scale, (w - pw * scale) / 2.0, (h - ph * scale) / 2.0
+
+    def ToPicture(self, x, y):
+        scale, ox, oy = self.GetFit()
+        pw, ph = self.size
+        return (min(max((x - ox) / scale, 0.0), pw), min(max((y - oy) / scale, 0.0), ph))
+
+    def GetScreenBox(self):
+        scale, ox, oy = self.GetFit()
+        left, top, right, bottom = self.box
+        return (ox + left * scale, oy + top * scale, ox + right * scale, oy + bottom * scale)
+
+    def GetCorners(self):
+        # top left, top right, bottom right, bottom left
+        left, top, right, bottom = self.GetScreenBox()
+        return ((left, top), (right, top), (right, bottom), (left, bottom))
+
+    def HitTest(self, x, y):
+        for i, (cx, cy) in enumerate(self.GetCorners()):
+            if abs(x - cx) <= self.HANDLE and abs(y - cy) <= self.HANDLE:
+                return ('corner', i)
+        left, top, right, bottom = self.GetScreenBox()
+        if left <= x <= right and top <= y <= bottom:
+            return ('move', None)
+        return ('new', None)
+
+    def SetBox(self, box):
+        self.box = [float(v) for v in box]
+        self.Refresh()
+        self.changed()
+
+    def SetSquare(self, square):
+        self.square = square
+        if square:
+            # the shorter side kept, on the same middle
+            left, top, right, bottom = self.box
+            side = min(right - left, bottom - top)
+            self.SetBox(self.Clamp(((left + right - side) / 2.0, (top + bottom - side) / 2.0,
+                                    (left + right + side) / 2.0, (top + bottom + side) / 2.0)))
+
+    def Clamp(self, box):
+        # moved inside the picture, its size kept
+        pw, ph = self.size
+        left, top, right, bottom = box
+        bw, bh = min(right - left, pw), min(bottom - top, ph)
+        left = min(max(left, 0.0), pw - bw)
+        top = min(max(top, 0.0), ph - bh)
+        return (left, top, left + bw, top + bh)
+
+    def SizeFrom(self, anchor, point):
+        # the box from a fixed corner to the pointer, square when asked
+        pw, ph = self.size
+        ax, ay = anchor
+        px, py = point
+        sx = 1 if px >= ax else -1
+        sy = 1 if py >= ay else -1
+        roomx = pw - ax if sx > 0 else ax
+        roomy = ph - ay if sy > 0 else ay
+        w = min(max(abs(px - ax), self.LEAST), roomx)
+        h = min(max(abs(py - ay), self.LEAST), roomy)
+        if self.square:
+            w = h = min(max(w, h), roomx, roomy)
+        x2, y2 = ax + sx * w, ay + sy * h
+        return (min(ax, x2), min(ay, y2), max(ax, x2), max(ay, y2))
+
+    def OnDown(self, event):
+        self.SetFocus()
+        kind, corner = self.HitTest(*event.GetPosition())
+        point = self.ToPicture(*event.GetPosition())
+        left, top, right, bottom = self.box
+        if kind == 'corner':
+            # the opposite corner stays
+            anchor = ((right, bottom), (left, bottom), (left, top), (right, top))[corner]
+            self.drag = ('size', anchor)
+        elif kind == 'move':
+            self.drag = ('move', (point[0] - left, point[1] - top))
+        else:
+            self.drag = ('size', point)
+        self.CaptureMouse()
+
+    def OnUp(self, event):
+        self.drag = None
+        if self.HasCapture():
+            self.ReleaseMouse()
+
+    def OnMotion(self, event):
+        x, y = event.GetPosition()
+        if self.drag is None:
+            kind, corner = self.HitTest(x, y)
+            cursor = wx.CURSOR_CROSS
+            if kind == 'corner':
+                cursor = wx.CURSOR_SIZENWSE if corner in (0, 2) else wx.CURSOR_SIZENESW
+            elif kind == 'move':
+                cursor = wx.CURSOR_SIZING
+            self.SetCursor(wx.Cursor(cursor))
+            return
+        point = self.ToPicture(x, y)
+        kind, value = self.drag
+        if kind == 'move':
+            left, top, right, bottom = self.box
+            nx, ny = point[0] - value[0], point[1] - value[1]
+            self.SetBox(self.Clamp((nx, ny, nx + right - left, ny + bottom - top)))
+        else:
+            self.SetBox(self.SizeFrom(value, point))
+
+    def Grow(self, factor):
+        # sized on its middle, inside the picture
+        pw, ph = self.size
+        left, top, right, bottom = self.box
+        bw, bh = right - left, bottom - top
+        most = min(pw / bw, ph / bh)
+        least = max(self.LEAST / bw, self.LEAST / bh)
+        factor = min(max(factor, least), most)
+        bw, bh = bw * factor, bh * factor
+        mx, my = (left + right) / 2.0, (top + bottom) / 2.0
+        self.SetBox(self.Clamp((mx - bw / 2.0, my - bh / 2.0, mx + bw / 2.0, my + bh / 2.0)))
+
+    def OnWheel(self, event):
+        self.Grow(1.05 ** (event.GetWheelRotation() / float(event.GetWheelDelta() or 120)))
+
+    def OnKey(self, event):
+        step = 10 if event.ShiftDown() else 1
+        moves = {wx.WXK_LEFT: (-step, 0), wx.WXK_RIGHT: (step, 0),
+                 wx.WXK_UP: (0, -step), wx.WXK_DOWN: (0, step)}
+        key = event.GetKeyCode()
+        if key in moves:
+            dx, dy = moves[key]
+            left, top, right, bottom = self.box
+            self.SetBox(self.Clamp((left + dx, top + dy, right + dx, bottom + dy)))
+        elif key in (ord('+'), ord('='), wx.WXK_NUMPAD_ADD):
+            self.Grow(1.05)
+        elif key in (ord('-'), wx.WXK_NUMPAD_SUBTRACT):
+            self.Grow(1 / 1.05)
+        elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+            self.GetParent().OnApply(None)
+        else:
+            event.Skip()
+
+    def OnSize(self, event):
+        self.bitmap = None
+        self.Refresh()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        ui = macroboxstyle.current().UI
+        dc.SetBackground(wx.Brush(uikit.colour(ui.FIELD_BG)))
+        dc.Clear()
+        if self.image is None:
+            return
+        scale, ox, oy = self.GetFit()
+        pw, ph = self.size
+        if self.bitmap is None:
+            self.bitmap = wx.Bitmap(self.image.Scale(max(1, int(pw * scale)),
+                                                     max(1, int(ph * scale)),
+                                                     wx.IMAGE_QUALITY_HIGH))
+        dc.DrawBitmap(self.bitmap, int(ox), int(oy))
+        gc = wx.GraphicsContext.Create(dc)
+        left, top, right, bottom = self.GetScreenBox()
+        bx, by, bw, bh = ox, oy, self.bitmap.GetWidth(), self.bitmap.GetHeight()
+        # the part cut away dimmed
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 150))))
+        gc.DrawRectangle(bx, by, bw, top - by)
+        gc.DrawRectangle(bx, bottom, bw, by + bh - bottom)
+        gc.DrawRectangle(bx, top, left - bx, bottom - top)
+        gc.DrawRectangle(right, top, bx + bw - right, bottom - top)
+        # thirds, then the edge in the accent
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 70)).Width(1)))
+        for i in (1, 2):
+            x = left + (right - left) * i / 3.0
+            y = top + (bottom - top) * i / 3.0
+            gc.StrokeLine(x, top, x, bottom)
+            gc.StrokeLine(left, y, right, y)
+        gc.SetBrush(wx.NullGraphicsBrush)
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.ACCENT)).Width(2)))
+        gc.DrawRectangle(left, top, right - left, bottom - top)
+        # the corners, white edged so they show on any picture
+        size = self.HANDLE
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.WHITE).Width(1)))
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.ACCENT))))
+        for cx, cy in self.GetCorners():
+            gc.DrawRectangle(cx - size / 2.0, cy - size / 2.0, size, size)
+
+
+class ValueSlider(wx.Window):
+
+    '''a whole value from least to most, filled from zero; double-click back to zero'''
+
+    HEIGHT = 22
+    KNOB = 12
+
+    def __init__(self, parent, least, most, value, changed, width):
+        wx.Window.__init__(self, parent, size=(width, self.HEIGHT),
+                           style=wx.BORDER_NONE | wx.WANTS_CHARS)
+        self.least, self.most, self.value = least, most, value
+        self.changed = changed
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_LEFT_DOWN, self.OnDown)
+        self.Bind(wx.EVT_LEFT_DCLICK, lambda e: self.SetValue(0, tell=True))
+        self.Bind(wx.EVT_LEFT_UP, self.OnUp)
+        self.Bind(wx.EVT_MOTION, self.OnMotion)
+        self.Bind(wx.EVT_MOUSEWHEEL, lambda e: self.SetValue(
+            self.value + (1 if e.GetWheelRotation() > 0 else -1), tell=True))
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKey)
+        self.Bind(wx.EVT_SET_FOCUS, lambda e: self.Refresh())
+        self.Bind(wx.EVT_KILL_FOCUS, lambda e: self.Refresh())
+        self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: None)
+
+    def SetValue(self, value, tell=False):
+        value = int(min(max(round(value), self.least), self.most))
+        if value == self.value:
+            return
+        self.value = value
+        self.Refresh()
+        if tell:
+            self.changed(value)
+
+    def GetTrack(self):
+        # (left, right) of the knob's path
+        w = self.GetClientSize().width
+        return self.KNOB / 2.0 + 1, w - self.KNOB / 2.0 - 1
+
+    def ToX(self, value):
+        left, right = self.GetTrack()
+        return left + (right - left) * (value - self.least) / float(self.most - self.least)
+
+    def FromX(self, x):
+        left, right = self.GetTrack()
+        return self.least + (x - left) / max(right - left, 1.0) * (self.most - self.least)
+
+    def OnDown(self, event):
+        self.SetFocus()
+        self.CaptureMouse()
+        self.SetValue(self.FromX(event.GetX()), tell=True)
+
+    def OnMotion(self, event):
+        if self.HasCapture() and event.LeftIsDown():
+            self.SetValue(self.FromX(event.GetX()), tell=True)
+
+    def OnUp(self, event):
+        if self.HasCapture():
+            self.ReleaseMouse()
+
+    def OnKey(self, event):
+        step = 10 if event.ShiftDown() else 1
+        key = event.GetKeyCode()
+        if key in (wx.WXK_LEFT, wx.WXK_DOWN):
+            self.SetValue(self.value - step, tell=True)
+        elif key in (wx.WXK_RIGHT, wx.WXK_UP):
+            self.SetValue(self.value + step, tell=True)
+        elif key == wx.WXK_HOME:
+            self.SetValue(0, tell=True)
+        else:
+            event.Skip()
+
+    def OnPaint(self, event):
+        dc = wx.AutoBufferedPaintDC(self)
+        ui = macroboxstyle.current().UI
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        gc = wx.GraphicsContext.Create(dc)
+        h = self.GetClientSize().height
+        left, right = self.GetTrack()
+        cy = h / 2.0
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.FIELD_EDGE))))
+        gc.DrawRoundedRectangle(left, cy - 2, right - left, 4, 2)
+        zero, x = self.ToX(0), self.ToX(self.value)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.ACCENT))))
+        gc.DrawRectangle(min(zero, x), cy - 2, abs(x - zero), 4)
+        # the zero mark, the knob ringed while focused
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.BAR_TEXT_DIM))))
+        gc.DrawRectangle(zero - 0.5, cy - 5, 1, 10)
+        ring = ui.ACCENT if self.HasFocus() else ui.FIELD_EDGE
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ring)).Width(1.5)))
+        gc.SetBrush(gc.CreateBrush(wx.Brush(uikit.colour(ui.TEXT))))
+        gc.DrawEllipse(x - self.KNOB / 2.0, cy - self.KNOB / 2.0, self.KNOB, self.KNOB)
+
+
+class CoverEditBox(DialogBox):
+
+    '''the cover turned, leveled, cut and toned by hand'''
+
+    VIEW = 480
+    SIDE = 250
+    # the view picture's longer side
+    WORK = 720
+    # (key, name, least, most, its auto's key): straighten in tenths of a degree
+    ROWS = (('angle', 'Straighten', -int(listimages.STRAIGHTEN_MOST * 10),
+             int(listimages.STRAIGHTEN_MOST * 10), 'auto_angle'),
+            ('brightness', 'Brightness', -listimages.SLIDER_MOST, listimages.SLIDER_MOST,
+             'auto_brightness'),
+            ('contrast', 'Contrast', -listimages.SLIDER_MOST, listimages.SLIDER_MOST,
+             'auto_contrast'),
+            ('saturation', 'Color', -listimages.SLIDER_MOST, listimages.SLIDER_MOST,
+             'auto_color'))
+    FIELD = 50
+    FIELD_TIPS = dict(angle='Degrees, clockwise; Up and Down by 0.1 (Shift: 1)',
+                      brightness='Up and Down by 1 (Shift: 10)',
+                      contrast='Up and Down by 1 (Shift: 10)',
+                      saturation='Up and Down by 1 (Shift: 10)')
+    TIPS = dict(angle=f'Turn it level; Auto finds a tilt up to {listimages.TILT_MOST:g} degrees',
+                brightness='Auto lifts a dark picture or lowers a bright one',
+                contrast='Auto stretches the darkest and lightest to the ends',
+                saturation='The slider sets how strong the colors are; Auto balances them')
+    # (changed, unchanged) words for each Auto
+    NOTES = dict(brightness=('adjusted', 'already even'), contrast=('stretched', 'already full'),
+                 saturation=('balanced', 'already neutral'))
+
+    def __init__(self, parent, picture, edit, square):
+        DialogBox.__init__(self, parent)
+        self.SetTitle('Edit Cover')
+        self.picture = picture
+        self.full_size = picture.size
+        self.work = picture.copy()
+        self.work.thumbnail((self.WORK, self.WORK))
+        # found tilts by quarter turns
+        self.tilts = dict()
+        self.edit = dict(edit, square=square)
+        if self.edit['tilt'] is None:
+            self.edit['tilt'] = self.FindTilt() if self.edit['auto_angle'] else 0.0
+        self.picked = None
+        self.rendering = None
+        self.shape = None
+        self.SetClientSize((DIALOG_PAD * 3 + self.VIEW + self.SIDE,
+                            DIALOG_PAD * 2 + self.VIEW + self.GetFooterHeight()))
+        self.Canvas = CoverEditCanvas(self, square, self.OnBoxChanged)
+        self.Canvas.SetRect((DIALOG_PAD, DIALOG_PAD, self.VIEW, self.VIEW))
+        self.Canvas.SetToolTip(wx.ToolTip(
+            'Drag inside to move, a corner to size, outside for a new box.\n'
+            'Wheel or +/- sizes it, arrows move it (Shift: by 10).'))
+        self.MakeSide(square)
+        self.ResetButton = Button(self, label='Reset')
+        self.ResetButton.Bind(wx.EVT_BUTTON, self.OnReset)
+        self.ApplyButton = Button(self, label='Apply', primary=True)
+        self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
+        self.CloseButton = Button(self, label='Cancel')
+        self.CloseButton.Bind(wx.EVT_BUTTON, self.OnClose)
+        self.PlaceButtons(right=(self.ApplyButton, self.CloseButton), left=(self.ResetButton,))
+        self.Render()
+        self.Canvas.SetFocus()
+
+    def MakeHead(self, label, x, y):
+        head = StaticText(self, label=label.upper(), pos=(x, y))
+        head.SetFont(uikit.get_font(10))
+        head.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+        return head.GetBestSize().height
+
+    def MakeSide(self, square):
+        x = DIALOG_PAD * 2 + self.VIEW
+        width = self.SIDE
+        y = DIALOG_PAD
+        y += self.MakeHead('Rotate', x, y) + DIALOG_GAP
+        half = (width - DIALOG_GAP) // 2
+        for k, (label, step) in enumerate((('Rotate Left', -1), ('Rotate Right', 1))):
+            button = Button(self, label=label, pos=(x + k * (half + DIALOG_GAP), y),
+                            size=(half, DIALOG_BUTTON_HEIGHT))
+            button.Bind(wx.EVT_BUTTON, lambda e, step=step: self.Turn(step))
+        y += DIALOG_BUTTON_HEIGHT + DIALOG_PAD
+        y += self.MakeHead('Adjust', x, y) + DIALOG_GAP
+        self.sliders = dict()
+        self.values = dict()
+        self.autos = dict()
+        self.notes = dict()
+        for key, name, least, most, auto in self.ROWS:
+            text = StaticText(self, label=name, pos=(x, y))
+            text.SetToolTip(self.TIPS[key])
+            # what its Auto did, by the name
+            self.notes[key] = StaticText(self, label='', pos=(
+                x + text.GetBestSize().width + DIALOG_GAP, y))
+            self.notes[key].SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+            made = set(self.GetChildren())
+            check, used = make_check(self, 'Auto', (0, y), self.edit[auto],
+                                     lambda value, auto=auto: self.SetAuto(auto, value))
+            # the Auto check at the row's right end
+            for window in set(self.GetChildren()) - made:
+                px, py = window.GetPosition()
+                window.SetPosition((px + x + width - used, py))
+            self.autos[auto] = check
+            y += DIALOG_ROW
+            value = int(round(self.edit[key] * 10)) if key == 'angle' else self.edit[key]
+            slider = ValueSlider(self, least, most, value,
+                                 lambda value, key=key: self.SetSlider(key, value),
+                                 width - self.FIELD - DIALOG_GAP)
+            slider.SetPosition((x, y))
+            slider.SetToolTip(f'{self.TIPS[key]}\nDouble-click: back to 0')
+            self.sliders[key] = slider
+            field = TextCtrl(self, pos=(x + width - self.FIELD, y),
+                             size=(self.FIELD, ValueSlider.HEIGHT),
+                             style=wx.TE_RIGHT | wx.TE_PROCESS_ENTER)
+            field.SetToolTip(self.FIELD_TIPS[key])
+            field.Bind(wx.EVT_TEXT_ENTER, lambda e, key=key: self.TypeValue(key))
+            field.Bind(wx.EVT_KILL_FOCUS, lambda e, key=key: (self.TypeValue(key), e.Skip()))
+            field.Bind(wx.EVT_KEY_DOWN, lambda e, key=key: self.OnValueKey(key, e))
+            self.values[key] = field
+            y += ValueSlider.HEIGHT + DIALOG_GAP + 4
+        y += DIALOG_PAD - DIALOG_GAP
+        y += self.MakeHead('Crop', x, y) + DIALOG_GAP
+        self.Square, used = make_check(self, 'Square', (x, y), square, self.OnSquare)
+        self.Info = StaticText(self, label='', pos=(x + used + DIALOG_PAD, y))
+        self.Info.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+        self.ShowValues()
+
+    def ShowValues(self):
+        for key in self.sliders:
+            value = self.sliders[key].value
+            text = f'{value / 10.0:.1f}' if key == 'angle' else f'{value}'
+            if self.values[key].GetValue() != text:
+                self.values[key].ChangeValue(text)
+
+    def TypeValue(self, key):
+        # kept in the slider's range; not a number: the value back
+        text = self.values[key].GetValue().replace('°', '').replace('+', '').strip()
+        try:
+            value = float(text)
+        except ValueError:
+            self.ShowValues()
+            return
+        self.sliders[key].SetValue(value * 10 if key == 'angle' else value, tell=True)
+        self.ShowValues()
+
+    def OnValueKey(self, key, event):
+        steps = {wx.WXK_UP: 1, wx.WXK_DOWN: -1, wx.WXK_NUMPAD_UP: 1, wx.WXK_NUMPAD_DOWN: -1}
+        code = event.GetKeyCode()
+        if code not in steps:
+            event.Skip()
+            return
+        self.TypeValue(key)
+        slider = self.sliders[key]
+        slider.SetValue(slider.value + steps[code] * (10 if event.ShiftDown() else 1), tell=True)
+        self.ShowValues()
+
+    def ShowNotes(self, measure):
+        notes = listimages.get_tone_notes(
+            measure, self.edit['auto_contrast'], self.edit['auto_brightness'],
+            self.edit['auto_color'])
+        words = dict(angle='')
+        if self.edit['auto_angle']:
+            tilt = -self.edit['tilt']
+            words['angle'] = f'found {tilt:+.1f}°' if tilt != 0 else 'already level'
+        for key, name in (('brightness', 'brightness'), ('contrast', 'contrast'),
+                          ('saturation', 'color')):
+            words[key] = '' if name not in notes else self.NOTES[key][0 if notes[name] else 1]
+        for key, word in words.items():
+            if self.notes[key].GetLabel() != word:
+                self.notes[key].SetLabel(word)
+                self.notes[key].SetSize(self.notes[key].GetBestSize())
+
+    def ShowSize(self):
+        size = listimages.get_turned_size(self.full_size, self.edit)
+        left, top, right, bottom = listimages.get_edit_box(self.edit, size)
+        self.Info.SetLabel(f'{right - left} x {bottom - top} px')
+        self.Info.SetSize(self.Info.GetBestSize())
+
+    # changes
+
+    def Turn(self, step):
+        # the box turned with the picture
+        left, top, right, bottom = self.GetBox()
+        if step > 0:
+            box = (1 - bottom, left, 1 - top, right)
+        else:
+            box = (top, 1 - right, bottom, 1 - left)
+        self.edit['turns'] = (self.edit['turns'] + step) % 4
+        self.edit['box'] = box
+        if self.edit['auto_angle']:
+            self.edit['tilt'] = self.FindTilt()
+        self.Render()
+
+    def GetBox(self):
+        return listimages.WHOLE_BOX if self.edit['box'] is None else self.edit['box']
+
+    def FindTilt(self):
+        turns = self.edit['turns'] % 4
+        if turns not in self.tilts:
+            self.tilts[turns] = listimages.find_edit_tilt(self.work, turns)
+        return self.tilts[turns]
+
+    def SetAuto(self, auto, value):
+        self.edit[auto] = value
+        if auto == 'auto_angle' and value:
+            self.edit['tilt'] = self.FindTilt()
+        self.Render()
+
+    def SetSlider(self, key, value):
+        self.edit[key] = value / 10.0 if key == 'angle' else value
+        self.ShowValues()
+        self.Render()
+
+    def OnBoxChanged(self):
+        self.edit['box'] = self.Canvas.GetShares()
+        self.ShowSize()
+        # autos measured on the cut
+        self.Render()
+
+    def OnSquare(self, square):
+        SetPreference('cover_crop_square', square)
+        self.edit['square'] = square
+        self.Canvas.SetSquare(square)
+        self.Canvas.SetFocus()
+
+    def OnReset(self, event):
+        square = self.Square.GetValue()
+        self.edit = listimages.new_edit()
+        self.edit['box'] = listimages.get_first_box(self.picture, square)
+        self.edit['square'] = square
+        for slider in self.sliders.values():
+            slider.SetValue(0)
+        for check in self.autos.values():
+            check.SetValue(False)
+        self.ShowValues()
+        self.Render()
+        self.Canvas.SetFocus()
+
+    def Render(self):
+        # soon, once for a run of changes
+        if self.rendering is None:
+            self.rendering = wx.CallLater(15, self.RenderNow)
+
+    def RenderNow(self):
+        self.rendering = None
+        if not self:
+            return
+        turned = listimages.turn_picture(self.work, self.edit)
+        box = listimages.get_box_pixels(self.edit['box'], turned.size)
+        measure = turned.crop(box)
+        toned = listimages.tone_picture(turned, self.edit, measure).convert('RGB')
+        self.ShowNotes(measure)
+        image = wx.Image(toned.width, toned.height, toned.tobytes())
+        # the box placed again only when the picture's shape changed
+        shape = (self.edit['turns'] % 4, listimages.get_edit_angle(self.edit))
+        if shape != self.shape:
+            self.shape = shape
+            pw, ph = turned.size
+            left, top, right, bottom = self.GetBox()
+            self.Canvas.SetPicture(image, (left * pw, top * ph, right * pw, bottom * ph))
+        else:
+            self.Canvas.SetPicture(image)
+        self.ShowSize()
+
+    def OnApply(self, event):
+        self.edit['box'] = self.Canvas.GetShares()
+        self.picked = dict(self.edit)
+        self.EndModal(wx.ID_OK)
+
+    def OnClose(self, event):
+        if self.rendering is not None:
+            self.rendering.Stop()
+            self.rendering = None
+        if self.IsModal():
+            self.EndModal(wx.ID_CANCEL)
+
+
+def pick_cover_edit(parent, data, edit=None, autos=None):
+    '''the edit made in CoverEditBox, None when let go'''
+    picture = listimages.open_picture(data)
+    if picture is None:
+        return None
+    square = GetPreference('cover_crop_square') is not False
+    if edit is None:
+        edit = listimages.new_edit(autos)
+        edit['box'] = listimages.get_first_box(picture, square)
+        # CoverEditBox finds it
+        edit['tilt'] = None
+    else:
+        # a kept box as it was, square or not
+        size = listimages.get_turned_size(picture.size, edit)
+        left, top, right, bottom = listimages.get_box_pixels(edit['box'], size)
+        square = square and abs((right - left) - (bottom - top)) <= 1
+    dialog = CoverEditBox(parent, picture, edit, square)
+    dialog.ShowModal()
+    picked = dialog.picked
+    dialog.Destroy()
+    return picked
+
+
+def edit_cover_by_hand(parent, data, edit=None):
+    '''(edited picture, its edit), None when let go'''
+    picked = pick_cover_edit(parent, data, edit)
+    if picked is None:
+        return None
+    result = listimages.edit_cover(data, picked)
+    return None if result is None else (result, picked)
 
 
 class ItemEditPanel(DialogPanel):
@@ -3413,6 +4175,8 @@ class ItemEditBox(DialogBox):
         look = menu.Append(wx.ID_ANY, 'Look Up...')
         look.Enable(self.LookUpButton.IsEnabled())
         menu.Bind(wx.EVT_MENU, self.OnLookUp, look)
+        cover = menu.Append(wx.ID_ANY, 'Look Up Cover...')
+        menu.Bind(wx.EVT_MENU, lambda e: wx.CallAfter(self.OnLookUpCover), cover)
         uikit.mark_menu_checks(menu)
         window.PopupMenu(menu)
         menu.Destroy()
@@ -3435,6 +4199,22 @@ class ItemEditBox(DialogBox):
                                   args=(self.selected_idx, path, artist, title, keys))
         thread.daemon = True
         thread.start()
+
+    def OnLookUpCover(self):
+        # the cover chosen there put in the cover field, written with the page
+        itemIdx = self.selectedItems[self.selected_idx]
+        value = self.parent.parent.GetItemValueByColumnKey
+        path = value(itemIdx, 'path')
+        track = dict(path=path, mdx=value(itemIdx, 'mdx'),
+                     artist=self.GetFieldText('Artist').GetValue().strip(),
+                     title=self.GetFieldText('Title').GetValue().strip(),
+                     label=os.path.basename(path))
+        selected_idx = self.selected_idx
+
+        def use(results):
+            if self and selected_idx == self.selected_idx and len(results) > 0:
+                self.ItemEditPanel.Cover.SetChosen(results[0][2])
+        look_up_cover_for(self.parent.parent, [track], use=use, parent=self)
 
     def LookUpThread(self, selected_idx, path, artist, title, keys):
         try:
@@ -3465,7 +4245,7 @@ class ItemEditBox(DialogBox):
                 if dialog.apply[label.lower()] and chosen[label.lower()]:
                     self.GetFieldText(label).SetValue(chosen[label.lower()])
             if dialog.apply['cover'] and chosen['image']:
-                self.UseLookUpValue('Cover', chosen['image'])
+                self.UseLookUpValue('Cover', dialog.GetCoverValue(chosen['image']))
         dialog.Destroy()
 
     # the fields Look Up fills (its rows' keys, in lower case)
@@ -3475,6 +4255,10 @@ class ItemEditBox(DialogBox):
         # one value of a Look Up row in its field, held as a change
         if label != 'Cover':
             self.GetFieldText(label).SetValue(value)
+            return
+        if isinstance(value, tuple):
+            # edited there: the picture, its edit and what it made
+            self.ItemEditPanel.Cover.SetEdit(*value)
             return
         self.ItemEditPanel.Cover.SetNote('Loading...')
         thread = threading.Thread(target=self.FetchCoverThread,
@@ -4481,6 +5265,11 @@ class WebInfoBox(DialogBox):
         self.covers = dict()
         self.cover_first = 0
         self.closing = False
+        # by address: the pictures, the edits made here and what they make
+        self.datas = dict()
+        self.edits = dict()
+        self.edited = dict()
+        self.shown_url = None
         # as tall as the cover and its note
         self.SetClientSize((self.GetClientSize().width, DIALOG_PAD + self.COVER + DIALOG_GAP
                             + 18 + DIALOG_PAD + self.GetFooterHeight()))
@@ -4521,7 +5310,10 @@ class WebInfoBox(DialogBox):
             self.List.SetCustomWidths([kept.get(title, w) for title, w, _ in columns])
         self.List.on_widths = lambda custom: SetPreference(
             'lookup_column_widths', None if custom is None else dict(zip(titles, custom)))
-        self.Cover = wx.StaticBitmap(self, bitmap=wx.Bitmap(self.COVER, self.COVER))
+        # as every cover: click to edit, the cover items on right-click
+        self.Cover = CoverPicture(self, (self.COVER, self.COVER))
+        self.Cover.Bind(wx.EVT_LEFT_UP, lambda e: wx.CallAfter(self.DoCoverItem, 'Edit Cover...'))
+        self.Cover.Bind(wx.EVT_RIGHT_UP, lambda e: self.OnCoverMenu())
         self.CoverText = StaticText(self, label='', style=wx.ALIGN_CENTER)
         self.ApplyButton = Button(self, label='Apply', primary=True)
         self.ApplyButton.Bind(wx.EVT_BUTTON, self.OnApply)
@@ -4661,6 +5453,9 @@ class WebInfoBox(DialogBox):
                 continue
             shown = 'its cover' if key == 'cover' else\
                 (value if len(value) <= 50 else value[:47] + '...')
+            if key == 'cover':
+                value = self.GetCoverValue(value)
+                shown = 'its cover, edited' if isinstance(value, tuple) else shown
             add(f'Use {key.capitalize()}: {shown}',
                 lambda key=key, value=value: self.use(key.capitalize(), value),
                 self.use is not None)
@@ -4764,7 +5559,13 @@ class WebInfoBox(DialogBox):
     def ShowCover(self, idx):
         # idx: the candidate's, not its row's
         url = self.candidates[idx]['image']
-        if not url:
+        self.shown_url = url
+        self.Cover.SetActive(url in self.datas)
+        if url in self.edited:
+            bitmap, size = self.MakeCover(self.edited[url])
+            label = '' if size is None else f'Edited to {format_picture_size(size)}'
+            self.SetCover(None, label, bitmap)
+        elif not url:
             self.SetCover(None, 'No cover')
         elif url in self.covers:
             bitmap, label = self.covers[url]
@@ -4797,6 +5598,8 @@ class WebInfoBox(DialogBox):
             return
         bitmap, size = self.MakeCover(data)
         self.covers[url] = (bitmap, label or (format_picture_size(size) if size else 'Not an image'))
+        if size:
+            self.datas[url] = data
         # one cover may be several releases'
         self.cover_cells[url] = format_picture_size(size) if size else 'Failed'
         if size:
@@ -4813,6 +5616,45 @@ class WebInfoBox(DialogBox):
 
     def OnClose(self, event):
         self.EndModal(wx.ID_CANCEL)
+
+    # the shared cover items, on the shown row's cover
+
+    def OnCoverMenu(self):
+        url = self.shown_url
+        menu = wx.Menu()
+        shown = self.edited[url] if url in self.edited else self.datas.get(url)
+        append_cover_items(menu, shown, url in self.edited, self.DoCoverItem)
+        uikit.mark_menu_checks(menu)
+        self.Cover.PopupMenu(menu)
+        menu.Destroy()
+
+    def DoCoverItem(self, name):
+        url = self.shown_url
+        if not self or url not in self.datas:
+            return
+        data = self.datas[url]
+        idx = [k for k, c in enumerate(self.candidates) if c['image'] == url][0]
+        if name == 'Copy Cover':
+            keep_copied_cover(self.edited.get(url, data), get_cover_label(self.candidates[idx]))
+            return
+        made = None
+        if name == 'Undo Cover Change':
+            self.edits.pop(url, None)
+            self.edited.pop(url, None)
+        elif name in COVER_PRESETS:
+            edit = preset_cover(data, self.edits.get(url), COVER_PRESETS[name])
+            made = None if edit is None else (listimages.edit_cover(data, edit), edit)
+        elif name == 'Edit Cover...':
+            made = edit_cover_by_hand(self, data, self.edits.get(url))
+        if made is not None and made[0] is not None:
+            self.edited[url], self.edits[url] = made
+        self.ShowCover(idx)
+
+    def GetCoverValue(self, url):
+        # the address, or (picture, edit, edited) when edited here
+        if url in self.edited:
+            return (self.datas[url], self.edits[url], self.edited[url])
+        return url
 
     def Destroy(self):
         # cover fetching ends with it
@@ -5154,6 +5996,11 @@ class CoverDetails(wx.Window):
         self.offset = 0
         self.total = 0
         self.drag = None
+        # set by the box: told when the preview is clicked, right-clicked
+        self.on_preview = self.on_preview_menu = None
+        self.over_preview = False
+        self.Bind(wx.EVT_RIGHT_UP, self.OnRightUp)
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetPreviewHover(False))
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Bind(wx.EVT_SIZE, lambda e: (self.Scroll(self.offset), e.Skip()))
         self.Bind(wx.EVT_MOUSEWHEEL, lambda e: self.Scroll(
@@ -5176,9 +6023,33 @@ class CoverDetails(wx.Window):
         top = int((h - height) * self.offset / (self.total - h))
         return wx.Rect(w - self.SCROLL, top, self.SCROLL, height)
 
+    def SetPreviewHover(self, over):
+        if over == self.over_preview:
+            return
+        self.over_preview = over
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND if over else wx.CURSOR_ARROW))
+        self.SetToolTip(COVER_TIP if over else '')
+        self.Refresh(False)
+
+    def OnRightUp(self, event):
+        if self.on_preview_menu is not None and self.IsOverPreview(event.GetPosition()):
+            wx.CallAfter(self.on_preview_menu)
+
+    def IsOverPreview(self, point):
+        if self.preview is None or self.preview.IsOk() is False:
+            return False
+        x, y = point
+        return 0 <= x < self.preview.GetWidth() and \
+            0 <= y + self.offset < self.preview.GetHeight()
+
     def OnLeftDown(self, event):
         thumb = self.GetThumb()
-        if thumb is None or event.GetX() < thumb.x - 2:
+        off_bar = thumb is None or event.GetX() < thumb.x - 2
+        if off_bar and self.on_preview is not None and self.IsOverPreview(event.GetPosition()):
+            # after the click: the edit window is modal
+            wx.CallAfter(self.on_preview)
+            return
+        if off_bar:
             return
         if thumb.Contains(event.GetPosition()):
             self.drag = (event.GetY(), self.offset)
@@ -5195,6 +6066,9 @@ class CoverDetails(wx.Window):
 
     def OnMotion(self, event):
         thumb = self.GetThumb()
+        over = self.on_preview is not None and self.IsOverPreview(event.GetPosition())
+        if self.drag is None:
+            self.SetPreviewHover(over)
         if self.drag is None or thumb is None or not event.LeftIsDown():
             return
         y, offset = self.drag
@@ -5237,6 +6111,9 @@ class CoverDetails(wx.Window):
         y = -self.offset
         if self.preview is not None and self.preview.IsOk():
             dc.DrawBitmap(self.preview, 0, y)
+            if self.on_preview is not None:
+                draw_cover_edge(wx.GraphicsContext.Create(dc), 0, y, self.preview.GetWidth() - 1,
+                                self.preview.GetHeight() - 1, self.over_preview)
             y += self.preview.GetHeight() + DIALOG_GAP + 4
         elif self.loading:
             dc.SetPen(wx.TRANSPARENT_PEN)
@@ -5309,8 +6186,12 @@ class CoverLookUpBox(DialogBox):
         self.Cards.on_menu = self.OnCardMenu
         if self.multi:
             self.Cards.on_page = self.MoveTrack
-        # what the chosen cover is
+        # what the chosen cover is; its preview clicked to edit it
         self.Details = CoverDetails(self)
+        self.Details.on_preview = self.EditChosen
+        self.Details.on_preview_menu = self.OnPreviewMenu
+        # by address: the edit made by hand, in place of the checks
+        self.edits = dict()
         self.Note = None
         self.PageButton = Button(self, label='Open Page')
         self.PageButton.Bind(wx.EVT_BUTTON, self.OnOpenPage)
@@ -5530,6 +6411,11 @@ class CoverLookUpBox(DialogBox):
             add(f'Use for All {len(self.tracks)} Tracks', lambda: self.UseForAll(k))
             add('Clear Choice', self.ClearChoice, self.tracks[self.index]['chosen'] is not None)
         menu.AppendSeparator()
+        url = self.candidates[k]['image']
+        shown = self.GetOutput(url)[0] if url in self.data else None
+        append_cover_items(menu, shown, url in self.edits,
+                           lambda name: self.DoCoverItem(name, k))
+        menu.AppendSeparator()
         add('Open Source Page', lambda: webbrowser.open(self.candidates[k]['url']),
             bool(self.candidates[k]['url']))
         uikit.mark_menu_checks(menu)
@@ -5545,6 +6431,58 @@ class CoverLookUpBox(DialogBox):
     def ClearChoice(self):
         self.tracks[self.index]['chosen'] = None
         self.ShowTrack(self.index)
+
+    def DoCoverItem(self, name, k):
+        # on the card's picture as it will be written
+        url = self.candidates[k]['image']
+        if url not in self.data:
+            return
+        if name == 'Copy Cover':
+            keep_copied_cover(self.GetOutput(url)[0], get_cover_label(self.candidates[k]))
+            return
+        if name == 'Undo Cover Change':
+            self.KeepEdit(url, None)
+            return
+        # chosen for this track first
+        if self.Cards.selected != k:
+            self.Cards.Select(k)
+        if name in COVER_PRESETS:
+            edit = preset_cover(self.data[url], self.edits.get(url), COVER_PRESETS[name],
+                                self.GetAutos())
+            if edit is not None:
+                self.KeepEdit(url, edit)
+        elif name == 'Edit Cover...':
+            self.EditChosen()
+
+    def GetAutos(self):
+        # a new edit starts from the checks below
+        return dict(auto_angle=self.adjust['scan'], auto_contrast=self.adjust['contrast'],
+                    auto_brightness=self.adjust['brightness'], auto_color=self.adjust['color'])
+
+    def OnPreviewMenu(self):
+        chosen = self.tracks[self.index]['chosen']
+        urls = [v['image'] for v in self.candidates]
+        if chosen is not None and chosen['image'] in urls:
+            self.OnCardMenu(urls.index(chosen['image']))
+
+    def EditChosen(self):
+        chosen = self.tracks[self.index]['chosen']
+        if chosen is None or chosen['image'] not in self.data:
+            return
+        url = chosen['image']
+        edit = pick_cover_edit(self, self.data[url], self.edits.get(url), self.GetAutos())
+        if edit is not None:
+            self.KeepEdit(url, edit)
+        self.Cards.SetFocus()
+
+    def KeepEdit(self, url, edit):
+        if edit is None:
+            self.edits.pop(url, None)
+        else:
+            self.edits[url] = edit
+        self.outputs.pop(url, None)
+        self.ShowDetails()
+        self.Cards.Refresh(False)
 
     def ShowDetails(self):
         # the shown track's chosen cover: as it will be written, its release's fields
@@ -5564,7 +6502,7 @@ class CoverLookUpBox(DialogBox):
             data, size, done = self.GetOutput(url)
             ground = wx.Colour(macroboxstyle.current().UI.RAISED_BG).Get()[:3]
             preview, _ = fit_picture(data, self.DETAILS - CoverDetails.GUTTER, ground)
-            if size and ('Square' in done or 'Fix scan' in done):
+            if size and ('Square' in done or 'Fix scan' in done or 'Edited' in done):
                 cover = f'{cover} to {format_picture_size(size)}'
         self.Details.loading = url not in self.notes
         self.Details.SetPreview(preview)
@@ -5700,9 +6638,17 @@ class CoverLookUpBox(DialogBox):
             return self.outputs[url]
         data = self.data[url]
         asked = dict(self.adjust)
+        edit = self.edits.get(url)
+        if edit is not None:
+            # edited by hand: the checks left out
+            edited = listimages.edit_cover(data, edit)
+            data = data if edited is None else edited
+            asked = dict((key, False) for key in asked)
         asked['square'] = asked['square'] and (
             asked['scan'] or listimages.is_square(data) is False)
         done = [name.replace('Auto ', '') for key, name in self.ADJUSTS if asked[key]]
+        if edit is not None:
+            done.insert(0, 'Edited')
         data = listimages.adjust_cover(data, **asked)
         try:
             size = wx.Image(io.BytesIO(data)).GetSize()
@@ -5756,9 +6702,9 @@ def look_up_cover(listbox):
     look_up_cover_for(listbox, tracks, items.index(focused) if focused in items else 0)
 
 
-def look_up_cover_for(listbox, tracks, start=0):
-    '''look up covers for tracks, chosen from cards and written'''
-    frame = wx.GetTopLevelParent(listbox)
+def look_up_cover_for(listbox, tracks, start=0, use=None, parent=None):
+    '''look up covers for tracks, chosen from cards and written (or handed to use)'''
+    frame = wx.GetTopLevelParent(listbox) if parent is None else parent
     keys = dict(zip(webinfo.PREFERENCE_KEYS, GetPreferences(webinfo.PREFERENCE_KEYS)))
     # AcoustID matches have no pictures and fingerprinting is slow
     keys['acoustid_client_key'] = ''
@@ -5772,7 +6718,9 @@ def look_up_cover_for(listbox, tracks, start=0):
     SetPreference('cover_lookup_size', tuple(dialog.GetClientSize()))
     results, keep = dialog.results, dialog.keep
     dialog.Destroy()
-    if answer == wx.ID_OK and results and listbox:
+    if answer == wx.ID_OK and len(results) > 0 and use is not None:
+        use(results)
+    elif answer == wx.ID_OK and results and listbox:
         write_covers(listbox, results, keep)
 
 
@@ -5807,6 +6755,93 @@ def write_covers(listbox, results, keep=None):
     else:
         done = 'the track' if len(results) == 1 else f'{len(results)} tracks'
         radio.tell(listbox.parent, f'Cover written to {done}')
+
+
+# the cover kept by Copy Cover for Paste Cover
+copied_cover = dict(data=None, label='')
+
+
+def read_cover_of(path):
+    # the song's cover bytes, None without one or unread
+    if path is None or path == '' or audio.is_stream_path(path):
+        return None
+    try:
+        return listimages.read_cover(path)
+    except (OSError, mutagen.MutagenError):
+        return None
+
+
+def copy_cover(mainpanel, path, data=None):
+    if data is None:
+        data = read_cover_of(path)
+    if data is None or len(data) == 0:
+        radio.tell(mainpanel, 'This track has no cover', warn=True)
+        return
+    keep_copied_cover(data, os.path.basename(path), mainpanel)
+
+
+def keep_copied_cover(data, label, mainpanel=None):
+    copied_cover.update(data=data, label=label)
+    # told in the player's status line, from any window
+    if mainpanel is None:
+        mainpanel = getattr(wx.GetApp().GetTopWindow(), 'MainPanel', None)
+    if mainpanel is not None:
+        radio.tell(mainpanel, f'Cover copied: {label}')
+
+
+def get_cover_label(candidate):
+    # a looked up cover's name for Paste Cover's question
+    words = [v for v in (candidate['artist'], candidate['album'] or candidate['title']) if v]
+    return ' - '.join(words) if len(words) > 0 else 'Look Up'
+
+
+def has_copied_cover():
+    return copied_cover['data'] is not None
+
+
+class PasteCoverBox(ConfirmDialogBox):
+
+    # the copied cover over the tracks' own, or not
+    def __init__(self, parent, count, answer):
+        ConfirmDialogBox.__init__(self, parent)
+        self.answer = answer
+        self.SetTitle('Paste Cover')
+        self.ApplyButton.SetLabelText('Paste')
+        self.Message.Hide()
+        tracks = 'this track' if count == 1 else f'{int(count)} tracks'
+        self.Text = wx.StaticText(self, label=f'Put the cover of {copied_cover["label"]} in '
+                                  f'{tracks}?\nTheir front covers are replaced.',
+                                  style=wx.ALIGN_CENTER_HORIZONTAL | wx.ST_NO_AUTORESIZE)
+        self.Text.SetForegroundColour(macroboxstyle.current().UI.TEXT)
+        self.Text.SetFont(uikit.get_font(uikit.BODY))
+        self.Text.Wrap(340 - DIALOG_PAD * 2)
+        self.text_height = max(40, self.Text.GetBestSize().height)
+        self.SetClientSize((340, DIALOG_PAD * 2 + self.text_height + self.GetFooterHeight()))
+        self.OnSize(None)
+
+    def OnSize(self, event):
+        ConfirmDialogBox.OnSize(self, event)
+        if getattr(self, 'Text', None) is not None:
+            width, height = self.GetClientSize()
+            self.Text.SetRect((DIALOG_PAD, DIALOG_PAD, width - DIALOG_PAD * 2, self.text_height))
+
+    def OnApply(self, event):
+        self.answer.append(True)
+        self.OnClose(event)
+
+
+def paste_cover(listbox, tracks):
+    '''the copied cover written to tracks, each (path, mdx), asked first'''
+    data = copied_cover['data']
+    tracks = [(path, mdx) for path, mdx in tracks
+              if path != '' and audio.is_stream_path(path) is False]
+    if data is None or len(tracks) == 0:
+        return
+    answer = []
+    # centred over the player by DialogBox.ShowModal
+    PasteCoverBox(wx.GetTopLevelParent(listbox), len(tracks), answer).ShowModal()
+    if answer != []:
+        write_covers(listbox, [(path, mdx, data) for path, mdx in tracks])
 
 
 class ListBoxPopupHeader(wx.Menu):
@@ -5992,6 +7027,12 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
             add(2, 'Edit Track Info...')
             # cover only, chosen from cards
             add_item('Look Up Cover...', lambda e: look_up_cover(self.parent.parent))
+            # one song's cover kept, then put in the selected songs
+            if single:
+                add_item('Copy Cover', self.OnCopyCover)
+                self.MenuItems[-1].Enable(read_cover_of(self.GetSelectedPaths()[0]) is not None)
+            add_item('Paste Cover', self.OnPasteCover)
+            self.MenuItems[-1].Enable(has_copied_cover())
             add(4, 'Analyze')
             self.Append(8, 'Convert Tempo Range', self.itemConvertTempoRange)
             self.Append(9, 'Convert Key Format', self.itemConvertKeyFormat)
@@ -6033,6 +7074,18 @@ class ListBoxPopupItem(wx.Menu, OpenWebLinkHandler):
 
     def OnToggleFavoriteTracks(self, event):
         toggle_favorite_tracks(self.parent.parent, self.GetSelectedPaths())
+
+    def OnCopyCover(self, event):
+        paths = self.GetSelectedPaths()
+        if len(paths) == 1:
+            copy_cover(self.parent.parent.parent, paths[0])
+
+    def OnPasteCover(self, event):
+        listbox = self.parent.parent
+        value = listbox.GetItemValueByColumnKey
+        tracks = [(value(i, 'path'), value(i, 'mdx')) for i in sorted(listbox.GetSelectedItems())]
+        # after the menu: the question is modal
+        wx.CallAfter(paste_cover, listbox, tracks)
 
     def OnAddFavorites(self, event):
         radio.add_favorites(self.parent.parent.parent, self.GetSelectedStations())

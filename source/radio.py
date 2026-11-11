@@ -31,7 +31,7 @@ from utilities import get_user_docapp_path
 
 
 # internet radio as playlist rows: a station's path is its stream address
-USER_AGENT = 'PyMusicPlayer/1.5.0 +https://github.com/peppy0510/PyMusicPlayer'
+USER_AGENT = 'PyMusicPlayer/1.6.0 +https://github.com/peppy0510/PyMusicPlayer'
 DIRECTORY = 'https://all.api.radio-browser.info/json'
 TIMEOUT = 15
 LISTS_SECONDS = 60 * 60 * 24

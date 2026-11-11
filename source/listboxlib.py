@@ -65,11 +65,19 @@ class ListBoxListDnD(wx.FileDropTarget):
         # the folder's tab takes no drop
         if self.parent.parent.GetListTitle() == library.FOLDER_TITLE:
             return wx.DragNone
+        # rows are not moved within a filtered view
+        if self.itemDrag and self.parent.parent.IsFiltered():
+            return wx.DragNone
         return d
 
     def OnDropFiles(self, x, y, inpaths):
         self.onClient = False
-        if self.parent.parent.IsFilteredAll():
+        if self.parent.parent.IsFiltered():
+            # files put at the end of the whole list, the view filtered again
+            self.importing = False
+            if self.itemDrag is False and \
+                    self.parent.parent.GetListTitle() != library.FOLDER_TITLE:
+                self.DropFromOutside(inpaths)
             return 0
         fileImport = self.importing
         itemDrag = self.itemDrag
@@ -194,6 +202,12 @@ class ListBoxListDnD(wx.FileDropTarget):
             imported_count = 0
             already_have_count = 0
 
+            if self.parent.parent.IsFiltered(selectedList):
+                # rows shown are the filter's: the new ones go to the whole list
+                imported_count, already_have_count = self.ImportUnderFilter(
+                    made, selectedList, listId, permit_duplicated)
+                made = []
+
             if isOrdered and insertItemIdx != -1:
                 isInsertable = True
                 order = insertItemIdx + 1
@@ -281,6 +295,46 @@ class ListBoxListDnD(wx.FileDropTarget):
             if isLocked:
                 threadListLock.release()
                 self.parent.parent.SetListUnLock(selectedList)
+
+    def ImportUnderFilter(self, made, selectedList, listId, permit_duplicated):
+        # rows for a filtered list, added on the window's thread: (imported, had)
+        listbox = self.parent.parent
+        pathIdx = listbox.GetColumnKeyToIdx('path', selectedList)
+        orderIdx = listbox.GetColumnKeyToIdx('order', selectedList)
+        # the filter may be turned off meanwhile
+        cache = listbox.innerList[selectedList].filterCache
+        whole = [] if cache is None else list(cache)
+        have = set(v[pathIdx] for v in whole)
+        order = max([v[orderIdx] for v in whole] + [0]) + 1
+        rows = []
+        for path, item in made:
+            if permit_duplicated is False and path in have:
+                continue
+            item = list(item)
+            item[orderIdx] = order
+            order += 1
+            rows.append(tuple(item))
+        if len(rows) > 0:
+            # the search row turns the filter on and off on the window's thread
+            wx.CallAfter(self.AddUnderFilter, listId, rows)
+        return len(rows), len(made) - len(rows)
+
+    def AddUnderFilter(self, listId, rows):
+        listbox = self.parent.parent
+        found = [i for i, v in enumerate(listbox.innerList) if v.Id == listId]
+        if len(found) == 0:
+            return
+        selectedList = found[0]
+        inner = listbox.innerList[selectedList]
+        if listbox.IsFiltered(selectedList):
+            inner.filterCache = inner.filterCache + rows
+            key = getattr(listbox.parent.ListSearch, 'query_columnKey', 'filename')
+            query = '' if inner.filterQuery is None else inner.filterQuery
+            listbox.FilterItems(key, query, selectedList=selectedList)
+        else:
+            inner.items = inner.items + rows
+        listbox.RefreshSortedColumn(selectedList)
+        listbox.reInitBuffer = True
 
     def SearchPatternIncludeSub(self, filepath, pattern='*', visited=None):
         # filepath = unicode(filepath)
@@ -692,7 +746,7 @@ class ListControl():
         self.innerList[selectedList].filterCache = None
         self.innerList[selectedList].filterQuery = None
         self.InitSelectedItems(selectedList)
-        self.RefreshSortedColumn()
+        self.RefreshSortedColumn(selectedList)
 
     def RefreshSortedColumn(self, selectedList=None):
         if selectedList is None:
