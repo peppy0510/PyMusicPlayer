@@ -2308,25 +2308,40 @@ class PlayBoxApic(RectBox):
 
     def CATCH_EVT_GLOBAL(self, event):
         self.HandleApicChange()
-        self.HandlePreview()
+        self.HandlePreview(event)
         self.parent.HandleTrackEditor(event, self)
         self.parent.HandleDragOut(self, event, 'cover')
         # self.HandleSizeChange()
 
-    # the cover large beside it after a moment on it
+    # the cover large beside it on a click on it, not on the way past; shut by a
+    # click again, the mouse off it or Esc (a click on the preview would fall
+    # through to the waves under it)
     PREVIEW = 360
-    PREVIEW_AFTER_MS = 250
 
-    def HandlePreview(self):
-        hovered = self.onClient and self.IsShown() and self.apic is not None\
-            and getattr(self, 'apic_image', None) is not None
-        if hovered == getattr(self, 'previewing', False):
-            return
-        self.previewing = hovered
-        if hovered:
-            wx.CallLater(self.PREVIEW_AFTER_MS, self.ShowPreview)
-        else:
+    def HandlePreview(self, event):
+        if getattr(self, 'previewing', False) and (
+                self.onClient is False or self.IsShown() is False
+                or wx.GetKeyState(wx.WXK_ESCAPE)):
             self.HidePreview()
+            return
+        if event.LeftDClick:
+            # the tag editor's: no preview, nor on the release after it
+            self.HidePreview()
+            self.preview_skip = True
+            return
+        if event.LeftUp is False:
+            return
+        if getattr(self, 'preview_skip', False):
+            self.preview_skip = False
+            return
+        # pressed and let go on it, not dragged
+        if event.rectIdx is None or event.down.rectIdx is None or event.drag.x is not None:
+            return
+        if getattr(self, 'previewing', False):
+            self.HidePreview()
+        elif self.apic is not None and getattr(self, 'apic_image', None) is not None:
+            self.previewing = True
+            self.ShowPreview()
 
     def ShowPreview(self):
         # the file's own proportions, not the box's square
