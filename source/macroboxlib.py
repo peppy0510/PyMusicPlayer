@@ -198,7 +198,7 @@ def AddMissingColumns(innerList):
 
 
 def RenewMDX(innerList):
-    # rows saved with the key of before (path and creation time): the path's now
+    # old key (path and creation time) to the path key
     keys = [v.key for v in innerList.columns]
     if 'mdx' not in keys or 'path' not in keys:
         return
@@ -206,7 +206,7 @@ def RenewMDX(innerList):
     for rows in (getattr(innerList, 'items', None), getattr(innerList, 'filterCache', None)):
         for i in range(len(rows or [])):
             path = rows[i][pathIdx]
-            if not path or audio.is_stream_path(path):
+            if path is None or path == '' or audio.is_stream_path(path):
                 continue
             mdx = path_mdx(path)
             if rows[i][mdxIdx] != mdx:
@@ -701,12 +701,11 @@ class MFEATS_Scheduler(ThreadTimer):
         self.model = None
         self.model_lock = threading.Lock()
         self.model_address = mfeats.get_deeprhythm_address(os.getpid())
-        # new and changed files told by their bytes on a thread of their own
+        # file checks thread
         mfeats.start_checks(lambda path: wx.CallAfter(self.OnFileKnown, path))
         self.Start(self.interval)
 
     def OnFileKnown(self, path):
-        # its sound known on the checks' thread: its rows shown with the analysis
         if self.stop or not self.parent:
             return
         self.UpdateItemsValue(path)
@@ -887,7 +886,7 @@ class MFEATS_Scheduler(ThreadTimer):
 
     def IsAnalysisDone(self, path):
         # older version: analyzed again; analyzed, its grid not: the grid
-        # by mdx, as the list: a new file at an old path is not the old row
+        # by mdx: a new file at an old path is not the old row
         resp = mfeats.getby_key_value('mdx', audio.makemdx(path), waveform=False)
         if resp is None or resp.version != mfeats.MFEATS_VERSION:
             return False
@@ -924,7 +923,7 @@ class MFEATS_Scheduler(ThreadTimer):
                 alive = False
             # its song done, or the worker died with it (the song is left)
             if this.path is not None and (done or alive is False):
-                # a sound known already ('known') is no measure of an analysis
+                # a 'known' reply is not an analysis time
                 if done and isinstance(reply, tuple) is False:
                     self.job_time += (now - this.since - self.job_time) * AHEAD_JOB_WEIGHT
                 path, this.path, this.idle = (this.path, None, now)
@@ -1061,7 +1060,7 @@ class MFEATS_Scheduler(ThreadTimer):
         mdx = audio.makemdx(path)
         if mdx is None:
             return
-        # the other files of its sound too: one analysis for them all
+        # every file of the same sound
         try:
             same = mfeats.get_sound_files(mdx)
         except sqlite3.Error:

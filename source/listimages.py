@@ -620,7 +620,6 @@ def get_first_box(picture, square=True):
 
 def write_cover(path, data):
     '''put the picture in the tags as the front cover'''
-    # its tags only: still known as it is (mfeats)
     with mfeats.tags_written(path):
         put_cover(path, data)
 

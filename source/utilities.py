@@ -223,8 +223,7 @@ def get_most_common_element(values):
 
 
 def makemdx(path, created_time=None):
-    '''the file's key: its path alone, None when no file (its sound: mfeats)'''
-    # created_time: from a listing, the file known to be there
+    # created_time given: the file exists
     if created_time is None and os.path.exists(path) is False:
         return None
     return path_mdx(path)
@@ -235,9 +234,13 @@ def path_mdx(path):
 
 
 def legacy_mdx(path, created_time):
-    # the key of rows made before the file table: path and creation time
+    # the key before the file table: path and creation time
+    # path = os.path.abspath(path).encode(sys.getfilesystemencoding())
     value = ''.join([os.path.abspath(path), str(created_time)])
-    return string2md5(value.encode(sys.getfilesystemencoding()))
+    value = value.encode(sys.getfilesystemencoding())
+    # mdx = string2md5(value)
+    # return mdx.encode('utf-8')
+    return string2md5(value)
 
 
 def file2md5(filename):

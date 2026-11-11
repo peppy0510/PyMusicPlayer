@@ -966,8 +966,7 @@ def mfeats_worker(conn, model_address=None):
             except (EOFError, OSError):
                 return
             continue
-        # its sound known (another file's, or before it changed): no analysis
-        # again; unreadable here: mfeats_single keeps it as an error
+        # its sound analyzed already: not again; unreadable: kept as an error
         try:
             know_file(path)
         except (OSError, sqlite3.Error):
@@ -1947,7 +1946,7 @@ def create_mfeats_index(table_name='mfeats', db_name=None):
         db_name = MFEATS_DB
     conn = sqlite3.connect(db_name)
     conn.execute(f'CREATE INDEX IF NOT EXISTS {table_name}_path ON {table_name} (path)')
-    # and by length, for the same sound analyzed before its sound was kept
+    # and by length, for old rows matched by duration
     conn.execute(f'CREATE INDEX IF NOT EXISTS {table_name}_duration ON {table_name} (duration)')
     conn.commit()
     conn.close()
@@ -1955,7 +1954,7 @@ def create_mfeats_index(table_name='mfeats', db_name=None):
 
 def getby_key_value(key, value, table_name='mfeats', db_name=None, waveform=True):
     # waveform=False: the row without its waveform blob
-    # a song's analysis by its file's mdx or path: its sound's, the file as kept
+    # by a file's mdx or path, through the file table
     if table_name == 'mfeats' and db_name is None and key in ('mdx', 'path'):
         if value is None:
             return None
@@ -1979,22 +1978,31 @@ def getby_key_value(key, value, table_name='mfeats', db_name=None, waveform=True
 
 
 def read_mfeats_row(conn, table_name, key, value, waveform):
+    # query = f'''SELECT * FROM {table_name} WHERE {key}="{value}"'''
     fields = [field_key for field_key, _ in MFEATS_DEFINITION]
     if waveform is False:
         fields = ["'' AS waveform" if v == 'waveform' else v for v in fields]
     query = f'''SELECT {','.join(fields)} FROM {table_name} WHERE {key}=?'''
+    # sqlite.connect(':memory:', check_same_thread = False)
     fetchs = conn.execute(query, (value,)).fetchall()
     if len(fetchs) == 0:
         return None
     field_keys = [field_key for field_key, _ in MFEATS_DEFINITION]
     data = {k: v for k, v in zip(field_keys, fetchs[0])}
+    # exec(f'for {",".join(field_keys)} in fetchs: break')
+
     blob_field_keys = [field_key for field_key,
                        field_type in MFEATS_DEFINITION if field_type == 'BLOB']
+    # data = {}
     for field_key in blob_field_keys:
         if field_key == 'waveform' and waveform is False:
             continue
         data.update(**{field_key: decompress_object(data[field_key])})
+        # exec(f'{field_key} = decompress_object({field_key})')
+
     mfeats_data = MFEATS(**data)
+    # kwrds = ['='.join(v) for v in zip(field_keys, field_keys)]
+    # mfeats_data = eval('MFEATS(%s)' % (','.join(kwrds)))
     mfeats_data.key = fetchs[0][7]
     return mfeats_data
 
@@ -2022,7 +2030,7 @@ def read_mfeats_row(conn, table_name, key, value, waveform):
 
 
 def update_many_key_values(where, key_values, table_name='mfeats', db_name=None):
-    # by a file's mdx: its sound's analysis, every copy's
+    # by a file's mdx: its shared analysis
     if table_name == 'mfeats' and db_name is None and where[0] == 'mdx':
         analysis = find_analysis(where[1])
         if analysis is None:
@@ -2110,7 +2118,7 @@ def read_grid_row(conn, sound):
 
 
 def get_grid(mdx):
-    '''the song's grid row (bpm 0: none found), or None; by its file's mdx'''
+    '''the song's grid row (bpm 0: none found), or None'''
     conn = connect_files()
     try:
         kept = get_fresh(conn, mdx)
@@ -2123,7 +2131,7 @@ def get_grid(mdx):
 
 
 def get_done_mdx():
-    '''files whose songs have nothing left to analyze'''
+    '''songs with nothing left to analyze'''
     conn = connect_files()
     try:
         rows = conn.execute(
@@ -2137,7 +2145,7 @@ def get_done_mdx():
 
 
 def get_analysis_versions():
-    '''{mdx: (version, error, grid version or None)} of every file analyzed'''
+    '''{mdx: (version, error, grid version or None)} of every song'''
     conn = connect_files()
     try:
         rows = conn.execute(
@@ -2150,7 +2158,6 @@ def get_analysis_versions():
 
 
 def get_grid_tempi():
-    '''{mdx: grid tempo} of every file with a current grid'''
     conn = connect_files()
     try:
         rows = conn.execute(
@@ -2167,7 +2174,6 @@ def is_grid_current(mdx):
 
 
 def insert_grid(analysis, grid):
-    # by the analysis id (know_file)
     conn = connect_files()
     try:
         old = read_grid_row(conn, analysis)
@@ -2246,29 +2252,17 @@ def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
         conn.close()
 
 
-# an analysis and its grid are the sound's, not the file's: copies, moved and
-# tag-edited files share one. The file table keeps each file's path, size and
-# write time with its sound and the id of its analysis (the analysis rows keep
-# their keys: a new key would write each waveform again), so a file not changed
-# since is known without reading it; a changed one is read again. The sound is
-# told by pieces of its bytes past the tags (other formats: decoded), cheapest
-# first:
-#   size and write time as kept: the kept analysis
-#   no kept sound of the same byte count: a new sound (the analyzer reads it)
-#   the pieces: the sound, and an analysis another file of it has
+# analysis and grid are the sound's; the file table maps each file to one
 FILE_TABLE = 'mfeats_file'
 FILE_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('path', 'TEXT'), ('size', 'INTEGER'),
                    ('mtime', 'INTEGER'), ('sound', 'TEXT'), ('region', 'TEXT'),
                    ('version', 'TEXT'), ('analysis', 'TEXT'))
-# version: SOUND_VERSION, a sound read; FILE_OWN, none could be read (the file
-# its own sound); FILE_NEW, no sound of its byte count kept (the analyzer reads
-# it); FILE_LEGACY, a row from before the table under its old key, its sound
-# read later (size none: told by its old key till then)
+# version: SOUND_VERSION read, FILE_OWN unreadable, FILE_NEW unread, FILE_LEGACY old key
 SOUND_VERSION = '2.0.0'
 FILE_OWN = 'file'
 FILE_NEW = 'new'
 FILE_LEGACY = ''
-# the sound table before this one: dropped
+# obsolete table, dropped
 SOUND_TABLE = 'mfeats_sound'
 # pieces evenly over the sound; a disk reads 4 KB anyway
 SOUND_PIECES = 8
@@ -2276,22 +2270,20 @@ SOUND_PIECE_SIZE = 4096
 # decoded: a second at each of these shares of the song
 SOUND_SPOTS = (0.1, 0.35, 0.6, 0.85)
 SOUND_SECONDS = 1.0
-# rows from before the file table: told by their length, their files read then
+# old rows matched by duration
 SOUND_DURATION_GAP = 0.001
 SOUND_UNKEPT_MOST = 8
 # an ogg page found within this past a piece's place
 OGG_PAGE_MOST = 65536 + 27 + 255
-# databases whose file and grid tables are checked
+# databases set up
 FILES_READY = set()
-# the app's thread reading changed and new files: told(path) when one is known anew
+# checks thread state
 CHECKS = Struct(queue=None, pending=set(), lock=threading.Lock(), told=None)
-# rows from before the file table read when the checks have none for this
-# long, a few at a time
+# old rows read when idle, a bunch at a time
 LEGACY_IDLE = 0.5
 LEGACY_BUNCH = 32
-# between the bunches: the app's own reads let in
+# pause between bunches for the app's reads
 LEGACY_PAUSE = 0.02
-# files checked together, one commit for them
 CHECK_BUNCH = 64
 
 
@@ -2317,6 +2309,9 @@ def trim_tail_tags(f, start, end):
         elif tail[-32:-24] == b'APETAGEX':
             size = struct.unpack('<I', tail[-20:-16])[0]
             flags = struct.unpack('<I', tail[-12:-8])[0]
+            # its size holds its footer: less is a broken tag (it would loop)
+            if size < 32:
+                return end
             end -= size + (32 if flags & 0x80000000 else 0)
         else:
             return end
@@ -2420,8 +2415,7 @@ def read_sound_piece(f, at, end, ogg):
 
 
 def get_sound_region(path):
-    '''(region, start, end) of the sound's bytes past the tags, or None (a format not
-    read so); region: the format and byte count, the same for the same sound'''
+    # (region, start, end) past the tags, or None
     ext = os.path.splitext(path)[1][1:].lower()
     get_sound = SOUND_BYTES.get(ext)
     if get_sound is None:
@@ -2437,7 +2431,7 @@ def get_sound_region(path):
 
 
 def read_sound_bytes(path, found=None):
-    '''(region, sha256 of the sound's bytes in pieces), or None (a format not read so)'''
+    # (region, sha256)
     if found is None:
         found = get_sound_region(path)
     if found is None:
@@ -2463,7 +2457,6 @@ def open_sound(path):
 
 
 def read_sound_decoded(path):
-    '''sha256 of a second of the decoded sound at a few places, or None'''
     hstream = open_sound(path)
     if hstream == 0:
         return None
@@ -2489,7 +2482,6 @@ def read_sound_decoded(path):
 
 
 def read_sound(path):
-    '''(region or None, sound), or None; decoded when its bytes are not read so'''
     read = read_sound_bytes(path)
     if read is not None:
         return read
@@ -2515,16 +2507,14 @@ def has_table(conn, name):
 
 
 def connect_files():
-    '''a connection, the file and grid tables made; rows from before the file
-    table linked under their old keys, once'''
     if MFEATS_DB in FILES_READY:
         return sqlite3.connect(MFEATS_DB)
     conn = connect_grid()
     # the app and its analyzers at once: one makes it, the others wait
     conn.isolation_level = None
     conn.execute('PRAGMA busy_timeout = 60000')
-    conn.execute('BEGIN IMMEDIATE')
     try:
+        conn.execute('BEGIN IMMEDIATE')
         if has_table(conn, FILE_TABLE) is False:
             conn.execute(f'CREATE TABLE {FILE_TABLE} '
                          f'({",".join([" ".join(field) for field in FILE_DEFINITION])})')
@@ -2533,8 +2523,9 @@ def connect_files():
             link_legacy_rows(conn)
             conn.execute(f'DROP TABLE IF EXISTS {SOUND_TABLE}')
         conn.execute('COMMIT')
-    except BaseException:
-        conn.execute('ROLLBACK')
+    except Exception:
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
         conn.close()
         raise
     conn.isolation_level = ''
@@ -2544,14 +2535,11 @@ def connect_files():
 
 
 def link_legacy_rows(conn):
-    '''each path's latest row from before the file table linked by its old key;
-    the file told by that key when next seen, its sound read later'''
     # no file read here: a drive away would hold the app
     if has_table(conn, 'mfeats') is False:
         return
     latest = dict()
-    # by rowid, not date: date lies past the waveform, the whole table read for it;
-    # a song analyzed again was put anew, under a later rowid
+    # by rowid: reading date would read every waveform blob
     for mdx, path in conn.execute('SELECT mdx, path FROM mfeats ORDER BY rowid'):
         if path:
             latest[path_mdx(path)] = (path, mdx)
@@ -2561,8 +2549,7 @@ def link_legacy_rows(conn):
 
 
 def get_fresh(conn, mdx, ask=True):
-    '''Struct(path, sound, version, analysis) of the file as kept, or None: not
-    kept, or changed since (then read again on the checks' thread when ask)'''
+    # Struct of the kept file, or None (not kept or changed)
     if mdx is None:
         return None
     row = conn.execute(f'SELECT path, size, mtime, sound, version, analysis FROM {FILE_TABLE} '
@@ -2574,11 +2561,10 @@ def get_fresh(conn, mdx, ask=True):
     try:
         st = os.stat(path)
     except OSError:
-        # not there now (a drive away): nothing to play, its analysis still shown
+        # missing (a drive away): its analysis kept
         return kept
     if size is None:
-        # linked by its old key: the same file while its path and creation time
-        # are, till its sound is read (nothing written here: a commit a row)
+        # old key: the same file while path and creation time are
         if legacy_mdx(path, st[stat.ST_CTIME]) == analysis:
             return kept
     elif st.st_size == size and st.st_mtime_ns == mtime:
@@ -2615,7 +2601,6 @@ def has_region(conn, region):
 
 
 def find_legacy(conn, path, st):
-    '''the row from before the file table made of this very file, not linked, or None'''
     old = legacy_mdx(path, st[stat.ST_CTIME])
     row = conn.execute(f'SELECT 1 FROM mfeats WHERE mdx = ? AND path = ? AND NOT EXISTS '
                        f'(SELECT 1 FROM {FILE_TABLE} WHERE analysis = ?)',
@@ -2638,7 +2623,6 @@ def get_analysis_rank(conn, analysis):
 
 
 def get_sound_analysis(conn, sound, mdx):
-    '''the analysis another file of this sound has, the best of them, or None'''
     found = set(row[0] for row in conn.execute(
         f'SELECT analysis FROM {FILE_TABLE} WHERE sound = ? AND version = ? AND mdx != ? '
         'AND analysis IS NOT NULL', (sound, SOUND_VERSION, mdx)))
@@ -2649,8 +2633,7 @@ def get_sound_analysis(conn, sound, mdx):
 
 
 def share_analysis(conn, own, other):
-    '''two analyses of one sound: the better kept, for every file of it, the
-    other's rows dropped; the one kept (either, when one is none)'''
+    # the better of two analyses kept for every file; returns it
     if own is None or own == other:
         return other
     if other is None or has_analysis(conn, other) is False:
@@ -2666,8 +2649,7 @@ def share_analysis(conn, own, other):
 
 
 def read_legacy_sound(conn, mdx, read=read_sound_bytes):
-    # (kept, its stat, (region, sound)) of a file linked from before the file
-    # table, or None (not there, changed, or not read so); nothing written
+    # (kept, stat, (region, sound)) of a legacy file, or None
     kept = get_fresh(conn, mdx, ask=False)
     if kept is None or kept.version != FILE_LEGACY:
         return None
@@ -2680,7 +2662,7 @@ def read_legacy_sound(conn, mdx, read=read_sound_bytes):
 
 
 def keep_legacy_sound(conn, kept, st, found):
-    # its sound kept with its analysis, shared with the same sound's (not committed)
+    # not committed
     region, sound = found
     analysis = share_analysis(conn, kept.analysis, get_sound_analysis(
         conn, sound, path_mdx(kept.path)))
@@ -2689,8 +2671,6 @@ def keep_legacy_sound(conn, kept, st, found):
 
 
 def find_unkept(conn, path, sound):
-    '''rows from before the file table of this length: their files read now; the
-    analysis of the same sound, or None'''
     duration = get_sound_duration(path)
     if duration is None:
         return None
@@ -2710,9 +2690,7 @@ def find_unkept(conn, path, sound):
 
 
 def know_file(path):
-    '''the id of the file's analysis (its sound's): as kept while the file is,
-    else its sound read (bytes, or decoded) and kept; the file its own when none
-    can be read. OSError: no file'''
+    # analysis id of the file's sound; OSError: no file
     mdx = path_mdx(path)
     conn = connect_files()
     try:
@@ -2720,8 +2698,10 @@ def know_file(path):
         if kept is not None and kept.version in (SOUND_VERSION, FILE_OWN):
             if kept.analysis is not None:
                 return kept.analysis
-            # its sound read before any analysis of it: one now, or its own to come
-            analysis = get_sound_analysis(conn, kept.sound, mdx) or kept.sound
+            # sound read, no analysis yet: share one or its own
+            analysis = get_sound_analysis(conn, kept.sound, mdx)
+            if analysis is None:
+                analysis = kept.sound
             conn.execute(f'UPDATE {FILE_TABLE} SET analysis = ? WHERE mdx = ?', (analysis, mdx))
             conn.commit()
             return analysis
@@ -2732,14 +2712,16 @@ def know_file(path):
             legacy = kept.analysis if kept.version == FILE_LEGACY else None
         read = read_sound(path)
         if read is None:
-            analysis = legacy or mdx
+            analysis = mdx if legacy is None else legacy
             link_file(conn, path, None, None, FILE_OWN, analysis, st)
         else:
             region, sound = read
             other = get_sound_analysis(conn, sound, mdx)
             if other is None and legacy is None:
                 other = find_unkept(conn, path, sound)
-            analysis = share_analysis(conn, legacy, other) or sound
+            analysis = share_analysis(conn, legacy, other)
+            if analysis is None:
+                analysis = sound
             link_file(conn, path, sound, region, SOUND_VERSION, analysis, st)
         conn.commit()
         return analysis
@@ -2748,8 +2730,6 @@ def know_file(path):
 
 
 def check_paths(paths):
-    '''new or changed files told by their bytes, on the checks' thread (never
-    decoded: the analyzer does it), kept at once; those whose analyses are known'''
     conn = connect_files()
     try:
         known = []
@@ -2760,7 +2740,7 @@ def check_paths(paths):
             except OSError:
                 # gone meanwhile
                 pass
-        # one commit for them all: a commit, not the reading, is most of a file's time
+        # one commit for the bunch
         conn.commit()
     finally:
         conn.close()
@@ -2783,7 +2763,7 @@ def check_file(conn, path):
         read = read_sound_bytes(path, found)
     if read is None:
         # kept as seen: not checked again till it changes
-        link_file(conn, path, None, found and found[0], FILE_NEW, None, st)
+        link_file(conn, path, None, None if found is None else found[0], FILE_NEW, None, st)
         return False
     analysis = get_sound_analysis(conn, read[1], mdx)
     link_file(conn, path, read[1], read[0], SOUND_VERSION, analysis, st)
@@ -2807,8 +2787,6 @@ def check_files(paths):
 
 
 def start_checks(told=None):
-    '''the checks' thread, in the app: new and changed files read there, and when
-    idle the rows from before the file table; told(path) there on an analysis known'''
     if CHECKS.queue is not None:
         return
     CHECKS.told = told
@@ -2823,7 +2801,7 @@ def run_checks():
         try:
             path = CHECKS.queue.get(timeout=wait)
         except Empty:
-            # idle: the old rows read a bunch at a time, on till something is asked
+            # idle: old rows a bunch at a time
             if read_next_legacy(legacy):
                 wait = LEGACY_PAUSE
                 continue
@@ -2847,7 +2825,6 @@ def run_checks():
 
 
 def read_next_legacy(legacy, most=LEGACY_BUNCH):
-    '''a few rows from before the file table read; False when none is left'''
     try:
         conn = connect_files()
     except sqlite3.Error:
@@ -2863,7 +2840,7 @@ def read_next_legacy(legacy, most=LEGACY_BUNCH):
             return False
         bunch, legacy.waiting = legacy.waiting[:most], legacy.waiting[most:]
         legacy.tried.update(bunch)
-        # read first, written after: the database held only to write them
+        # read first: the database held only to write
         found = [read_legacy_sound(conn, mdx) for mdx in bunch]
         for each in found:
             if each is not None:
@@ -2878,7 +2855,6 @@ def read_next_legacy(legacy, most=LEGACY_BUNCH):
 
 @contextlib.contextmanager
 def tags_written(path):
-    '''the file's tags written in here, its sound not: it stays known, not read'''
     try:
         conn = connect_files()
         try:
@@ -2911,7 +2887,6 @@ def keep_file_stat(path):
 
 
 def get_sound_files(mdx):
-    '''the mdx of every file sharing this file's analysis, itself first'''
     conn = connect_files()
     try:
         rows = conn.execute(
@@ -2923,9 +2898,19 @@ def get_sound_files(mdx):
 
 
 def move_analysis(old_mdx, mdx, path):
-    '''a renamed file under its new name; its analysis stays as it is'''
     conn = connect_files()
     try:
+        # an old key unchecked yet: checked by the old path, its creation time kept
+        row = conn.execute(f'SELECT path, analysis FROM {FILE_TABLE} WHERE mdx = ? '
+                           'AND size IS NULL', (old_mdx,)).fetchone()
+        if row is not None:
+            try:
+                st = os.stat(path)
+            except OSError:
+                st = None
+            if st is not None and legacy_mdx(row[0], st[stat.ST_CTIME]) == row[1]:
+                conn.execute(f'UPDATE {FILE_TABLE} SET size = ?, mtime = ? WHERE mdx = ?',
+                             (st.st_size, st.st_mtime_ns, old_mdx))
         conn.execute(f'UPDATE OR REPLACE {FILE_TABLE} SET mdx = ?, path = ? WHERE mdx = ?',
                      (mdx, path, old_mdx))
         conn.commit()
@@ -2948,12 +2933,12 @@ def analyze_grid_into_db(path, tempo, highlight):
 
 def insert_mfeats(mfeats_data, table_name='mfeats', db_name=None):
     # tic = time.time()
-    # a file's analysis: kept as its sound's
+    # kept under its sound's analysis
     if table_name == 'mfeats' and db_name is None:
         try:
             analysis = know_file(mfeats_data.path)
         except OSError:
-            # its file gone meanwhile: nothing to keep it by
+            # file gone
             return
         mfeats_data = MFEATS(**vars(mfeats_data))
         mfeats_data.mdx = analysis

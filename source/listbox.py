@@ -1319,9 +1319,9 @@ class ListBoxList(RectBox):
             self.DirectDraw()
 
     def IsOwnPlace(self, insert):
-        # dragged rows in one block: before it, in it or right after it moves nothing
+        # one block: before, in or right after it
         rows = sorted(self.parent.GetSelectedItems())
-        if not rows or rows[-1] - rows[0] + 1 != len(rows):
+        if len(rows) == 0 or rows[-1] - rows[0] + 1 != len(rows):
             return False
         return rows[0] <= insert <= rows[-1] + 1
 
@@ -1348,7 +1348,6 @@ class ListBoxList(RectBox):
         isUpward = event.Y < 0 + row_size * 0.5
         isDownward = event.Y > 0 + height - row_size * 0.5
         insert = event.insertItemIdx
-        # the list's own rows put back where they are: no line, nothing moves
         if self.FileDrop.itemDrag and self.IsOwnPlace(insert):
             insert = None
         self.FileDrop.insertItemIdx = insert
@@ -4299,7 +4298,6 @@ class ItemEditBox(DialogBox):
         path = self.parent.parent.GetItemValueByColumnKey(itemIdx, 'path')
         try:
             if os.stat(path).st_mtime_ns != before.st_mtime_ns:
-                # its dates only: still known as it is (mfeats)
                 with mfeats.tags_written(path):
                     os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         except OSError as error:
@@ -6750,7 +6748,6 @@ def write_covers(listbox, results, keep=None):
             playbox.OnPause()
         try:
             before = os.stat(path)
-            # its tags and dates only: still known as it is (mfeats)
             with mfeats.tags_written(path):
                 listimages.write_cover(path, data)
                 if keep:

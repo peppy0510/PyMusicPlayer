@@ -1046,7 +1046,6 @@ class ListBoxTabList(RectBox):
             for row in self.rows:
                 if self.GetRowKey(row) == self.hover_key:
                     ground = hover
-                    # a pressed button deeper while the press is over it
                     if self.hover_key == self.pressed_key:
                         ground = wx.Colour(*[int(h + (f - h) * 0.1) for h, f in
                                              zip(hover.Get()[:3], fg.Get()[:3])])
@@ -1434,7 +1433,7 @@ class ListBoxTabList(RectBox):
             self.reInitBuffer = True
         if event.LeftDown or event.RightDown:
             self.down_key = key
-        # Add Playlist, Add Folder: buttons, done on a release over the row pressed
+        # add rows act on release
         if event.LeftDown:
             self.pressed_key = key if row is not None and row.kind == 'add' else None
             self.reInitBuffer = True
@@ -1690,7 +1689,6 @@ class ListBoxTabList(RectBox):
         if len(self.parent.parent.ListBox.innerList) == 1:
             return
         insert = self.GetInsertTabRectIdx((event.X, event.Y))
-        # just above or below the dragged tab: no line, nothing moved
         if insert is not None and self.IsOwnPlace(event.drag.tabIdx, insert):
             insert = None
         self.FileDrop.insertTabIdx = insert
@@ -1808,7 +1806,7 @@ class ListBoxTabList(RectBox):
         return None
 
     def IsOwnPlace(self, fromIdx, toIdx):
-        # the line right above the tab, or right below it (before the next playlist)
+        # right above or right below the tab
         if toIdx == fromIdx:
             return True
         later = [i for i in self.normal_tabs if i > fromIdx]

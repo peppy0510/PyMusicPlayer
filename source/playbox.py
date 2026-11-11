@@ -2313,9 +2313,7 @@ class PlayBoxApic(RectBox):
         self.parent.HandleDragOut(self, event, 'cover')
         # self.HandleSizeChange()
 
-    # the cover large beside it on a click on it, not on the way past; shut by a
-    # click again, the mouse off it or Esc (a click on the preview would fall
-    # through to the waves under it)
+    # the cover large beside it on a click
     PREVIEW = 360
 
     def HandlePreview(self, event):
@@ -2325,7 +2323,7 @@ class PlayBoxApic(RectBox):
             self.HidePreview()
             return
         if event.LeftDClick:
-            # the tag editor's: no preview, nor on the release after it
+            # double click is the tag editor's
             self.HidePreview()
             self.preview_skip = True
             return
@@ -2334,7 +2332,7 @@ class PlayBoxApic(RectBox):
         if getattr(self, 'preview_skip', False):
             self.preview_skip = False
             return
-        # pressed and let go on it, not dragged
+        # a click, not a drag
         if event.rectIdx is None or event.down.rectIdx is None or event.drag.x is not None:
             return
         if getattr(self, 'previewing', False):

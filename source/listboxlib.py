@@ -187,7 +187,7 @@ class ListBoxListDnD(wx.FileDropTarget):
                 item = MakeMusicFileItem(path, 0, columns)
                 if item is not None:
                     made.append((path, item))
-                    # not known as it is: read on mfeats' checks thread, shown after
+                    # unanalyzed: checked on the mfeats thread
                     if item[statusIdx] != 'analyzed':
                         unknown.append(path)
 
@@ -279,7 +279,7 @@ class ListBoxListDnD(wx.FileDropTarget):
             self.insertItemIdx = None
             self.parent.parent.reInitBuffer = True
             self.parent.parent.SetListUnLock(selectedList)
-            # the rows in the list now: a sound known later finds them
+            # after the rows are in the list
             mfeats.check_files(unknown)
             # self.parent.parent.parent.Event.SetCursorARROW()
             self.parent.parent.parent.MFEATS.AutoAnalyzer()
@@ -648,7 +648,7 @@ class ListControl():
             key_values = [(columnKey, newValue)]
             mdx = self.GetItemValueByColumnKey(itemIdx, 'mdx', selectedList)
             mfeats.update_many_key_values(('mdx', mdx), key_values)
-            # the sound's: its other files' rows too
+            # other files of the same sound
             self.parent.MFEATS.UpdateItemsValue(path)
         return True
 
