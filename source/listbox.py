@@ -3088,9 +3088,16 @@ COVER_TIP = 'Click to edit the cover; right-click for more'
 COVER_HOVER_WORD = 'Edit'
 
 
-def draw_cover_edge(gc, x, y, w, h, hover):
+def draw_cover_edge(gc, x, y, w, h, hover, ground):
     # quiet edge; hovered: dimmed, an Edit pill
     ui = macroboxstyle.current().UI
+    # the picture's corners cut back to the ground, inside the line
+    corners = gc.CreatePath()
+    corners.AddRectangle(x, y, w + 1, h + 1)
+    corners.AddRoundedRectangle(x + 0.5, y + 0.5, w, h, uikit.RADIUS)
+    gc.SetPen(wx.NullGraphicsPen)
+    gc.SetBrush(gc.CreateBrush(wx.Brush(ground)))
+    gc.FillPath(corners, wx.ODDEVEN_RULE)
     if hover:
         gc.SetPen(wx.NullGraphicsPen)
         gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 60))))
@@ -3146,7 +3153,7 @@ class CoverPicture(wx.Window):
             dc.DrawBitmap(self.bitmap, (w - self.bitmap.GetWidth()) // 2,
                           (h - self.bitmap.GetHeight()) // 2)
         draw_cover_edge(wx.GraphicsContext.Create(dc), 0, 0, w - 1, h - 1,
-                        self.hover and self.active)
+                        self.hover and self.active, self.GetParent().GetBackgroundColour())
 
 
 def append_cover_items(menu, shown, changed, act):
@@ -3350,11 +3357,11 @@ class CoverField(wx.Window):
         if self.bitmap is not None:
             bw, bh = self.bitmap.GetSize()
             gc.DrawBitmap(self.bitmap, (w - bw) // 2, (h - bh) // 2, bw, bh)
-            if self.hover:
-                # as every cover; its own edge (NEW, REMOVE) drawn again over it
-                draw_cover_edge(gc, 0, 0, w - 1, h - 1, True)
-                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
-                gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
+            # as every cover; its own edge (NEW, REMOVE) drawn again over it
+            draw_cover_edge(gc, 0, 0, w - 1, h - 1, self.hover,
+                            self.GetParent().GetBackgroundColour())
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(edge)).Width(1)))
+            gc.DrawRoundedRectangle(0, 0, w - 1, h - 1, uikit.RADIUS)
         if self.chosen is not None or self.remove:
             # NEW or REMOVE in a chip at the top left, not by colour alone
             chip, face, ink = ('NEW', ui.ACCENT, uikit.colour(ui.ACCENT_FG)) \
@@ -3391,6 +3398,8 @@ class CoverEditCanvas(wx.Window):
     HANDLE = 9
     # least side, view picture px
     LEAST = 12
+    # the grid's lines about this far apart, window px
+    GRID_STEP = 40
 
     def __init__(self, parent, square, changed):
         wx.Window.__init__(self, parent, style=wx.BORDER_NONE | wx.WANTS_CHARS)
@@ -3399,6 +3408,7 @@ class CoverEditCanvas(wx.Window):
         self.box = [0.0, 0.0, 1.0, 1.0]
         self.square = square
         self.changed = changed
+        self.grid = False
         self.bitmap = None
         self.drag = None
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
@@ -3469,6 +3479,17 @@ class CoverEditCanvas(wx.Window):
             side = min(right - left, bottom - top)
             self.SetBox(self.Clamp(((left + right - side) / 2.0, (top + bottom - side) / 2.0,
                                     (left + right + side) / 2.0, (top + bottom + side) / 2.0)))
+
+    def SetGrid(self, grid):
+        self.grid = grid
+        self.Refresh()
+
+    def GetGridParts(self, width, height):
+        # thirds; the grid: each third cut again, the cells near square
+        if self.grid is False:
+            return 3, 3
+        return tuple(3 * max(1, int(round(side / (3.0 * self.GRID_STEP))))
+                     for side in (width, height))
 
     def Clamp(self, box):
         # moved inside the picture, its size kept
@@ -3565,6 +3586,8 @@ class CoverEditCanvas(wx.Window):
             self.Grow(1 / 1.05)
         elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.GetParent().OnApply(None)
+        elif key == ord('G') and event.HasAnyModifiers() is False:
+            self.GetParent().OnGrid(not self.grid)
         else:
             event.Skip()
 
@@ -3596,12 +3619,17 @@ class CoverEditCanvas(wx.Window):
         gc.DrawRectangle(bx, bottom, bw, by + bh - bottom)
         gc.DrawRectangle(bx, top, left - bx, bottom - top)
         gc.DrawRectangle(right, top, bx + bw - right, bottom - top)
-        # thirds, then the edge in the accent
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 70)).Width(1)))
-        for i in (1, 2):
-            x = left + (right - left) * i / 3.0
-            y = top + (bottom - top) * i / 3.0
+        # thirds, the grid's finer lines between them, then the edge in the accent
+        columns, rows = self.GetGridParts(right - left, bottom - top)
+        thirds = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 70)).Width(1))
+        fine = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 40)).Width(1))
+        for i in range(1, columns):
+            gc.SetPen(thirds if i % (columns // 3) == 0 else fine)
+            x = left + (right - left) * i / float(columns)
             gc.StrokeLine(x, top, x, bottom)
+        for i in range(1, rows):
+            gc.SetPen(thirds if i % (rows // 3) == 0 else fine)
+            y = top + (bottom - top) * i / float(rows)
             gc.StrokeLine(left, y, right, y)
         gc.SetBrush(wx.NullGraphicsBrush)
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.ACCENT)).Width(2)))
@@ -3759,9 +3787,10 @@ class CoverEditBox(DialogBox):
                             DIALOG_PAD * 2 + self.VIEW + self.GetFooterHeight()))
         self.Canvas = CoverEditCanvas(self, square, self.OnBoxChanged)
         self.Canvas.SetRect((DIALOG_PAD, DIALOG_PAD, self.VIEW, self.VIEW))
+        self.Canvas.SetGrid(GetPreference('cover_edit_grid') is True)
         self.Canvas.SetToolTip(wx.ToolTip(
             'Drag inside to move, a corner to size, outside for a new box.\n'
-            'Wheel or +/- sizes it, arrows move it (Shift: by 10).'))
+            'Wheel or +/- sizes it, arrows move it (Shift: by 10), G shows the grid.'))
         self.MakeSide(square)
         self.ResetButton = Button(self, label='Reset')
         self.ResetButton.Bind(wx.EVT_BUTTON, self.OnReset)
@@ -3830,6 +3859,8 @@ class CoverEditBox(DialogBox):
         y += DIALOG_PAD - DIALOG_GAP
         y += self.MakeHead('Crop', x, y) + DIALOG_GAP
         self.Square, used = make_check(self, 'Square', (x, y), square, self.OnSquare)
+        x += used + DIALOG_PAD
+        self.Grid, used = make_check(self, 'Grid', (x, y), self.Canvas.grid, self.OnGrid)
         self.Info = StaticText(self, label='', pos=(x + used + DIALOG_PAD, y))
         self.Info.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
         self.ShowValues()
@@ -3930,6 +3961,13 @@ class CoverEditBox(DialogBox):
         SetPreference('cover_crop_square', square)
         self.edit['square'] = square
         self.Canvas.SetSquare(square)
+        self.Canvas.SetFocus()
+
+    def OnGrid(self, grid):
+        # kept for the next time; not part of the edit
+        SetPreference('cover_edit_grid', grid)
+        self.Grid.SetValue(grid)
+        self.Canvas.SetGrid(grid)
         self.Canvas.SetFocus()
 
     def OnReset(self, event):
@@ -6167,7 +6205,8 @@ class CoverDetails(wx.Window):
             dc.DrawBitmap(self.preview, 0, y)
             if self.on_preview is not None:
                 draw_cover_edge(wx.GraphicsContext.Create(dc), 0, y, self.preview.GetWidth() - 1,
-                                self.preview.GetHeight() - 1, self.over_preview)
+                                self.preview.GetHeight() - 1, self.over_preview,
+                                wx.Colour(ui.DIALOG_BG))
             y += self.preview.GetHeight() + DIALOG_GAP + 4
         elif self.loading:
             dc.SetPen(wx.TRANSPARENT_PEN)
