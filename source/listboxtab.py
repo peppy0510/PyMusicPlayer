@@ -842,6 +842,8 @@ class ListBoxTabList(RectBox):
         self.rows = []
         self.hover_key = None
         self.down_key = None
+        # an add row held: done on its release over it
+        self.pressed_key = None
         self.drop_favorites = False
         self.drop_starred = False
         self.drop_into = None
@@ -1043,7 +1045,12 @@ class ListBoxTabList(RectBox):
         if self.FileDrop.dragging is False:
             for row in self.rows:
                 if self.GetRowKey(row) == self.hover_key:
-                    dc.SetBrush(wx.Brush(hover))
+                    ground = hover
+                    # a pressed button deeper while the press is over it
+                    if self.hover_key == self.pressed_key:
+                        ground = wx.Colour(*[int(h + (f - h) * 0.1) for h, f in
+                                             zip(hover.Get()[:3], fg.Get()[:3])])
+                    dc.SetBrush(wx.Brush(ground))
                     dc.DrawRectangle(row.rect)
         index = self.parent.parent.ListBox.selectedList
         if 0 <= index < len(self.rects):
@@ -1427,10 +1434,20 @@ class ListBoxTabList(RectBox):
             self.reInitBuffer = True
         if event.LeftDown or event.RightDown:
             self.down_key = key
+        # Add Playlist, Add Folder: buttons, done on a release over the row pressed
+        if event.LeftDown:
+            self.pressed_key = key if row is not None and row.kind == 'add' else None
+            self.reInitBuffer = True
+        if event.LeftUp and self.pressed_key is not None:
+            pressed, self.pressed_key = self.pressed_key, None
+            self.reInitBuffer = True
+            if row is not None and key == pressed:
+                self.OpenRow(row)
+            return
         if row is None:
             return
         # a press on a close mark is the mark's
-        if event.LeftDown and event.closeIdx is None:
+        if event.LeftDown and event.closeIdx is None and row.kind != 'add':
             self.OpenRow(row)
         elif event.RightUp and key == self.down_key and event.drag.x is None:
             self.ShowRowMenu(row, (event.x, event.y))
@@ -1672,7 +1689,11 @@ class ListBoxTabList(RectBox):
         self.FileDrop.downTabIdx = event.drag.tabIdx
         if len(self.parent.parent.ListBox.innerList) == 1:
             return
-        self.FileDrop.insertTabIdx = self.GetInsertTabRectIdx((event.X, event.Y))
+        insert = self.GetInsertTabRectIdx((event.X, event.Y))
+        # just above or below the dragged tab: no line, nothing moved
+        if insert is not None and self.IsOwnPlace(event.drag.tabIdx, insert):
+            insert = None
+        self.FileDrop.insertTabIdx = insert
 
         height = self.GetSize().height
         row_size = self.parent.GetRowsHeight()
@@ -1785,6 +1806,13 @@ class ListBoxTabList(RectBox):
             if rect.height > 0 and self.IsInRect(self.GetHitRect(rect), xy):
                 return i
         return None
+
+    def IsOwnPlace(self, fromIdx, toIdx):
+        # the line right above the tab, or right below it (before the next playlist)
+        if toIdx == fromIdx:
+            return True
+        later = [i for i in self.normal_tabs if i > fromIdx]
+        return toIdx == (later[0] if later else fromIdx + 1)
 
     def GetInsertTabRectIdx(self, xy):
         # between the playlists only

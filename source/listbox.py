@@ -1318,6 +1318,13 @@ class ListBoxList(RectBox):
             self.FileDrop.insertItemIdx = None
             self.DirectDraw()
 
+    def IsOwnPlace(self, insert):
+        # dragged rows in one block: before it, in it or right after it moves nothing
+        rows = sorted(self.parent.GetSelectedItems())
+        if not rows or rows[-1] - rows[0] + 1 != len(rows):
+            return False
+        return rows[0] <= insert <= rows[-1] + 1
+
     def HandleEventFileDropPending(self, event):
         if self.parent.IsFilteredAll():
             return
@@ -1340,7 +1347,11 @@ class ListBoxList(RectBox):
         row_size = self.parent.GetRowsHeight()
         isUpward = event.Y < 0 + row_size * 0.5
         isDownward = event.Y > 0 + height - row_size * 0.5
-        self.FileDrop.insertItemIdx = event.insertItemIdx
+        insert = event.insertItemIdx
+        # the list's own rows put back where they are: no line, nothing moves
+        if self.FileDrop.itemDrag and self.IsOwnPlace(insert):
+            insert = None
+        self.FileDrop.insertItemIdx = insert
         if isUpward or isDownward:
             self.FileDrop.dropTimer += 1
         else:
