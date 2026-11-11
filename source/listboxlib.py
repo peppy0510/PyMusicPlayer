@@ -603,9 +603,8 @@ class ListControl():
         newMDX = audio.makemdx(newPath)
         newFilename = newPath.split(os.path.sep)[-1]
         newFilename = os.path.splitext(newFilename)[0]
-        key_values = [('path', newPath), ('mdx', newMDX)]
         oldMDX = self.GetItemValueByColumnKey(itemIdx, 'mdx', selectedList)
-        mfeats.update_many_key_values(('mdx', oldMDX), key_values)
+        mfeats.move_analysis(oldMDX, newMDX, newPath)
         self.SetListItemsValueWhereColumnKey(('mdx', oldMDX), ('mdx', newMDX))
         self.SetListItemsValueWhereColumnKey(('mdx', newMDX), ('path', newPath))
         self.SetListItemsValueWhereColumnKey(('mdx', newMDX), ('filename', newFilename))

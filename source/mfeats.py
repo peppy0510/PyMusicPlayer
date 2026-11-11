@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import ctypes
+import hashlib
 import multiprocessing
 import mutagen
 import numpy
@@ -946,14 +947,27 @@ def mfeats_worker(conn, model_address=None):
             return
         if path is None:
             return
-        # ('grid', path): only the grid is missing
+        # ('grid', path): only the grid is missing; ('again', path): analyzed again as asked
+        kind = 'whole'
         if isinstance(path, tuple):
-            path = path[1]
+            kind, path = path
+        if kind == 'grid':
             resp = getby_key_value('mdx', makemdx(path), waveform=False)
             if resp is not None and resp.error == 0:
                 analyze_grid_into_db(path, resp.tempo, resp.highlight)
             try:
                 conn.send(path)
+            except (EOFError, OSError):
+                return
+            continue
+        # unreadable here: mfeats_single keeps it as an error
+        try:
+            sound = keep_sound(path)
+        except (OSError, sqlite3.Error):
+            sound = None
+        if kind == 'whole' and sound is not None and copy_analysis(path, *sound):
+            try:
+                conn.send(('copied', path))
             except (EOFError, OSError):
                 return
             continue
@@ -1923,6 +1937,8 @@ def create_mfeats_index(table_name='mfeats', db_name=None):
         db_name = MFEATS_DB
     conn = sqlite3.connect(db_name)
     conn.execute(f'CREATE INDEX IF NOT EXISTS {table_name}_path ON {table_name} (path)')
+    # and by length, for the same sound analyzed before its sound was kept
+    conn.execute(f'CREATE INDEX IF NOT EXISTS {table_name}_duration ON {table_name} (duration)')
     conn.commit()
     conn.close()
 
@@ -2176,6 +2192,136 @@ def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
         if phrase_set is not None:
             conn.execute(f'UPDATE {GRID_TABLE} SET phrase_set=? WHERE mdx=?',
                          (phrase_set, mdx))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# the same sound under another path (a copy, a moved file): its analysis
+# copied, not done again; read from the decoded sound, so tag edits keep it
+SOUND_TABLE = 'mfeats_sound'
+SOUND_VERSION = '1.0.0'
+SOUND_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('sound', 'TEXT'), ('duration', 'REAL'),
+                    ('version', 'TEXT'))
+# a second read at each of these shares of the song
+SOUND_SPOTS = (0.1, 0.35, 0.6, 0.85)
+SOUND_SECONDS = 1.0
+# songs analyzed before the table: told by their length, their file read then
+SOUND_DURATION_GAP = 0.001
+SOUND_UNKEPT_MOST = 8
+
+
+def connect_sound():
+    conn = connect_grid()
+    conn.execute(f'CREATE TABLE IF NOT EXISTS {SOUND_TABLE} '
+                 f'({",".join([" ".join(field) for field in SOUND_DEFINITION])})')
+    conn.execute(f'CREATE INDEX IF NOT EXISTS {SOUND_TABLE}_sound ON {SOUND_TABLE} (sound)')
+    return conn
+
+
+def read_sound(path):
+    '''(md5 of the decoded sound, duration), or None'''
+    init_bass_decode()
+    hstream = pybass.BASS_StreamCreateFile(
+        False, path, 0, 0, pybass.BASS_STREAM_DECODE |
+        pybass.BASS_STREAM_PRESCAN | pybass.BASS_UNICODE)
+    if hstream == 0:
+        return None
+    try:
+        length = pybass.BASS_ChannelGetLength(hstream, pybass.BASS_POS_BYTE)
+        info = pybass.BASS_CHANNELINFO()
+        if length <= 0 or length == 0xFFFFFFFFFFFFFFFF\
+                or pybass.BASS_ChannelGetInfo(hstream, ctypes.byref(info)) is False:
+            return None
+        duration = pybass.BASS_ChannelBytes2Seconds(hstream, length)
+        frame = 2 * info.chans
+        size = int(info.freq * SOUND_SECONDS) * frame
+        buffer = ctypes.create_string_buffer(size)
+        md5 = hashlib.md5(f'{length} {info.freq} {info.chans}'.encode('utf-8'))
+        for spot in SOUND_SPOTS:
+            pybass.BASS_ChannelSetPosition(hstream, int(length * spot) // frame * frame, False)
+            got = pybass.BASS_ChannelGetData(hstream, buffer, size)
+            if got == 0xFFFFFFFF:
+                return None
+            md5.update(buffer.raw[:got])
+        return md5.hexdigest(), duration
+    finally:
+        pybass.BASS_StreamFree(hstream)
+
+
+def keep_sound(path):
+    '''the song's sound read and kept: (sound, duration), or None'''
+    found = read_sound(path)
+    if found is None:
+        return None
+    conn = connect_sound()
+    try:
+        conn.execute(f'INSERT OR REPLACE INTO {SOUND_TABLE} VALUES (?,?,?,?)',
+                     (makemdx(path), found[0], found[1], SOUND_VERSION))
+        conn.commit()
+    finally:
+        conn.close()
+    return found
+
+
+def find_unkept_sound(conn, mdx, sound, duration):
+    '''songs analyzed before their sound was kept: those of this length read now'''
+    rows = conn.execute(
+        f'SELECT mdx, path FROM mfeats WHERE duration BETWEEN ? AND ? AND version = ? '
+        f'AND error = 0 AND mdx != ? AND mdx NOT IN (SELECT mdx FROM {SOUND_TABLE}) LIMIT ?',
+        (duration - SOUND_DURATION_GAP, duration + SOUND_DURATION_GAP, MFEATS_VERSION, mdx,
+         SOUND_UNKEPT_MOST)).fetchall()
+    found = []
+    for other, path in rows:
+        # its file gone or changed since: its sound not known
+        if os.path.isfile(path) is False or makemdx(path) != other:
+            continue
+        kept = keep_sound(path)
+        if kept is not None and kept[0] == sound:
+            found.append(other)
+    return found
+
+
+def copy_analysis(path, sound, duration):
+    '''the analysis of the same sound under another path copied to this one; False if none'''
+    mdx = makemdx(path)
+    conn = connect_sound()
+    try:
+        others = [row[0] for row in conn.execute(
+            f'SELECT s.mdx FROM {SOUND_TABLE} s JOIN mfeats m ON m.mdx = s.mdx '
+            'WHERE s.sound = ? AND s.version = ? AND s.mdx != ? AND m.version = ? '
+            'AND m.error = 0', (sound, SOUND_VERSION, mdx, MFEATS_VERSION))]
+        if len(others) == 0:
+            others = find_unkept_sound(conn, mdx, sound, duration)
+        if len(others) == 0:
+            return False
+        # one with its grid first: the manual moves come along
+        grids = [row[0] for row in conn.execute(
+            f'SELECT mdx FROM {GRID_TABLE} WHERE version = ? AND mdx IN '
+            f'({",".join(["?"] * len(others))})', [GRID_VERSION] + others)]
+        other = grids[0] if len(grids) > 0 else others[0]
+        fields = [key for key, _ in MFEATS_DEFINITION if key not in ('mdx', 'path')]
+        conn.execute(f'INSERT OR REPLACE INTO mfeats (mdx,path,{",".join(fields)}) '
+                     f'SELECT ?,?,{",".join(fields)} FROM mfeats WHERE mdx = ?',
+                     (mdx, path, other))
+        fields = [key for key, _ in GRID_DEFINITION if key != 'mdx']
+        conn.execute(f'DELETE FROM {GRID_TABLE} WHERE mdx = ?', (mdx,))
+        conn.execute(f'INSERT INTO {GRID_TABLE} (mdx,{",".join(fields)}) '
+                     f'SELECT ?,{",".join(fields)} FROM {GRID_TABLE} WHERE mdx = ?',
+                     (mdx, other))
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def move_analysis(old_mdx, mdx, path):
+    '''a renamed song's analysis, grid and sound under its new name'''
+    update_many_key_values(('mdx', old_mdx), [('path', path), ('mdx', mdx)])
+    conn = connect_sound()
+    try:
+        for table in (GRID_TABLE, SOUND_TABLE):
+            conn.execute(f'UPDATE OR REPLACE {table} SET mdx = ? WHERE mdx = ?', (mdx, old_mdx))
         conn.commit()
     finally:
         conn.close()

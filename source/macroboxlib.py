@@ -858,7 +858,8 @@ class MFEATS_Scheduler(ThreadTimer):
 
     def IsAnalysisDone(self, path):
         # older version: analyzed again; analyzed, its grid not: the grid
-        resp = mfeats.getby_key_value('path', path, waveform=False)
+        # by mdx, as the list: a new file at an old path is not the old row
+        resp = mfeats.getby_key_value('mdx', audio.makemdx(path), waveform=False)
         if resp is None or resp.version != mfeats.MFEATS_VERSION:
             return False
         return resp.error != 0 or mfeats.is_grid_current(resp.mdx)
@@ -885,16 +886,17 @@ class MFEATS_Scheduler(ThreadTimer):
             if this.proc is None:
                 continue
             alive = this.proc.is_alive()
-            done = False
+            done, reply = False, None
             try:
                 done = alive and this.conn.poll()
                 if done:
-                    this.conn.recv()
+                    reply = this.conn.recv()
             except (EOFError, OSError):
                 alive = False
             # its song done, or the worker died with it (the song is left)
             if this.path is not None and (done or alive is False):
-                if done:
+                # a copied analysis is no measure of one
+                if done and isinstance(reply, tuple) is False:
                     self.job_time += (now - this.since - self.job_time) * AHEAD_JOB_WEIGHT
                 path, this.path, this.idle = (this.path, None, now)
                 idx = [i for i, v in enumerate(self.procpath) if v == path]
@@ -1004,8 +1006,8 @@ class MFEATS_Scheduler(ThreadTimer):
         # the song's path for its whole analysis, ('grid', path) when only its grid is due
         if path in self.forcedpath:
             self.forcedpath.discard(path)
-            return path
-        resp = mfeats.getby_key_value('path', path, waveform=False)
+            return ('again', path)
+        resp = mfeats.getby_key_value('mdx', audio.makemdx(path), waveform=False)
         if resp is not None and resp.version == mfeats.MFEATS_VERSION and resp.error == 0:
             return ('grid', path)
         return path
