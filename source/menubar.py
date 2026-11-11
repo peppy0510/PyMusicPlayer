@@ -1766,7 +1766,8 @@ class PreferenceWebInfoPanel(DialogPanel):
         text.SetSize(text.GetBestSize())
         offset += text.GetSize().height + DIALOG_GAP
         label = u'Keys stay in this PC\'s user folder. Only the tracks you look up are sent,'
-        label += u'\nartist and title to Discogs and Last.fm, a fingerprint to AcoustID.'
+        label += u'\nartist and title to Discogs and Last.fm, a fingerprint to AcoustID;'
+        label += u'\nfor covers also to iTunes, which needs no key.'
         text = StaticText(self, label=label, pos=(DIALOG_PAD, offset))
         text.SetSize(text.GetBestSize())
         # name column as wide as its widest

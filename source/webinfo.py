@@ -30,9 +30,11 @@ CACHE_SECONDS = 60 * 60 * 24 * 30
 TIMEOUT = 15
 
 # seconds between two requests to one service, under each one's published limit
-# (Discogs 60/min with a token, AcoustID 3/s, Last.fm 5/s)
-INTERVALS = {'discogs': 1.1, 'acoustid': 0.4, 'lastfm': 0.25, 'image': 0.5}
+# (Discogs 60/min with a token, AcoustID 3/s, Last.fm 5/s, iTunes about 20/min)
+INTERVALS = {'discogs': 1.1, 'acoustid': 0.4, 'lastfm': 0.25, 'itunes': 3.1, 'image': 0.5}
 IMAGE_MAX_BYTES = 5 * 1024 * 1024
+# a cover's side asked of iTunes, which gives no more than its original
+COVER_SIDE = 1200
 
 PREFERENCE_KEYS = ('discogs_token', 'discogs_key', 'discogs_secret',
                    'lastfm_api_key', 'acoustid_client_key')
@@ -258,6 +260,31 @@ def lookup_lastfm(artist, title, api_key, cache=None):
                       image=images[-1] if images else '')]
 
 
+def lookup_itunes(artist, title, cache=None):
+    # songs' albums, their artwork asked at COVER_SIDE; no key
+    params = dict(term=' '.join([v for v in (artist, title) if v]), media='music',
+                  entity='song', limit=10)
+    body = request_json('itunes', 'https://itunes.apple.com/search', params, cache=cache)
+    candidates = list()
+    for result in body.get('results', list()):
+        art = result.get('artworkUrl100') or ''
+        if '100x100' not in art:
+            continue
+        try:
+            duration = int(result.get('trackTimeMillis') or 0) / 1000.0
+        except Exception:
+            duration = None
+        candidates.append(candidate('iTunes', result.get('artistName', artist),
+                                    result.get('trackName', title),
+                                    result.get('collectionName', ''),
+                                    result.get('primaryGenreName', ''),
+                                    (result.get('releaseDate') or '')[:4],
+                                    url=result.get('collectionViewUrl', ''),
+                                    duration=duration or None,
+                                    image=art.replace('100x100', f'{COVER_SIDE}x{COVER_SIDE}')))
+    return candidates
+
+
 def fetch_image(url, folder=None):
     # the image bytes, from the disk when fetched before
     if folder is None:
@@ -284,12 +311,22 @@ def fetch_image(url, folder=None):
     return data
 
 
-def lookup(path, artist, title, keys, cache=None):
-    # (candidates, errors) from every service with a key; one failing does not stop the rest
-    if not artist and not title:
-        artist, title = split_artist_title(path)
+def run_lookups(jobs):
+    # (candidates, errors); one failing does not stop the rest
     candidates = list()
     errors = list()
+    for job in jobs:
+        try:
+            candidates += job()
+        except WebInfoError as error:
+            errors.append(str(error))
+    return candidates, errors
+
+
+def lookup(path, artist, title, keys, cache=None):
+    # (candidates, errors) from every service with a key
+    if not artist and not title:
+        artist, title = split_artist_title(path)
     jobs = list()
     if keys.get('acoustid_client_key'):
         jobs.append(lambda: lookup_acoustid(path, keys['acoustid_client_key'], cache))
@@ -298,9 +335,20 @@ def lookup(path, artist, title, keys, cache=None):
         jobs.append(lambda: lookup_discogs(artist, title, discogs_auth, cache))
     if artist and title and keys.get('lastfm_api_key'):
         jobs.append(lambda: lookup_lastfm(artist, title, keys['lastfm_api_key'], cache))
-    for job in jobs:
-        try:
-            candidates += job()
-        except WebInfoError as error:
-            errors.append(str(error))
-    return candidates, errors
+    return run_lookups(jobs)
+
+
+def lookup_covers(path, artist, title, keys, cache=None):
+    # (candidates, errors) with covers: iTunes's large ones first, then Discogs and Last.fm
+    # with their keys
+    if not artist and not title:
+        artist, title = split_artist_title(path)
+    jobs = list()
+    if title:
+        jobs.append(lambda: lookup_itunes(artist, title, cache))
+    discogs_auth = get_discogs_auth(keys)
+    if title and discogs_auth:
+        jobs.append(lambda: lookup_discogs(artist, title, discogs_auth, cache))
+    if artist and title and keys.get('lastfm_api_key'):
+        jobs.append(lambda: lookup_lastfm(artist, title, keys['lastfm_api_key'], cache))
+    return run_lookups(jobs)

@@ -6408,7 +6408,7 @@ class CoverLookUpBox(DialogBox):
 
         def work():
             try:
-                candidates, errors = webinfo.lookup(
+                candidates, errors = webinfo.lookup_covers(
                     track['path'], track['artist'].strip(), track['title'].strip(), keys,
                     webinfo.Cache())
             except Exception as error:
@@ -6786,13 +6786,8 @@ def look_up_cover(listbox):
 def look_up_cover_for(listbox, tracks, start=0, use=None, parent=None):
     '''look up covers for tracks, chosen from cards and written (or handed to use)'''
     frame = wx.GetTopLevelParent(listbox) if parent is None else parent
+    # iTunes with no key; Discogs and Last.fm with theirs
     keys = dict(zip(webinfo.PREFERENCE_KEYS, GetPreferences(webinfo.PREFERENCE_KEYS)))
-    # AcoustID matches have no pictures and fingerprinting is slow
-    keys['acoustid_client_key'] = ''
-    if webinfo.get_discogs_auth(keys) is None and not keys.get('lastfm_api_key'):
-        show_notice(frame, 'Look Up Cover',
-                    'Set a Discogs or Last.fm key in Preference > Web Services first.')
-        return
     # the window first, its cards when found
     dialog = CoverLookUpBox(frame, tracks, keys, start)
     answer = dialog.ShowModal()
