@@ -180,10 +180,15 @@ class ListBoxListDnD(wx.FileDropTarget):
 
             pathIdx = self.parent.parent.GetColumnKeyToIdx('path', selectedList)
             orderIdx = self.parent.parent.GetColumnKeyToIdx('order', selectedList)
+            statusIdx = self.parent.parent.GetColumnKeyToIdx('status', selectedList)
             columns = self.parent.parent.innerList[selectedList].columns
             made = []
             for path in extended_paths:
                 item = MakeMusicFileItem(path, 0, columns)
+                # the same sound analyzed under another path: its analysis shown at once
+                if item is not None and item[statusIdx] != 'analyzed'\
+                        and mfeats.carry_sound(path):
+                    item = MakeMusicFileItem(path, 0, columns)
                 if item is not None:
                     made.append((path, item))
 

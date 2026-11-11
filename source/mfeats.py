@@ -15,6 +15,7 @@ import numpy
 import os
 import pybass
 import sqlite3
+import struct
 import sys
 import threading
 import time
@@ -965,7 +966,7 @@ def mfeats_worker(conn, model_address=None):
             sound = keep_sound(path)
         except (OSError, sqlite3.Error):
             sound = None
-        if kind == 'whole' and sound is not None and copy_analysis(path, *sound):
+        if kind == 'whole' and sound is not None and copy_analysis(path, sound):
             try:
                 conn.send(('copied', path))
             except (EOFError, OSError):
@@ -2198,33 +2199,182 @@ def set_grid_shift(mdx, shift, key='shift', phrase_set=None):
 
 
 # the same sound under another path (a copy, a moved file): its analysis
-# copied, not done again; read from the decoded sound, so tag edits keep it
+# copied, not done again; read from pieces of the sound's bytes past the tags,
+# so tag edits keep it (other formats: decoded)
 SOUND_TABLE = 'mfeats_sound'
-SOUND_VERSION = '1.0.0'
-SOUND_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('sound', 'TEXT'), ('duration', 'REAL'),
-                    ('version', 'TEXT'))
-# a second read at each of these shares of the song
+SOUND_VERSION = '2.0.0'
+SOUND_DEFINITION = (('mdx', 'TEXT PRIMARY KEY'), ('sound', 'TEXT'), ('version', 'TEXT'))
+# pieces evenly over the sound; a disk reads 4 KB anyway
+SOUND_PIECES = 8
+SOUND_PIECE_SIZE = 4096
+# decoded: a second at each of these shares of the song
 SOUND_SPOTS = (0.1, 0.35, 0.6, 0.85)
 SOUND_SECONDS = 1.0
-# songs analyzed before the table: told by their length, their file read then
+# songs analyzed before their sound was kept: told by their length, their file read then
 SOUND_DURATION_GAP = 0.001
 SOUND_UNKEPT_MOST = 8
+# an ogg page found within this past a piece's place
+OGG_PAGE_MOST = 65536 + 27 + 255
+# databases whose sound and grid tables are checked
+SOUND_READY = set()
 
 
-def connect_sound():
-    conn = connect_grid()
-    conn.execute(f'CREATE TABLE IF NOT EXISTS {SOUND_TABLE} '
-                 f'({",".join([" ".join(field) for field in SOUND_DEFINITION])})')
-    conn.execute(f'CREATE INDEX IF NOT EXISTS {SOUND_TABLE}_sound ON {SOUND_TABLE} (sound)')
-    return conn
+def skip_id3v2(f, at=0):
+    while True:
+        f.seek(at)
+        head = f.read(10)
+        if len(head) < 10 or head[:3] != b'ID3':
+            return at
+        size = (head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9]
+        at += 10 + size + (10 if head[5] & 0x10 else 0)
 
 
-def read_sound(path):
-    '''(md5 of the decoded sound, duration), or None'''
+def trim_tail_tags(f, start, end):
+    # ID3v1, Lyrics3v2 and APE at the end, in any order
+    while end - start > 128:
+        f.seek(end - 128)
+        tail = f.read(128)
+        if tail[:3] == b'TAG':
+            end -= 128
+        elif tail[-9:] == b'LYRICS200' and tail[-15:-9].isdigit():
+            end -= int(tail[-15:-9]) + 15
+        elif tail[-32:-24] == b'APETAGEX':
+            size = struct.unpack('<I', tail[-20:-16])[0]
+            flags = struct.unpack('<I', tail[-12:-8])[0]
+            end -= size + (32 if flags & 0x80000000 else 0)
+        else:
+            return end
+    return end
+
+
+def get_mpeg_sound(f, size):
+    start = skip_id3v2(f)
+    return start, trim_tail_tags(f, start, size)
+
+
+def get_flac_sound(f, size):
+    at = skip_id3v2(f)
+    f.seek(at)
+    if f.read(4) != b'fLaC':
+        return None
+    at += 4
+    while True:
+        f.seek(at)
+        head = f.read(4)
+        if len(head) < 4:
+            return None
+        at += 4 + int.from_bytes(head[1:4], 'big')
+        if head[0] & 0x80:
+            return at, trim_tail_tags(f, at, size)
+
+
+def get_mp4_sound(f, size):
+    at = 0
+    while at + 8 <= size:
+        f.seek(at)
+        head = f.read(16)
+        length, kind = struct.unpack('>I4s', head[:8])
+        skip = 8
+        if length == 1:
+            length, skip = struct.unpack('>Q', head[8:16])[0], 16
+        elif length == 0:
+            length = size - at
+        if length < skip:
+            return None
+        if kind == b'mdat':
+            return at + skip, min(at + length, size)
+        at += length
+    return None
+
+
+def get_riff_sound(f, size):
+    f.seek(0)
+    head = f.read(12)
+    if head[:4] == b'RIFF' and head[8:12] == b'WAVE':
+        order, name, skip = '<I', b'data', 8
+    elif head[:4] == b'FORM' and head[8:12] in (b'AIFF', b'AIFC'):
+        # SSND: its offset and block size first
+        order, name, skip = '>I', b'SSND', 16
+    else:
+        return None
+    at = 12
+    while at + 8 <= size:
+        f.seek(at)
+        chunk = f.read(8)
+        length = struct.unpack(order, chunk[4:8])[0]
+        if chunk[:4] == name:
+            return at + skip, min(at + 8 + length, size)
+        at += 8 + length + (length & 1)
+    return None
+
+
+def get_ogg_sound(f, size):
+    # from the first page with a granule position (a tag over pages: -1)
+    at = 0
+    while at + 27 <= size:
+        f.seek(at)
+        head = f.read(27)
+        if head[:4] != b'OggS':
+            return None
+        lacing = f.read(head[26])
+        if struct.unpack('<q', head[6:14])[0] > 0:
+            return at, size
+        at += 27 + len(lacing) + sum(lacing)
+    return None
+
+
+SOUND_BYTES = dict(mp2=get_mpeg_sound, mp3=get_mpeg_sound, aac=get_mpeg_sound,
+                   ac3=get_mpeg_sound, flac=get_flac_sound, m4a=get_mp4_sound,
+                   mp4=get_mp4_sound, wav=get_riff_sound, aiff=get_riff_sound,
+                   ogg=get_ogg_sound, opus=get_ogg_sound)
+
+
+def read_sound_piece(f, at, end, ogg):
+    f.seek(at)
+    if ogg is False:
+        return f.read(min(SOUND_PIECE_SIZE, end - at))
+    # the next page's payload: page headers change with the tags before them
+    window = f.read(OGG_PAGE_MOST)
+    found = window.find(b'OggS')
+    if found < 0 or found + 27 > len(window):
+        return b''
+    body = found + 27 + window[found + 26]
+    length = sum(window[found + 27:body])
+    return window[body:body + min(length, SOUND_PIECE_SIZE)]
+
+
+def read_sound_bytes(path):
+    '''sha256 of the sound's bytes in pieces, or None (a format not read so)'''
+    ext = os.path.splitext(path)[1][1:].lower()
+    get_sound = SOUND_BYTES.get(ext)
+    if get_sound is None:
+        return None
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'rb') as f:
+            found = get_sound(f, size)
+            if found is None or found[1] <= found[0]:
+                return None
+            start, end = found
+            sound = hashlib.sha256(f'{ext} {end - start}'.encode('utf-8'))
+            for k in range(SOUND_PIECES):
+                at = start + (end - start) * (2 * k + 1) // (2 * SOUND_PIECES)
+                sound.update(read_sound_piece(f, at, end, get_sound is get_ogg_sound))
+    except (OSError, struct.error, ValueError):
+        return None
+    return sound.hexdigest()
+
+
+def open_sound(path):
     init_bass_decode()
-    hstream = pybass.BASS_StreamCreateFile(
+    return pybass.BASS_StreamCreateFile(
         False, path, 0, 0, pybass.BASS_STREAM_DECODE |
         pybass.BASS_STREAM_PRESCAN | pybass.BASS_UNICODE)
+
+
+def read_sound_decoded(path):
+    '''sha256 of a second of the decoded sound at a few places, or None'''
+    hstream = open_sound(path)
     if hstream == 0:
         return None
     try:
@@ -2233,57 +2383,96 @@ def read_sound(path):
         if length <= 0 or length == 0xFFFFFFFFFFFFFFFF\
                 or pybass.BASS_ChannelGetInfo(hstream, ctypes.byref(info)) is False:
             return None
-        duration = pybass.BASS_ChannelBytes2Seconds(hstream, length)
         frame = 2 * info.chans
         size = int(info.freq * SOUND_SECONDS) * frame
         buffer = ctypes.create_string_buffer(size)
-        md5 = hashlib.md5(f'{length} {info.freq} {info.chans}'.encode('utf-8'))
+        sound = hashlib.sha256(f'pcm {length} {info.freq} {info.chans}'.encode('utf-8'))
         for spot in SOUND_SPOTS:
             pybass.BASS_ChannelSetPosition(hstream, int(length * spot) // frame * frame, False)
             got = pybass.BASS_ChannelGetData(hstream, buffer, size)
             if got == 0xFFFFFFFF:
                 return None
-            md5.update(buffer.raw[:got])
-        return md5.hexdigest(), duration
+            sound.update(buffer.raw[:got])
+        return sound.hexdigest()
     finally:
         pybass.BASS_StreamFree(hstream)
 
 
+def read_sound(path):
+    sound = read_sound_bytes(path)
+    if sound is None:
+        sound = read_sound_decoded(path)
+    return sound
+
+
+def get_sound_duration(path):
+    # as mfeats_single measures it
+    hstream = open_sound(path)
+    if hstream == 0:
+        return None
+    try:
+        length = pybass.BASS_ChannelGetLength(hstream, pybass.BASS_POS_BYTE)
+        return pybass.BASS_ChannelBytes2Seconds(hstream, length)
+    finally:
+        pybass.BASS_StreamFree(hstream)
+
+
+def connect_sound():
+    # the tables checked once a database, not on every song imported
+    if MFEATS_DB in SOUND_READY:
+        return sqlite3.connect(MFEATS_DB)
+    conn = connect_grid()
+    columns = [v[1] for v in conn.execute(f'PRAGMA table_info({SOUND_TABLE})')]
+    # the first table (decoded sound with its length): made again
+    if 'duration' in columns:
+        conn.execute(f'DROP TABLE {SOUND_TABLE}')
+        conn.commit()
+    conn.execute(f'CREATE TABLE IF NOT EXISTS {SOUND_TABLE} '
+                 f'({",".join([" ".join(field) for field in SOUND_DEFINITION])})')
+    conn.execute(f'CREATE INDEX IF NOT EXISTS {SOUND_TABLE}_sound ON {SOUND_TABLE} (sound)')
+    SOUND_READY.add(MFEATS_DB)
+    return conn
+
+
 def keep_sound(path):
-    '''the song's sound read and kept: (sound, duration), or None'''
-    found = read_sound(path)
-    if found is None:
+    '''the song's sound read and kept, or None'''
+    sound = read_sound(path)
+    if sound is None:
         return None
     conn = connect_sound()
     try:
-        conn.execute(f'INSERT OR REPLACE INTO {SOUND_TABLE} VALUES (?,?,?,?)',
-                     (makemdx(path), found[0], found[1], SOUND_VERSION))
+        conn.execute(f'INSERT OR REPLACE INTO {SOUND_TABLE} VALUES (?,?,?)',
+                     (makemdx(path), sound, SOUND_VERSION))
         conn.commit()
     finally:
         conn.close()
-    return found
+    return sound
 
 
-def find_unkept_sound(conn, mdx, sound, duration):
+def find_unkept_sound(conn, path, sound):
     '''songs analyzed before their sound was kept: those of this length read now'''
+    duration = get_sound_duration(path)
+    if duration is None:
+        return []
     rows = conn.execute(
         f'SELECT mdx, path FROM mfeats WHERE duration BETWEEN ? AND ? AND version = ? '
-        f'AND error = 0 AND mdx != ? AND mdx NOT IN (SELECT mdx FROM {SOUND_TABLE}) LIMIT ?',
-        (duration - SOUND_DURATION_GAP, duration + SOUND_DURATION_GAP, MFEATS_VERSION, mdx,
-         SOUND_UNKEPT_MOST)).fetchall()
+        f'AND error = 0 AND mdx != ? AND mdx NOT IN '
+        f'(SELECT mdx FROM {SOUND_TABLE} WHERE version = ?) LIMIT ?',
+        (duration - SOUND_DURATION_GAP, duration + SOUND_DURATION_GAP, MFEATS_VERSION,
+         makemdx(path), SOUND_VERSION, SOUND_UNKEPT_MOST)).fetchall()
     found = []
-    for other, path in rows:
+    for other, other_path in rows:
         # its file gone or changed since: its sound not known
-        if os.path.isfile(path) is False or makemdx(path) != other:
+        if os.path.isfile(other_path) is False or makemdx(other_path) != other:
             continue
-        kept = keep_sound(path)
-        if kept is not None and kept[0] == sound:
+        if keep_sound(other_path) == sound:
             found.append(other)
     return found
 
 
-def copy_analysis(path, sound, duration):
+def copy_analysis(path, sound, unkept=True):
     '''the analysis of the same sound under another path copied to this one; False if none'''
+    # unkept: songs analyzed before their sound was kept looked for too (their files read)
     mdx = makemdx(path)
     conn = connect_sound()
     try:
@@ -2291,8 +2480,8 @@ def copy_analysis(path, sound, duration):
             f'SELECT s.mdx FROM {SOUND_TABLE} s JOIN mfeats m ON m.mdx = s.mdx '
             'WHERE s.sound = ? AND s.version = ? AND s.mdx != ? AND m.version = ? '
             'AND m.error = 0', (sound, SOUND_VERSION, mdx, MFEATS_VERSION))]
-        if len(others) == 0:
-            others = find_unkept_sound(conn, mdx, sound, duration)
+        if len(others) == 0 and unkept:
+            others = find_unkept_sound(conn, path, sound)
         if len(others) == 0:
             return False
         # one with its grid first: the manual moves come along
@@ -2309,10 +2498,25 @@ def copy_analysis(path, sound, duration):
         conn.execute(f'INSERT INTO {GRID_TABLE} (mdx,{",".join(fields)}) '
                      f'SELECT ?,{",".join(fields)} FROM {GRID_TABLE} WHERE mdx = ?',
                      (mdx, other))
+        conn.execute(f'INSERT OR REPLACE INTO {SOUND_TABLE} VALUES (?,?,?)',
+                     (mdx, sound, SOUND_VERSION))
         conn.commit()
     finally:
         conn.close()
     return True
+
+
+def carry_sound(path):
+    '''on import: the analysis of the same sound copied if kept; its bytes read only'''
+    if os.path.isfile(path) is False:
+        return False
+    sound = read_sound_bytes(path)
+    if sound is None:
+        return False
+    try:
+        return copy_analysis(path, sound, unkept=False)
+    except sqlite3.Error:
+        return False
 
 
 def move_analysis(old_mdx, mdx, path):
