@@ -3398,8 +3398,6 @@ class CoverEditCanvas(wx.Window):
     HANDLE = 9
     # least side, view picture px
     LEAST = 12
-    # the grid's lines about this far apart, window px
-    GRID_STEP = 40
 
     def __init__(self, parent, square, changed):
         wx.Window.__init__(self, parent, style=wx.BORDER_NONE | wx.WANTS_CHARS)
@@ -3408,7 +3406,7 @@ class CoverEditCanvas(wx.Window):
         self.box = [0.0, 0.0, 1.0, 1.0]
         self.square = square
         self.changed = changed
-        self.grid = False
+        self.grid = True
         self.bitmap = None
         self.drag = None
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
@@ -3483,13 +3481,6 @@ class CoverEditCanvas(wx.Window):
     def SetGrid(self, grid):
         self.grid = grid
         self.Refresh()
-
-    def GetGridParts(self, width, height):
-        # thirds; the grid: each third cut again, the cells near square
-        if self.grid is False:
-            return 3, 3
-        return tuple(3 * max(1, int(round(side / (3.0 * self.GRID_STEP))))
-                     for side in (width, height))
 
     def Clamp(self, box):
         # moved inside the picture, its size kept
@@ -3619,18 +3610,14 @@ class CoverEditCanvas(wx.Window):
         gc.DrawRectangle(bx, bottom, bw, by + bh - bottom)
         gc.DrawRectangle(bx, top, left - bx, bottom - top)
         gc.DrawRectangle(right, top, bx + bw - right, bottom - top)
-        # thirds, the grid's finer lines between them, then the edge in the accent
-        columns, rows = self.GetGridParts(right - left, bottom - top)
-        thirds = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 70)).Width(1))
-        fine = gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 40)).Width(1))
-        for i in range(1, columns):
-            gc.SetPen(thirds if i % (columns // 3) == 0 else fine)
-            x = left + (right - left) * i / float(columns)
-            gc.StrokeLine(x, top, x, bottom)
-        for i in range(1, rows):
-            gc.SetPen(thirds if i % (rows // 3) == 0 else fine)
-            y = top + (bottom - top) * i / float(rows)
-            gc.StrokeLine(left, y, right, y)
+        # thirds when the grid is on, then the edge in the accent
+        if self.grid:
+            gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(255, 255, 255, 70)).Width(1)))
+            for i in (1, 2):
+                x = left + (right - left) * i / 3.0
+                y = top + (bottom - top) * i / 3.0
+                gc.StrokeLine(x, top, x, bottom)
+                gc.StrokeLine(left, y, right, y)
         gc.SetBrush(wx.NullGraphicsBrush)
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(uikit.colour(ui.ACCENT)).Width(2)))
         gc.DrawRectangle(left, top, right - left, bottom - top)
@@ -3648,6 +3635,8 @@ class ValueSlider(wx.Window):
 
     HEIGHT = 22
     KNOB = 12
+    # the knob's path in from each end, the knob kept inside
+    INSET = KNOB // 2 + 1
 
     def __init__(self, parent, least, most, value, changed, width):
         wx.Window.__init__(self, parent, size=(width, self.HEIGHT),
@@ -3679,7 +3668,7 @@ class ValueSlider(wx.Window):
     def GetTrack(self):
         # (left, right) of the knob's path
         w = self.GetClientSize().width
-        return self.KNOB / 2.0 + 1, w - self.KNOB / 2.0 - 1
+        return self.INSET, w - self.INSET
 
     def ToX(self, value):
         left, right = self.GetTrack()
@@ -3787,10 +3776,10 @@ class CoverEditBox(DialogBox):
                             DIALOG_PAD * 2 + self.VIEW + self.GetFooterHeight()))
         self.Canvas = CoverEditCanvas(self, square, self.OnBoxChanged)
         self.Canvas.SetRect((DIALOG_PAD, DIALOG_PAD, self.VIEW, self.VIEW))
-        self.Canvas.SetGrid(GetPreference('cover_edit_grid') is True)
+        self.Canvas.SetGrid(GetPreference('cover_edit_grid') is not False)
         self.Canvas.SetToolTip(wx.ToolTip(
             'Drag inside to move, a corner to size, outside for a new box.\n'
-            'Wheel or +/- sizes it, arrows move it (Shift: by 10), G shows the grid.'))
+            'Wheel or +/- sizes it, arrows move it (Shift: by 10), G shows or hides the grid.'))
         self.MakeSide(square)
         self.ResetButton = Button(self, label='Reset')
         self.ResetButton.Bind(wx.EVT_BUTTON, self.OnReset)
@@ -3820,6 +3809,8 @@ class CoverEditBox(DialogBox):
             button.Bind(wx.EVT_BUTTON, lambda e, step=step: self.Turn(step))
         y += DIALOG_BUTTON_HEIGHT + DIALOG_PAD
         y += self.MakeHead('Adjust', x, y) + DIALOG_GAP
+        # between a slider and the next row's name
+        row_gap = DIALOG_GAP + 4
         self.sliders = dict()
         self.values = dict()
         self.autos = dict()
@@ -3834,17 +3825,18 @@ class CoverEditBox(DialogBox):
             made = set(self.GetChildren())
             check, used = make_check(self, 'Auto', (0, y), self.edit[auto],
                                      lambda value, auto=auto: self.SetAuto(auto, value))
-            # the Auto check at the row's right end
+            # the Auto check from the value field's left, a column with it
             for window in set(self.GetChildren()) - made:
                 px, py = window.GetPosition()
-                window.SetPosition((px + x + width - used, py))
+                window.SetPosition((px + x + width - max(self.FIELD, used), py))
             self.autos[auto] = check
             y += DIALOG_ROW
             value = int(round(self.edit[key] * 10)) if key == 'angle' else self.edit[key]
+            # its path flush with the names, GAP short of the field; the knob past it
             slider = ValueSlider(self, least, most, value,
                                  lambda value, key=key: self.SetSlider(key, value),
-                                 width - self.FIELD - DIALOG_GAP)
-            slider.SetPosition((x, y))
+                                 width - self.FIELD - DIALOG_GAP + ValueSlider.INSET * 2)
+            slider.SetPosition((x - ValueSlider.INSET, y))
             slider.SetToolTip(f'{self.TIPS[key]}\nDouble-click: back to 0')
             self.sliders[key] = slider
             field = TextCtrl(self, pos=(x + width - self.FIELD, y),
@@ -3855,14 +3847,18 @@ class CoverEditBox(DialogBox):
             field.Bind(wx.EVT_KILL_FOCUS, lambda e, key=key: (self.TypeValue(key), e.Skip()))
             field.Bind(wx.EVT_KEY_DOWN, lambda e, key=key: self.OnValueKey(key, e))
             self.values[key] = field
-            y += ValueSlider.HEIGHT + DIALOG_GAP + 4
-        y += DIALOG_PAD - DIALOG_GAP
+            y += ValueSlider.HEIGHT + row_gap
+        line = text.GetBestSize().height
+        # PAD under every part, then its head
+        y += DIALOG_PAD - row_gap
         y += self.MakeHead('Crop', x, y) + DIALOG_GAP
         self.Square, used = make_check(self, 'Square', (x, y), square, self.OnSquare)
-        x += used + DIALOG_PAD
-        self.Grid, used = make_check(self, 'Grid', (x, y), self.Canvas.grid, self.OnGrid)
         self.Info = StaticText(self, label='', pos=(x + used + DIALOG_PAD, y))
         self.Info.SetForegroundColour(macroboxstyle.current().UI.BAR_TEXT_DIM)
+        y += line + DIALOG_PAD
+        # how the picture is shown here, nothing written
+        y += self.MakeHead('View', x, y) + DIALOG_GAP
+        self.Grid, _ = make_check(self, 'Grid', (x, y), self.Canvas.grid, self.OnGrid)
         self.ShowValues()
 
     def ShowValues(self):
@@ -6268,13 +6264,6 @@ class CoverLookUpBox(DialogBox):
         self.outputs = dict()
         self.pictures = dict()
         self.notes = dict()
-        least = (1120, 600)
-        self.SetMinClientSize(least)
-        kept = GetPreference('cover_lookup_size')
-        if isinstance(kept, tuple) and len(kept) == 2:
-            self.SetClientSize((max(kept[0], least[0]), max(kept[1], least[1])))
-        else:
-            self.SetClientSize((max(1080, least[0]), 720))
         self.Cards = CoverCards(self, 0, self.GetPicture, self.GetLines)
         self.Cards.empty = 'No covers found'
         self.Cards.loading = lambda k: self.candidates[k]['image'] not in self.notes
@@ -6307,18 +6296,12 @@ class CoverLookUpBox(DialogBox):
         self.CancelButton.Bind(wx.EVT_BUTTON, self.OnCancel)
         self.PageButton.Disable()
         self.ApplyButton.Disable()
-        # how the chosen picture is made, previewed before Apply; kept
-        self.adjust = dict()
-        for key, _ in self.ADJUSTS:
-            kept = GetPreference(f'cover_lookup_{key}')
-            self.adjust[key] = (key == 'square') if kept is None else bool(kept)
+        # covers not square cut square on their subject when written; kept
+        self.square = GetPreference('cover_lookup_square') is not False
         top = self.PlaceButtons(right=self.GetButtons())
         made = set(self.GetChildren())
-        x = DIALOG_PAD
-        for key, name in self.ADJUSTS:
-            _, used = make_check(self, name, (x, top + 5), self.adjust[key],
-                                 lambda value, key=key: self.SetAdjust(key, value))
-            x += used + DIALOG_PAD
+        _, square_width = make_check(self, 'Square', (DIALOG_PAD, top + 5), self.square,
+                                     self.SetSquare)
         self.checks = [(v, v.GetPosition().y - top) for v in self.GetChildren()
                        if v not in made]
         # keep the files' modified date (the editor's KEEP setting)
@@ -6342,6 +6325,20 @@ class CoverLookUpBox(DialogBox):
                     window.Unbind(wx.EVT_LEFT_DOWN)
                 else:
                     window.Disable()
+        # no narrower than the footer's parts apart, nor than a card by the details;
+        # no lower than the details' preview and a few of its lines
+        buttons = self.GetButtons()
+        footer = DIALOG_PAD * 6 + square_width + self.keep_width + DIALOG_GAP * (
+            len(buttons) - 1) + sum(v.GetSize().width for v in buttons)
+        cards = DIALOG_PAD * 3 + CoverCards.CARD + CoverCards.GAP * 2 + CoverCards.SCROLL \
+            + self.DETAILS
+        least = (max(footer, cards), 440)
+        self.SetMinClientSize(least)
+        kept = GetPreference('cover_lookup_size')
+        if isinstance(kept, tuple) and len(kept) == 2:
+            self.SetClientSize((max(kept[0], least[0]), max(kept[1], least[1])))
+        else:
+            self.SetClientSize((max(1080, least[0]), 720))
         self.built = True
         self.PlaceParts()
         self.Spin = wx.Timer(self)
@@ -6357,9 +6354,6 @@ class CoverLookUpBox(DialogBox):
         event.Skip()
 
     DETAILS = 230
-    # what the chosen picture is made into, square alone at first
-    ADJUSTS = (('scan', 'Fix scan'), ('square', 'Square'), ('contrast', 'Auto contrast'),
-               ('brightness', 'Auto brightness'), ('color', 'Auto color'))
 
     def GetButtons(self):
         return (self.PageButton, self.PrevButton, self.NextButton, self.ApplyButton,
@@ -6544,17 +6538,11 @@ class CoverLookUpBox(DialogBox):
         if self.Cards.selected != k:
             self.Cards.Select(k)
         if name in COVER_PRESETS:
-            edit = preset_cover(self.data[url], self.edits.get(url), COVER_PRESETS[name],
-                                self.GetAutos())
+            edit = preset_cover(self.data[url], self.edits.get(url), COVER_PRESETS[name])
             if edit is not None:
                 self.KeepEdit(url, edit)
         elif name == 'Edit Cover...':
             self.EditChosen()
-
-    def GetAutos(self):
-        # a new edit starts from the checks below
-        return dict(auto_angle=self.adjust['scan'], auto_contrast=self.adjust['contrast'],
-                    auto_brightness=self.adjust['brightness'], auto_color=self.adjust['color'])
 
     def OnPreviewMenu(self):
         chosen = self.tracks[self.index]['chosen']
@@ -6567,7 +6555,7 @@ class CoverLookUpBox(DialogBox):
         if chosen is None or chosen['image'] not in self.data:
             return
         url = chosen['image']
-        edit = pick_cover_edit(self, self.data[url], self.edits.get(url), self.GetAutos())
+        edit = pick_cover_edit(self, self.data[url], self.edits.get(url))
         if edit is not None:
             self.KeepEdit(url, edit)
         self.Cards.SetFocus()
@@ -6596,10 +6584,10 @@ class CoverLookUpBox(DialogBox):
         cover = self.notes.get(url, 'Loading...')
         preview = None
         if url in self.data:
-            data, size, done = self.GetOutput(url)
+            data, size, changed = self.GetOutput(url)
             ground = wx.Colour(macroboxstyle.current().UI.RAISED_BG).Get()[:3]
             preview, _ = fit_picture(data, self.DETAILS - CoverDetails.GUTTER, ground)
-            if size and ('Square' in done or 'Fix scan' in done or 'Edited' in done):
+            if size and changed:
                 cover = f'{cover} to {format_picture_size(size)}'
         self.Details.loading = url not in self.notes
         self.Details.SetPreview(preview)
@@ -6723,35 +6711,31 @@ class CoverLookUpBox(DialogBox):
         self.keep = value
         SetPreference('item_editor_keep_modified', value)
 
-    def SetAdjust(self, key, value):
-        self.adjust[key] = value
-        SetPreference(f'cover_lookup_{key}', value)
+    def SetSquare(self, value):
+        self.square = value
+        SetPreference('cover_lookup_square', value)
         self.outputs.clear()
         self.ShowDetails()
 
     def GetOutput(self, url):
-        # picture to write as the checks make it: (bytes, size, done), cached
+        # picture to write: (bytes, size, changed), cached
         if url in self.outputs:
             return self.outputs[url]
         data = self.data[url]
-        asked = dict(self.adjust)
         edit = self.edits.get(url)
+        changed = edit is not None
         if edit is not None:
-            # edited by hand: the checks left out
+            # edited by hand: the Square check left out
             edited = listimages.edit_cover(data, edit)
             data = data if edited is None else edited
-            asked = dict((key, False) for key in asked)
-        asked['square'] = asked['square'] and (
-            asked['scan'] or listimages.is_square(data) is False)
-        done = [name.replace('Auto ', '') for key, name in self.ADJUSTS if asked[key]]
-        if edit is not None:
-            done.insert(0, 'Edited')
-        data = listimages.adjust_cover(data, **asked)
+        elif self.square and listimages.is_square(data) is False:
+            data = listimages.square_cover(data)
+            changed = True
         try:
             size = wx.Image(io.BytesIO(data)).GetSize()
         except Exception:
             size = None
-        self.outputs[url] = (data, size, done)
+        self.outputs[url] = (data, size, changed)
         return self.outputs[url]
 
     # closed
@@ -6762,7 +6746,7 @@ class CoverLookUpBox(DialogBox):
             webbrowser.open(chosen['url'])
 
     def OnApply(self, event):
-        # each track's chosen cover, as the checks make it: (path, mdx, bytes)
+        # each track's chosen cover, as it will be written: (path, mdx, bytes)
         results = [(v['path'], v['mdx'], self.GetOutput(v['chosen']['image'])[0])
                    for v in self.tracks
                    if v['chosen'] is not None and v['chosen']['image'] in self.data]

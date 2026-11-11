@@ -351,16 +351,6 @@ def get_subject_square_box(picture):
     return (0, start, side, start + side)
 
 
-def cut_picture(picture, scan=False, square=False):
-    '''scan straightened and trimmed, cut square on its subject'''
-    if scan and min(picture.size) >= SCAN_LEAST:
-        picture = straighten(picture, find_tilt(picture))
-        picture = picture.crop(find_trim_box(picture))
-    if square and picture.size[0] != picture.size[1]:
-        picture = picture.crop(get_subject_square_box(picture))
-    return picture
-
-
 # auto brightness: lift below the first mean, lower above the second, by gamma
 BRIGHTNESS_RANGE = (100, 185)
 GAMMA_MOST = (0.55, 1.4)
@@ -444,26 +434,16 @@ def encode_picture(picture, kind):
     return out.getvalue()
 
 
-def adjust_cover(data, scan=False, square=False, contrast=False, brightness=False,
-                 color=False):
-    '''the picture prepared for Look Up Cover'''
-    if not (scan or square or contrast or brightness or color):
-        return data
+def square_cover(data):
+    '''the picture cut square on its subject, for Look Up Cover'''
     try:
         picture = Image.open(io.BytesIO(data))
         picture.load()
     except Exception:
         return data
-    kind = picture.format
-    picture = cut_picture(picture, scan, square)
-    if contrast or brightness or color:
-        alpha = picture.getchannel('A') if picture.mode in ('RGBA', 'LA') else None
-        picture = picture.convert('RGB')
-        tables = get_tone_tables(picture, contrast, brightness, color)
-        picture = picture.point(sum(tables, []))
-        if alpha is not None and kind == 'PNG':
-            picture.putalpha(alpha)
-    return encode_picture(picture, kind)
+    if picture.size[0] == picture.size[1]:
+        return data
+    return encode_picture(picture.crop(get_subject_square_box(picture)), picture.format)
 
 
 # Edit Cover: turn, level, cut, then tone; its box in shares of the turned picture
