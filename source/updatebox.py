@@ -80,6 +80,7 @@ class UpdateBox(RectBox):
         self.stacked = False
         self.rects = []
         self.drawn = None
+        self.tips = uikit.CutTips(self)
         # text extents from the renderer the box draws with
         self.measure = wx.GraphicsContext.Create()
         self.Hide()
@@ -219,6 +220,8 @@ class UpdateBox(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         if self.release is None or self.parent.HasToSkipEvent():
             return
+        held = event.LeftIsDown or event.RightIsDown
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         # under the mouse and pressed, drawn again when that changes
         pressed = event.LeftIsDown and event.down.rectIdx is not None\
             and event.down.rectIdx == event.rectIdx
@@ -264,6 +267,8 @@ class UpdateBox(RectBox):
         title = fit_text(gc, self.GetTitle(), limit)
         gc.DrawText(title, left, uikit.get_caps_top(title_font, top, self.KEY_HEIGHT))
         after = left + gc.GetTextExtent(title)[0] + self.MESSAGE_GAP
+        self.tips.Clear()
+        self.tips.Add((left, top, int(after - left), self.KEY_HEIGHT), self.GetTitle(), title)
 
         # the version here, or what the update is doing (an error in the warning's orange)
         font = uikit.get_font(12)
@@ -274,6 +279,8 @@ class UpdateBox(RectBox):
             room -= self.PROGRESS_WIDTH + self.GAP
         message = fit_text(gc, self.GetMessage(), room)
         gc.DrawText(message, after, uikit.get_caps_top(font, top, self.KEY_HEIGHT))
+        self.tips.Add((int(after), top, int(max(room, 1)), self.KEY_HEIGHT), self.GetMessage(),
+                      message)
         if self.progress is not None and room > 0:
             self.DrawProgress(gc, after + gc.GetTextExtent(message)[0] + self.GAP,
                               top + (self.KEY_HEIGHT - self.PROGRESS_HEIGHT) // 2)
@@ -298,8 +305,11 @@ class UpdateBox(RectBox):
         text_limit = limit - self.SCROLL_WIDTH * 3
         shown = self.lines[self.top_line:self.top_line + self.NOTES_LINES]
         for index, line in enumerate(shown):
-            gc.DrawText(fit_text(gc, line, text_limit), left,
+            fitted = fit_text(gc, line, text_limit)
+            gc.DrawText(fitted, left,
                         uikit.get_caps_top(font, top + self.LINE_ROW * index, self.LINE_ROW))
+            self.tips.Add((left, top + self.LINE_ROW * index, int(text_limit), self.LINE_ROW),
+                          line, fitted)
         scroll = self.GetScrollLimit()
         if scroll:
             # where the notes are scrolled to, by the wheel

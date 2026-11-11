@@ -1766,6 +1766,7 @@ class PlayBoxTitle(RectBox):
             title_type = 0
         self.title_type = title_type
         self.subtitle = ''
+        self.tips = uikit.CutTips(self)
         self.SetBackgroundColour(self.parent.st.PLAY_BG_COLOR)
         self.InitBuffer()
 
@@ -1799,6 +1800,8 @@ class PlayBoxTitle(RectBox):
         # a pixel under the cover's top: its corners are round
         y = (height - th) // 2 if compact else 1
         self.rect = wx.Rect(0, y, tw, th)
+        self.tips.Clear()
+        self.tips.Add(self.rect, self.title, title)
         dc.SetTextForeground(st.TITLE_FG_COLOR)
         dc.DrawText(title, 0, y)
         if compact or not self.subtitle:
@@ -1810,6 +1813,8 @@ class PlayBoxTitle(RectBox):
         dc.SetTextForeground(st.TITLE_DIM_COLOR)
         # 6 px under the title's descenders
         dc.DrawText(subtitle, 0, th + 4)
+        sw, sh = dc.GetTextExtent(subtitle)
+        self.tips.Add((0, th + 4, sw, sh), self.subtitle, subtitle)
 
     def GetSubtitle(self):
         # the file's folder; for a station its name
@@ -1865,6 +1870,8 @@ class PlayBoxTitle(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         # if self.parent.parent.HasToSkipEvent(): return
         # self.HandleItemDrag(event)
+        held = event.LeftIsDown or event.RightIsDown
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         self.HandleTitleChange(event)
         self.parent.HandleTrackEditor(event, self)
         self.parent.HandleDragOut(self, event, 'file')

@@ -842,8 +842,9 @@ class ListBoxTabList(RectBox):
         self.rows = []
         self.hover_key = None
         self.down_key = None
-        # an add row held: done on its release over it
+        # add row pressed
         self.pressed_key = None
+        self.tips = uikit.CutTips(self)
         self.drop_favorites = False
         self.drop_starred = False
         self.drop_into = None
@@ -1141,6 +1142,7 @@ class ListBoxTabList(RectBox):
         return (listId, root, bool(playbox.IsPlaying()))
 
     def DrawTabText(self, dc):
+        self.tips.Clear()
         if self.tab_rel_width < 30:
             return
         fg, dim = self.GetColours()[:2]
@@ -1170,8 +1172,9 @@ class ListBoxTabList(RectBox):
                 self.DrawRowIcon(dc, self.GetRowIcon(title), rect.x + self.ICON_X,
                                  rect.y + rect.height / 2.0, dim)
             # the radio's tabs by their names
-            text = self.LimitTextLength(dc, radio.RADIO_TABS.get(title, title),
-                                        rect.width - margin - self.ICON_ROOM)
+            name = radio.RADIO_TABS.get(title, title)
+            text = self.LimitTextLength(dc, name, rect.width - margin - self.ICON_ROOM)
+            self.tips.Add(rect, name, text)
             th = dc.GetTextExtent(text)[1]
             dc.DrawText(text, rect.x + self.ICON_X + self.ICON_ROOM, rect.y + (rect.height - th) // 2)
         # the rows adding a playlist, a root: dimmed, the + before them
@@ -1184,6 +1187,7 @@ class ListBoxTabList(RectBox):
             self.DrawRowIcon(dc, 'add', rect.x + self.ICON_X, rect.y + rect.height / 2.0, dim)
             text = self.LimitTextLength(dc, row.title, rect.width - 15 - self.scrollbar_size
                                         - self.ICON_ROOM)
+            self.tips.Add(rect, row.title, text)
             th = dc.GetTextExtent(text)[1]
             dc.DrawText(text, rect.x + self.ICON_X + self.ICON_ROOM,
                         rect.y + (rect.height - th) // 2)
@@ -1208,6 +1212,7 @@ class ListBoxTabList(RectBox):
                 self.DrawRowIcon(dc, 'folder', rect.x + self.ICON_X, rect.y + rect.height / 2.0,
                                  dim)
             text = self.LimitTextLength(dc, entry.name, rect.width - margin - self.ICON_ROOM)
+            self.tips.Add(rect, entry.name, text)
             th = dc.GetTextExtent(text)[1]
             dc.DrawText(text, rect.x + self.ICON_X + self.ICON_ROOM,
                         rect.y + (rect.height - th) // 2)
@@ -1580,6 +1585,8 @@ class ListBoxTabList(RectBox):
         # drawn again when the playing tab or its sounding changes
         if self.GetPlayingMark() != getattr(self, 'drawn_playing', None):
             self.reInitBuffer = True
+        held = event.LeftIsDown or event.RightIsDown or self.FileDrop.dragging
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         # self.HandleEventTabAddDown(event)
         if self.HandleEventSectionFold(event):
             return

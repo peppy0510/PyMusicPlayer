@@ -439,3 +439,45 @@ def draw_icon(gc, icon, rect, ink):
             gc.FillPath(path)
         edge = cx + sign * half
         gc.DrawRectangle(min(edge, edge + sign * 1.6), cy - half * 0.8, 1.6, half * 1.6)
+
+
+# texts drawn cut short: the whole one the window's tip under the mouse
+class CutTips():
+
+    def __init__(self, window):
+        self.window = window
+        self.cuts = dict()
+        self.tip = None
+
+    def Clear(self):
+        self.cuts.clear()
+
+    def Add(self, rect, text, shown):
+        # drawn again: its old cut replaced, or gone when it fits now
+        rect = wx.Rect(*rect)
+        key = tuple(rect.Get())
+        text = f'{text}'
+        if shown == text:
+            self.cuts.pop(key, None)
+        else:
+            self.cuts[key] = (rect, text)
+
+    def Forget(self):
+        # the window's tip set by another
+        self.tip = None
+
+    def Update(self, point=None):
+        # point: in the window, None off it
+        text = None
+        if point is not None:
+            point = wx.Point(*point)
+            for rect, whole in self.cuts.values():
+                if rect.Contains(point):
+                    text = whole
+        if text == self.tip:
+            return
+        self.tip = text
+        if text is None:
+            self.window.UnsetToolTip()
+        else:
+            self.window.SetToolTip(text)

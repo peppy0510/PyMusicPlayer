@@ -483,6 +483,7 @@ class ListBoxList(RectBox):
         self.TextEdit = None
         self.FileDrop = ListBoxListDnD(self)
         self.SetDropTarget(self.FileDrop)
+        self.tips = uikit.CutTips(self)
         bgcolor = self.parent.GetBackgroundColour()
         self.SetBackgroundColour(bgcolor)
 
@@ -676,6 +677,8 @@ class ListBoxList(RectBox):
         for i, column in enumerate(self.parent.GetShownColumns()):
             columns.append(Struct(x=x, width=column.width))
             x += column.width
+        if only is None:
+            self.tips.Clear()
         lines = list()
         n_texts = list()
         n_xys = list()
@@ -744,6 +747,8 @@ class ListBoxList(RectBox):
                     fits = max(int((column.width - left_margin - 8) // mono_width), 0)
                     limitedString = string if len(string) <= fits\
                         else string[:max(fits - 1, 0)] + '\u2026'
+                    self.tips.Add((column.x, row_size * row + rect.y - row_offset, column.width,
+                                   row_size), string, limitedString)
                     tw = mono_width * len(limitedString)
                     txy = (column.x + column.width - left_margin - tw,
                            row_size * row + rect.y + top_margin - row_offset + mono_shift)
@@ -755,6 +760,8 @@ class ListBoxList(RectBox):
                     continue
                 limitedString = self.LimitTextLength(
                     dc, string, column.width - left_margin - 8, tww)
+                self.tips.Add((column.x, row_size * row + rect.y - row_offset, column.width,
+                               row_size), string, limitedString)
                 txy = (column.x + left_margin,
                        row_size * row + rect.y + top_margin - row_offset)
                 if self.parent.IsHighlightedItem(item):
@@ -1232,6 +1239,9 @@ class ListBoxList(RectBox):
             self.reInitBuffer = True
         if self.parent.parent.HasToSkipEvent():
             return
+        # a cut cell's whole text, not while a button is held
+        held = event.LeftIsDown or event.RightIsDown
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         if self.HandleEventStar(event):
             return
         self.HandleEventItemDrag(event)
@@ -1658,6 +1668,7 @@ class ListBoxHeader(RectBox):
         self.cache.drag.columnIdx = None
         self.cache.drag.splitterIdx = None
         self.cache.skip = Struct(leftDClick=False)
+        self.tips = uikit.CutTips(self)
         self.pending = Struct(autoColumnWidthIdx=None, downColumnIdx=None,
                               insertColumnIdx=None, dragColumnWidth=None, ColumnSortDown=False,
                               LeftDoubleClick=False)
@@ -1775,6 +1786,7 @@ class ListBoxHeader(RectBox):
         sortedIdx = [i for i, v in enumerate(shownColumnsIdx) if v == lastSortedColumn[0]]
         xys = list()
         texts = list()
+        self.tips.Clear()
         if sys.platform.startswith('win'):
             osxpad = 0
         elif sys.platform.startswith('darwin'):
@@ -1788,6 +1800,7 @@ class ListBoxHeader(RectBox):
             limit = len([i for i in dc.GetPartialTextExtents(name)
                          if i <= rect.width - tw - 8 - right_pad])
             title = name[:limit]
+            self.tips.Add(rect, name, title)
             texts.append(title)
             xys.append((rect.x + 10, rect.y + margin_top + osxpad))
         # tw, th = dc.GetTextExtent('A')
@@ -1889,6 +1902,8 @@ class ListBoxHeader(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.parent.HasToSkipEvent():
             return
+        held = event.LeftIsDown or event.RightIsDown
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         self.HandleEventColumnSortDown(event)
         # self.HandleEventColumnShuffleDrag(event)
         self.HandleEventColumnSplitterAuto(event)
@@ -2738,6 +2753,10 @@ class ListBoxSearch(RectBox):
                 hint = text + '\u2026'
         if hint != self.SearchText.GetHint():
             self.SearchText.SetHint(hint)
+            if hint in hints:
+                self.SearchText.UnsetToolTip()
+            else:
+                self.SearchText.SetToolTip(hints[-1])
 
     def HandleEventDrawnControls(self, event):
         # chooser opens a menu, clear mark empties, elsewhere focuses the text
@@ -4844,7 +4863,9 @@ class LookUpList(wx.Window):
         frame = wx.GetApp().GetTopWindow()
         listbox = getattr(getattr(frame, 'MainPanel', None), 'ListBox', None)
         self.font = getattr(listbox, 'font', None) or self.GetFont()
+        self.tips = uikit.CutTips(self)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.tips.Update())
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
         self.Bind(wx.EVT_LEFT_DCLICK, self.OnLeftDClick)
@@ -5002,9 +5023,9 @@ class LookUpList(wx.Window):
         view, total = self.GetView(), self.count * self.ROW
         if total <= view or view <= 0:
             return None
-        w = self.GetClientSize().width
-        height = max(int(view * view / total), 24)
-        top = self.HEADER + int((view - height) * self.offset / (total - view))
+        w, track = self.GetClientSize().width, view - 4
+        height = max(int(track * view / total), 24)
+        top = self.HEADER + 2 + int((track - height) * self.offset / (total - view))
         return wx.Rect(w - self.SCROLL - 2, top, self.SCROLL, height)
 
     def OnSize(self, event):
@@ -5019,6 +5040,7 @@ class LookUpList(wx.Window):
         self.hoffset = int(min(self.hoffset, max(sum(self.widths) - w, 0)))
         dc.SetBackground(wx.Brush(wx.Colour(*st.LIST_BG_COLOR)))
         dc.Clear()
+        self.tips.Clear()
         self.DrawRows(dc, st, w, h)
         self.DrawHeader(dc, st, w)
         for thumb in (self.GetThumb(), self.GetHThumb()):
@@ -5062,6 +5084,11 @@ class LookUpList(wx.Window):
                     shown = wx.Control.Ellipsize(str(text), dc, wx.ELLIPSIZE_END,
                                                  max(x + width - self.PAD - left, 1))
                     dc.DrawText(shown, left, y + (self.ROW - th) // 2)
+                    # the row's part in the view
+                    top = max(y, self.HEADER)
+                    bottom = min(y + self.ROW, self.HEADER + self.GetView())
+                    if bottom > top:
+                        self.tips.Add((x, top, width, bottom - top), text, shown)
                 x += width
         dc.DestroyClippingRegion()
 
@@ -5083,8 +5110,9 @@ class LookUpList(wx.Window):
                 continue
             sorted_here = self.sort is not None and self.sort[0] == column
             room = width - self.PAD * 2 - (12 if sorted_here else 0)
-            dc.DrawText(wx.Control.Ellipsize(title.upper(), dc, wx.ELLIPSIZE_END,
-                                             max(room, 1)), x + self.PAD, top)
+            shown = wx.Control.Ellipsize(title.upper(), dc, wx.ELLIPSIZE_END, max(room, 1))
+            dc.DrawText(shown, x + self.PAD, top)
+            self.tips.Add((x, 0, width, self.HEADER), title.upper(), shown)
             if sorted_here:
                 cx, cy, size = x + width - self.PAD - 3, self.HEADER // 2, 3
                 down = [(cx - size, cy - 1), (cx + size, cy - 1), (cx, cy + 2)]
@@ -5183,6 +5211,7 @@ class LookUpList(wx.Window):
         if self.drag is None:
             over = event.GetY() < self.HEADER and self.GetEdge(event.GetX()) is not None
             self.SetCursor(wx.Cursor(wx.CURSOR_SIZEWE if over else wx.CURSOR_ARROW))
+            self.tips.Update(None if over else event.GetPosition())
         if self.drag is None or not event.LeftIsDown():
             return
         thumb = self.GetThumb()
@@ -5190,7 +5219,7 @@ class LookUpList(wx.Window):
             return
         y, offset = self.drag
         total, view = self.count * self.ROW, self.GetView()
-        moved = (event.GetY() - y) * (total - view) / max(view - thumb.height, 1)
+        moved = (event.GetY() - y) * (total - view) / max(view - 4 - thumb.height, 1)
         self.Scroll(offset + moved)
 
     def OnCaptureLost(self, event):
@@ -5778,13 +5807,14 @@ class CoverCards(wx.Window):
         self.angle = 0.0
         # told: on_select(k), on_activate(k), on_menu(k), on_page(step: Page Up, Down)
         self.on_select = self.on_activate = self.on_menu = self.on_page = None
+        self.tips = uikit.CutTips(self)
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Bind(wx.EVT_SIZE, lambda e: (self.Scroll(self.offset), e.Skip()))
         self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
         self.Bind(wx.EVT_LEFT_DCLICK, self.OnLeftDClick)
         self.Bind(wx.EVT_LEFT_UP, self.OnLeftUp)
         self.Bind(wx.EVT_MOTION, self.OnMotion)
-        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetHover(-1))
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: (self.SetHover(-1), self.tips.Update()))
         self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, lambda e: setattr(self, 'drag', None))
         self.Bind(wx.EVT_MOUSEWHEEL, self.OnWheel)
         self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
@@ -5864,8 +5894,9 @@ class CoverCards(wx.Window):
         total = self.GetTotal()
         if total <= h or h <= 0:
             return None
-        height = max(int(h * h / total), 24)
-        top = int((h - height) * self.offset / (total - h))
+        track = h - 4
+        height = max(int(track * h / total), 24)
+        top = 2 + int((track - height) * self.offset / (total - h))
         return wx.Rect(w - self.SCROLL - 2, top, self.SCROLL, height)
 
     def OnPaint(self, event):
@@ -5877,6 +5908,7 @@ class CoverCards(wx.Window):
         dc.Clear()
         dc.SetFont(uikit.get_font(uikit.BODY))
         th = dc.GetTextExtent('Ag')[1]
+        self.tips.Clear()
         if self.count == 0 and self.searching:
             draw_spinner(dc, w / 2.0, h / 2.0 - 18, 14, self.angle, ui.ACCENT)
             text = 'Looking up covers...'
@@ -5918,6 +5950,8 @@ class CoverCards(wx.Window):
                 dc.SetTextForeground(wx.Colour(colour))
                 shown = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_END, side)
                 dc.DrawText(shown, rect.x, rect.y + side + 4 + n * (th + 2))
+                self.tips.Add((rect.x, rect.y + side + 4 + n * (th + 2), side, th + 2), text,
+                              shown)
         thumb = self.GetThumb()
         if thumb is not None:
             dc.SetPen(wx.TRANSPARENT_PEN)
@@ -5952,9 +5986,10 @@ class CoverCards(wx.Window):
                 y, offset = self.drag
                 h, total = self.GetClientSize().height, self.GetTotal()
                 self.Scroll(offset + (event.GetY() - y) * (total - h)
-                            / max(h - thumb.height, 1))
+                            / max(h - 4 - thumb.height, 1))
             return
         self.SetHover(self.HitTest(event.GetPosition()))
+        self.tips.Update(event.GetPosition())
 
     def OnLeftDClick(self, event):
         k = self.HitTest(event.GetPosition())
@@ -6011,7 +6046,8 @@ class CoverDetails(wx.Window):
         self.on_preview = self.on_preview_menu = None
         self.over_preview = False
         self.Bind(wx.EVT_RIGHT_UP, self.OnRightUp)
-        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: self.SetPreviewHover(False))
+        self.tips = uikit.CutTips(self)
+        self.Bind(wx.EVT_LEAVE_WINDOW, lambda e: (self.SetPreviewHover(False), self.tips.Update()))
         self.Bind(wx.EVT_PAINT, self.OnPaint)
         self.Bind(wx.EVT_SIZE, lambda e: (self.Scroll(self.offset), e.Skip()))
         self.Bind(wx.EVT_MOUSEWHEEL, lambda e: self.Scroll(
@@ -6030,8 +6066,9 @@ class CoverDetails(wx.Window):
         w, h = self.GetClientSize()
         if self.total <= h or h <= 0:
             return None
-        height = max(int(h * h / self.total), 24)
-        top = int((h - height) * self.offset / (self.total - h))
+        track = h - 4
+        height = max(int(track * h / self.total), 24)
+        top = 2 + int((track - height) * self.offset / (self.total - h))
         return wx.Rect(w - self.SCROLL, top, self.SCROLL, height)
 
     def SetPreviewHover(self, over):
@@ -6080,11 +6117,16 @@ class CoverDetails(wx.Window):
         over = self.on_preview is not None and self.IsOverPreview(event.GetPosition())
         if self.drag is None:
             self.SetPreviewHover(over)
+            # the preview's own tip there
+            if over:
+                self.tips.Forget()
+            else:
+                self.tips.Update(event.GetPosition())
         if self.drag is None or thumb is None or not event.LeftIsDown():
             return
         y, offset = self.drag
         h = self.GetClientSize().height
-        self.Scroll(offset + (event.GetY() - y) * (self.total - h) / max(h - thumb.height, 1))
+        self.Scroll(offset + (event.GetY() - y) * (self.total - h) / max(h - 4 - thumb.height, 1))
 
     def SetFields(self, fields):
         # [(name, value)]
@@ -6120,6 +6162,7 @@ class CoverDetails(wx.Window):
         # text clear of the bar always, so lines do not rewrap
         tw = w - self.GUTTER
         y = -self.offset
+        self.tips.Clear()
         if self.preview is not None and self.preview.IsOk():
             dc.DrawBitmap(self.preview, 0, y)
             if self.on_preview is not None:
@@ -6140,9 +6183,13 @@ class CoverDetails(wx.Window):
             dc.SetFont(body)
             dc.SetTextForeground(wx.Colour(ui.TEXT))
             th = dc.GetTextExtent('Ag')[1]
-            for line in self.Wrap(dc, value, tw):
+            lines, top = self.Wrap(dc, value, tw), y
+            for line in lines:
                 dc.DrawText(line, 0, y)
                 y += th + 1
+            shown = ' '.join(lines)
+            self.tips.Add((0, top, tw, y - top), value,
+                          value if shown == ' '.join(value.split()) else shown)
             y += DIALOG_GAP + 2
         total = y + self.offset
         if total != self.total:

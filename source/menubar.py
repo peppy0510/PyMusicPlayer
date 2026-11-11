@@ -1861,8 +1861,12 @@ class PreferenceFileTypesPanel(DialogPanel):
             else:
                 label = fileassoc.get_default_name(ext) or 'No app'
             dc.SetFont(state.GetFont())
-            label = wx.Control.Ellipsize(label, dc, wx.ELLIPSIZE_END, state.GetSize().width)
-            state.SetLabelText(label)
+            shown = wx.Control.Ellipsize(label, dc, wx.ELLIPSIZE_END, state.GetSize().width)
+            state.SetLabelText(shown)
+            if shown == label:
+                state.UnsetToolTip()
+            else:
+                state.SetToolTip(label)
         total = len(fileassoc.FILE_TYPES)
         self.Status.SetLabelText(f'PyMusicPlayer opens {count} of {total} file types.')
         self.ResetButton.Enable(len(self.icons) > 0)

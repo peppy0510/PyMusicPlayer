@@ -139,6 +139,7 @@ class RackModule(RectBox):
         self.parts = dict((part[0], kept.get(part[0], True)) for part in self.PARTS)
         self.hits = []
         self.hovered = None
+        self.tips = uikit.CutTips(self)
         self.SetBackgroundColour(self.parent.st.RACK_BG_COLOR)
         self.InitBuffer()
 
@@ -486,6 +487,8 @@ class RackModule(RectBox):
         uikit.set_font(gc, title_font, colour(st.RACK_TEXT_COLOR))
         tw, th = gc.GetTextExtent(title)[:2]
         gc.DrawText(title, left, (HEADER - th) / 2.0)
+        self.tips.Clear()
+        self.tips.Add((left, 0, int(tw) + 1, HEADER), self.TITLE, title)
         if state is not None and level == 0:
             text, warned = state
             uikit.set_font(gc, state_font, colour(tokens.WARN if warned else st.RACK_LABEL_COLOR))
@@ -499,8 +502,10 @@ class RackModule(RectBox):
         for rect, (key, label, on, warned, kind), corners in layout:
             hover = self.hovered == key
             enabled = self.IsChipEnabled(key)
+            whole = label
             if compact and level >= 3:
                 label = SHORT_LABELS.get(label, label)
+            self.tips.Add(rect, whole, label)
             if kind == 'switch':
                 self.DrawSwitchChip(dc, rect, label, on, hover, font, compact)
             else:
@@ -567,6 +572,8 @@ class RackModule(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         if self.IsShown() is False:
             return
+        held = event.LeftIsDown or event.RightIsDown
+        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         point = wx.Point(int(event.X), int(event.Y))
         hit = self.GetHit(point) if self.onClient else None
         hovered = hit[1] if hit and hit[0] == 'chip' else hit
