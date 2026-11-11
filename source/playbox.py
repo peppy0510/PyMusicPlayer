@@ -1767,6 +1767,12 @@ class PlayBoxTitle(RectBox):
         self.title_type = title_type
         self.subtitle = ''
         self.tips = uikit.CutTips(self)
+        # the star after the title: its rect as drawn, hovered, held, its tip
+        self.starred = False
+        self.star_rect = None
+        self.star_hover = False
+        self.star_down = False
+        self.star_tip = None
         self.SetBackgroundColour(self.parent.st.PLAY_BG_COLOR)
         self.InitBuffer()
 
@@ -1785,6 +1791,9 @@ class PlayBoxTitle(RectBox):
     # title and subtitle font sizes
     TITLE_SIZE = 12
     SUBTITLE_SIZE = 11
+    # the star after the title, as the list's: its radius, its room
+    STAR_RADIUS = 5
+    STAR_ROOM = 18
 
     def DrawTitle(self, dc):
         # the title, the folder or station under it; one line when compact
@@ -1794,8 +1803,9 @@ class PlayBoxTitle(RectBox):
         font = uikit.get_font(uikit.BODY if compact else self.TITLE_SIZE, bold=True)
         dc.SetFont(font)
         title = self.title
-        if dc.GetTextExtent(title)[0] > width:
-            title = self.LimitTextLength(dc, title, width)
+        room = width - self.STAR_ROOM if self.parent.cue.path is not None else width
+        if dc.GetTextExtent(title)[0] > room:
+            title = self.LimitTextLength(dc, title, room)
         tw, th = dc.GetTextExtent(title)
         # a pixel under the cover's top: its corners are round
         y = (height - th) // 2 if compact else 1
@@ -1804,6 +1814,7 @@ class PlayBoxTitle(RectBox):
         self.tips.Add(self.rect, self.title, title)
         dc.SetTextForeground(st.TITLE_FG_COLOR)
         dc.DrawText(title, 0, y)
+        self.DrawStar(dc, tw + 6 + self.STAR_RADIUS, y + th // 2)
         if compact or not self.subtitle:
             return
         dc.SetFont(uikit.get_font(self.SUBTITLE_SIZE))
@@ -1815,6 +1826,71 @@ class PlayBoxTitle(RectBox):
         dc.DrawText(subtitle, 0, th + 4)
         sw, sh = dc.GetTextExtent(subtitle)
         self.tips.Add((0, th + 4, sw, sh), self.subtitle, subtitle)
+
+    def DrawStar(self, dc, cx, cy):
+        # as the list's: lit when starred, filled dim under the pointer, smaller held,
+        # else a faint outline
+        import listbox
+        self.star_rect = None
+        self.starred = self.IsStarred()
+        if self.parent.cue.path is None:
+            return
+        self.star_rect = wx.Rect(cx - 7, cy - 8, 15, 16)
+        r = self.STAR_RADIUS - 1 if self.star_down else self.STAR_RADIUS
+        ui = uikit.ui()
+        if self.starred:
+            listbox.draw_star(dc, cx, cy, r, ui.WARN)
+        elif self.star_hover:
+            listbox.draw_star(dc, cx, cy, r, ui.BAR_TEXT_DIM)
+        else:
+            bg = wx.Colour(self.parent.st.PLAY_BG_COLOR)
+            fg = wx.Colour(self.parent.st.TITLE_FG_COLOR)
+            outline = wx.Colour(*[int(a + (b - a) * 0.22) for a, b in
+                                  zip(bg.Get()[:3], fg.Get()[:3])])
+            listbox.draw_star_outlines(dc, [(cx + 0.5, cy + 0.5)], r, outline)
+
+    def IsStarred(self):
+        path = self.parent.cue.path
+        if path is None:
+            return False
+        if self.parent.IsStreamTrack():
+            return path in radio.get_favorite_urls(self.parent.parent.ListBox)
+        return path in library.get_favorite_tracks()
+
+    def GetStarTip(self):
+        kind = 'Favorites' if self.parent.IsStreamTrack() else 'Favorite tracks'
+        return f'Remove from {kind}' if self.starred else f'Add to {kind}'
+
+    def HandleStar(self, event):
+        # a button: toggled on its release over it; True when the event is the star's
+        rect = self.star_rect
+        over = rect is not None and self.onClient\
+            and rect.Contains(wx.Point(int(event.X), int(event.Y)))
+        if over != self.star_hover:
+            self.star_hover = over
+            self.reInitBuffer = True
+            self.DirectDraw()
+        if event.LeftDown and over:
+            self.star_down = True
+            self.reInitBuffer = True
+            self.DirectDraw()
+            return True
+        if self.star_down is False:
+            return False
+        if event.LeftUp:
+            self.star_down = False
+            if over:
+                self.ToggleStar()
+            self.reInitBuffer = True
+            self.DirectDraw()
+        # held: no drag nor double click of the title
+        return True
+
+    def ToggleStar(self):
+        if self.parent.IsStreamTrack():
+            radio.toggle_favorite(self.parent.parent, self.parent.cue.path)
+        else:
+            self.parent.ToggleFavoriteTrack()
 
     def GetSubtitle(self):
         # the file's folder; for a station its name
@@ -1870,14 +1946,28 @@ class PlayBoxTitle(RectBox):
     def CATCH_EVT_GLOBAL(self, event):
         # if self.parent.parent.HasToSkipEvent(): return
         # self.HandleItemDrag(event)
+        starred = self.HandleStar(event)
         held = event.LeftIsDown or event.RightIsDown
-        self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
+        if self.star_hover and held is False:
+            # the star's own tip there
+            self.tips.Forget()
+            if self.GetStarTip() != self.star_tip:
+                self.star_tip = self.GetStarTip()
+                self.SetToolTip(self.star_tip)
+        else:
+            if self.star_tip is not None:
+                self.star_tip = None
+                self.UnsetToolTip()
+            self.tips.Update((event.X, event.Y) if self.onClient and held is False else None)
         self.HandleTitleChange(event)
+        if starred:
+            return
         self.parent.HandleTrackEditor(event, self)
         self.parent.HandleDragOut(self, event, 'file')
 
     def HandleTitleChange(self, event):
-        if (self.GetTitle(), self.GetSubtitle()) == (self.title, self.subtitle):
+        if (self.GetTitle(), self.GetSubtitle(), self.IsStarred())\
+                == (self.title, self.subtitle, self.starred):
             return
         # redrawn on the next frame: a DirectDraw too soon does nothing
         self.reInitBuffer = True
