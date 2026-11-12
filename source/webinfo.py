@@ -9,6 +9,7 @@ email: peppy0510@hotmail.com
 
 import addons
 import contextlib
+import datetime
 import hashlib
 import json
 import os
@@ -30,10 +31,13 @@ CACHE_SECONDS = 60 * 60 * 24 * 30
 TIMEOUT = 15
 
 # seconds between two requests to one service, under each one's published limit
-# (Discogs 60/min with a token, AcoustID 3/s, Last.fm 5/s, iTunes about 20/min)
-INTERVALS = {'discogs': 1.1, 'acoustid': 0.4, 'lastfm': 0.25, 'itunes': 3.1, 'image': 0.5}
+# (Discogs 60/min with a token, AcoustID 3/s, Last.fm 5/s, iTunes about 20/min,
+# NetEase publishes none)
+INTERVALS = {'discogs': 1.1, 'acoustid': 0.4, 'lastfm': 0.25, 'itunes': 3.1, 'netease': 2.0,
+             'image': 0.5}
 IMAGE_MAX_BYTES = 5 * 1024 * 1024
-# a cover's side asked of iTunes, which gives no more than its original
+EPOCH = datetime.datetime(1970, 1, 1)
+# a cover's side asked of iTunes and NetEase, which give no more than their original
 COVER_SIDE = 1200
 
 PREFERENCE_KEYS = ('discogs_token', 'discogs_key', 'discogs_secret',
@@ -285,6 +289,40 @@ def lookup_itunes(artist, title, cache=None):
     return candidates
 
 
+def lookup_netease(artist, title, cache=None):
+    # songs' albums on NetEase Cloud Music, their covers asked at COVER_SIDE; no key
+    params = dict(s=' '.join([v for v in (artist, title) if v]), type=1, limit=10)
+    body = request_json('netease', 'https://music.163.com/api/cloudsearch/pc', params,
+                        post=True, cache=cache)
+    if body.get('code') != 200:
+        raise WebInfoError(f'netease: {body.get("msg") or body.get("code")}')
+    candidates = list()
+    for song in (body.get('result') or dict()).get('songs') or list():
+        album = song.get('al') or dict()
+        art = (album.get('picUrl') or '').split('?')[0]
+        if not art:
+            continue
+        # milliseconds from 1970, before it negative; 0 or a few seconds in when unknown
+        try:
+            published = int(song.get('publishTime') or 0)
+            year = (EPOCH + datetime.timedelta(milliseconds=published)).year
+        except (TypeError, ValueError, OverflowError):
+            year = ''
+        if year == EPOCH.year:
+            year = ''
+        try:
+            duration = int(song.get('dt') or 0) / 1000.0
+        except (TypeError, ValueError):
+            duration = None
+        names = ', '.join([v.get('name') or '' for v in song.get('ar') or list()])
+        url = f'https://music.163.com/#/album?id={album["id"]}' if album.get('id') else ''
+        image = f'https://{art.split("://", 1)[-1]}?param={COVER_SIDE}y{COVER_SIDE}'
+        candidates.append(candidate('NetEase', names or artist, song.get('name', title),
+                                    album.get('name', ''), year=year, url=url,
+                                    duration=duration or None, image=image))
+    return candidates
+
+
 def fetch_image(url, folder=None):
     # the image bytes, from the disk when fetched before
     if folder is None:
@@ -339,13 +377,14 @@ def lookup(path, artist, title, keys, cache=None):
 
 
 def lookup_covers(path, artist, title, keys, cache=None):
-    # (candidates, errors) with covers: iTunes's large ones first, then Discogs and Last.fm
-    # with their keys
+    # (candidates, errors) with covers: the large ones of iTunes and NetEase first, then
+    # Discogs and Last.fm with their keys
     if not artist and not title:
         artist, title = split_artist_title(path)
     jobs = list()
     if title:
         jobs.append(lambda: lookup_itunes(artist, title, cache))
+        jobs.append(lambda: lookup_netease(artist, title, cache))
     discogs_auth = get_discogs_auth(keys)
     if title and discogs_auth:
         jobs.append(lambda: lookup_discogs(artist, title, discogs_auth, cache))

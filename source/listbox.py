@@ -6786,7 +6786,7 @@ def look_up_cover(listbox):
 def look_up_cover_for(listbox, tracks, start=0, use=None, parent=None):
     '''look up covers for tracks, chosen from cards and written (or handed to use)'''
     frame = wx.GetTopLevelParent(listbox) if parent is None else parent
-    # iTunes with no key; Discogs and Last.fm with theirs
+    # iTunes and NetEase with no key; Discogs and Last.fm with theirs
     keys = dict(zip(webinfo.PREFERENCE_KEYS, GetPreferences(webinfo.PREFERENCE_KEYS)))
     # the window first, its cards when found
     dialog = CoverLookUpBox(frame, tracks, keys, start)
