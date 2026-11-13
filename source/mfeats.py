@@ -30,7 +30,6 @@ from multiprocessing.connection import Client
 from multiprocessing.connection import Listener
 from queue import Empty
 from queue import Queue
-from macroboxlib import PREFERENCE_DB
 from utilities import PipeMessenger
 from utilities import Struct
 from utilities import compress_object
@@ -50,6 +49,11 @@ from utilities import set_process_priority
 
 
 MFEATS_DB = os.path.join(get_user_docapp_path(), 'database.db')
+# macroboxlib's settings shelve, named here: importing macroboxlib would bring wx into
+# every analysis process
+PREFERENCE_DB = os.path.join(get_user_docapp_path(), 'settings')
+# the settings an analysis follows; the app sends their values with each job
+ANALYSIS_KEYS = ('tempo_restict_type', 'key_format_type', 'auto_save_tag')
 
 
 MFEATS_VERSION = '1.5.1'
@@ -147,8 +151,9 @@ class MFEATS(Struct):
 # https://gist.github.com/255291/c97d2b088c53104f1d0d7cf8b20e89fc788037df
 
 
-def mfeats_single(path, queue=None, on_wave=None):
+def mfeats_single(path, queue=None, on_wave=None, settings=None):
     # on_wave: called with the waveform early, before tempo octave and key
+    # settings: the ANALYSIS_KEYS values, read from the shelve when not given
     # uses mono data
 
     # tic = time.time()
@@ -515,8 +520,9 @@ def mfeats_single(path, queue=None, on_wave=None):
 
     # md5 = file2md5(upath)
 
-    tempo_type, key_type, save_tag = open_shelves(
-        ('tempo_restict_type', 'key_format_type', 'auto_save_tag'), PREFERENCE_DB)
+    if settings is None:
+        settings = open_shelves(ANALYSIS_KEYS, PREFERENCE_DB)
+    tempo_type, key_type, save_tag = settings
 
     if tempo_type is None or tempo_type == 0:
         pass
@@ -941,22 +947,20 @@ KEY_BUNCH_WAIT = 120
 
 def mfeats_worker(conn, model_address=None):
     # model_address: deeprhythm_server's (none: the model here)
-    # here, not in macroboxlib: a circular import killed spawned workers
+    # here, not in macroboxlib: a spawned worker imports this module, not the GUI
     set_process_priority(6)
     DEEPRHYTHM.address = model_address
     # DeepRhythm loads with the first song, after its waveform
     while True:
         try:
-            path = conn.recv()
+            job = conn.recv()
         except (EOFError, OSError):
             # app gone (pipe closed)
             return
-        if path is None:
+        if job is None:
             return
-        # ('grid', path): only the grid is missing; ('again', path): analyzed again as asked
-        kind = 'whole'
-        if isinstance(path, tuple):
-            kind, path = path
+        # 'grid': only the grid is missing; 'again': analyzed again as asked
+        kind, path, settings = job
         if kind == 'grid':
             resp = getby_key_value('mdx', makemdx(path), waveform=False)
             if resp is not None and resp.error == 0:
@@ -982,7 +986,7 @@ def mfeats_worker(conn, model_address=None):
             continue
         # keep a failed analysis as an error, or it retries on every start
         try:
-            result = mfeats_single(path, on_wave=insert_mfeats_wave)
+            result = mfeats_single(path, on_wave=insert_mfeats_wave, settings=settings)
         except Exception:
             result = MFEATS(mdx=makemdx(path), path=path, date=time.time(),
                             version=MFEATS_VERSION, error=1)

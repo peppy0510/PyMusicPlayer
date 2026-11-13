@@ -22,6 +22,7 @@ import mutagen
 import mutagen.id3
 import mutagen.mp3
 import os
+import shelve
 import sqlite3
 import stat
 import sys
@@ -39,11 +40,7 @@ from utilities import compress_object
 from utilities import decompress_object
 from utilities import get_user_appdata_path
 from utilities import get_user_docapp_path
-from utilities import open_shelve
-from utilities import open_shelves
 from utilities import path_mdx
-from utilities import save_shelve
-from utilities import save_shelves
 
 
 PRODUCT_PLATFORM = 'Windows'
@@ -240,20 +237,71 @@ class InnerList():
             self.lastSortedColumn = [idx, 1]
 
 
+# the shelve is read once and its values kept as stored: a read decodes its own copy,
+# a write still goes to the file at once
+PREFERENCES = None
+PREFERENCES_LOCK = threading.Lock()
+
+
+def load_preferences():
+    global PREFERENCES
+    if PREFERENCES is None:
+        stored = {}
+        db = shelve.open(PREFERENCE_DB)
+        try:
+            for key in list(db.keys()):
+                # an entry that no longer loads reads as missing, as before
+                try:
+                    stored[key] = db[key]
+                except Exception:
+                    pass
+        finally:
+            db.close()
+        PREFERENCES = stored
+    return PREFERENCES
+
+
+def read_preference(stored):
+    if stored is None:
+        return None
+    try:
+        return decompress_object(stored)
+    except Exception:
+        return None
+
+
+def write_preferences(keyvalues):
+    stored = [(key, compress_object(value)) for key, value in keyvalues]
+    with PREFERENCES_LOCK:
+        kept = load_preferences()
+        db = shelve.open(PREFERENCE_DB)
+        try:
+            for key, value in stored:
+                db[key] = value
+        finally:
+            db.close()
+        kept.update(stored)
+
+
 def SetPreference(key, value):
-    save_shelve(key, value, PREFERENCE_DB)
+    write_preferences([(key, value)])
 
 
 def GetPreference(key):
-    return open_shelve(key, PREFERENCE_DB)
+    with PREFERENCES_LOCK:
+        stored = load_preferences().get(key)
+    return read_preference(stored)
 
 
 def SetPreferences(keyvalues):
-    save_shelves(keyvalues, PREFERENCE_DB)
+    write_preferences(keyvalues)
 
 
 def GetPreferences(keys):
-    return open_shelves(keys, PREFERENCE_DB)
+    with PREFERENCES_LOCK:
+        kept = load_preferences()
+        stored = [kept.get(key) for key in keys]
+    return [read_preference(v) for v in stored]
 
 
 class FileExecutionMonitor(wx.Timer):
@@ -1031,14 +1079,15 @@ class MFEATS_Scheduler(ThreadTimer):
         this.proc = proc
 
     def GetJobMessage(self, path):
-        # the song's path for its whole analysis, ('grid', path) when only its grid is due
+        # (kind, path, settings): 'whole', 'grid' when only its grid is due, 'again' as asked
+        settings = tuple(GetPreferences(mfeats.ANALYSIS_KEYS))
         if path in self.forcedpath:
             self.forcedpath.discard(path)
-            return ('again', path)
+            return ('again', path, settings)
         resp = mfeats.getby_key_value('mdx', audio.makemdx(path), waveform=False)
         if resp is not None and resp.version == mfeats.MFEATS_VERSION and resp.error == 0:
-            return ('grid', path)
-        return path
+            return ('grid', path, settings)
+        return ('whole', path, settings)
 
     def ResetItemValue(self, old_path, new_path):
         idx = [i for i in range(len(self.taskpath))
