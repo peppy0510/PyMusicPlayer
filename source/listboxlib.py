@@ -1735,7 +1735,7 @@ class ListControl():
         if selectedList is None:
             selectedList = self.selectedList
         for item in [i for i in items if i in self.innerList[selectedList].selectedItems]:
-            self.innerList[self.selectedList].remove(item)
+            self.innerList[selectedList].selectedItems.remove(item)
 
     def SortColumn(self, idx, selectedList=None):
         if selectedList is None:

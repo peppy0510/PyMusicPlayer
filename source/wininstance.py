@@ -50,6 +50,14 @@ def get_current_real_cwd():
     return get_real_cwd(cp)
 
 
+def get_argument_paths(p):
+    # arguments as paths from the process's own folder: a copy started as
+    # pythonw source\main.pyw from the repository names its script relatively
+    cwd = p.cwd()
+    return [os.path.normcase(os.path.abspath(os.path.join(cwd, v)))
+            for v in p.cmdline()[1:] if not v.startswith('-')]
+
+
 def has_running_instance():
     pid = int(os.getpid())
     cp = get_current_process()
@@ -57,6 +65,7 @@ def has_running_instance():
     cpcwd = get_real_cwd(cp)
     # a venv launches through Scripts\python.exe, which shares our name and cwd
     ancestors = {p.pid for p in cp.parents()}
+    source = os.path.normcase(cpcwd) + os.path.sep
 
     for p in psutil.process_iter():
         if p.pid == pid or p.pid in ancestors or not has_process_authority(p):
@@ -66,14 +75,15 @@ def has_running_instance():
             if cpname == p.name():
                 return True
         else:
-            if p.name().lower() not in ('python.exe', 'pythonw.exe',):
+            try:
+                if p.name().lower() not in ('python.exe', 'pythonw.exe',):
+                    continue
+                # if cpcwd == get_real_cwd(p):
+                if [True for v in get_argument_paths(p) if v.startswith(source)]:
+                    # which process it was (main.pyw logs it)
+                    return f'pid {p.pid} {" ".join(p.cmdline())}'
+            except psutil.Error:
                 continue
-            print(p.cmdline())
-            # if cpcwd == get_real_cwd(p):
-            if [True for v in p.cmdline() if v.startswith(cpcwd)]:
-                print(cpcwd)
-                # which process it was (main.pyw logs it)
-                return f'pid {p.pid} {" ".join(p.cmdline())}'
 
     return False
 
