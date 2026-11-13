@@ -14,7 +14,6 @@ import ctypes
 import faulthandler
 import json
 import logging
-import numpy
 import os
 import socket
 import sys
@@ -24,6 +23,12 @@ import traceback
 from pathlib import Path
 from wininstance import has_running_instance
 from wininstance import read_instance_port
+
+
+# OpenBLAS commits a buffer per core as numpy loads, in each analysis process too
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
+import numpy  # noqa: E402
 
 
 class stderr:
