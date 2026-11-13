@@ -22,7 +22,7 @@
 * Check File Consistency finds moved or deleted files, and Check Analyzer Versions analyses again the songs an older version analysed.
 * Editable keyboard shortcuts, Always On Top, and a blue or red accent colour.
 * Opening an audio file while the player runs hands it to the running player.
-* Preference > File Types: registers the player with Windows and opens Default Apps to choose it for each type, with an icon for each music format and playlists; click an icon to use your own.
+* Preference > File Types: registers the player with Windows and opens Default Apps to choose it for each type, with an icon for each music format and playlists, in a color or a light style; click an icon to use your own.
 * Checks GitHub once a day for a new release and shows its notes over the playlist, with Skip this version, Later and Update now. The installed player downloads and runs the new installer; a clean checkout of the main branch pulls it with git. Turn it off in Preference > General, or check now from Help > Check for Updates.
 
 ## Screenshot

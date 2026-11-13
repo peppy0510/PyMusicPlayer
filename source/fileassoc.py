@@ -39,6 +39,8 @@ FILE_TYPES = (
     ('mp2', 'MPEG Layer II Audio'),
     ('m3u', 'M3U Playlist'),
 )
+# (folder in assets/icon/filetypes, name)
+ICON_STYLES = (('', 'Color'), ('light', 'Light'))
 
 ASSOCSTR_FRIENDLYAPPNAME = 4
 ASSOCSTR_PROGID = 20
@@ -60,8 +62,8 @@ def get_app_icon():
     return os.path.join(get_root_path(), 'assets', 'icon', 'icon.ico')
 
 
-def get_file_icon(ext):
-    return os.path.join(get_root_path(), 'assets', 'icon', 'filetypes', f'{ext}.ico')
+def get_file_icon(ext, style=''):
+    return os.path.join(get_root_path(), 'assets', 'icon', 'filetypes', style, f'{ext}.ico')
 
 
 def get_open_command():
@@ -108,14 +110,14 @@ def notify_shell():
     ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
 
 
-def get_icon_value(ext, icons):
+def get_icon_value(ext, icons, style=''):
     path = (icons or {}).get(ext)
     if path is None or os.path.exists(path) is False:
-        path = get_file_icon(ext)
+        path = get_file_icon(ext, style)
     return f'{path},0'
 
 
-def register(icons=None):
+def register(icons=None, style=''):
     '''this user's keys only: needs no elevation, wins over the machine's'''
     command = get_open_command()
     set_value(CAPABILITIES, 'ApplicationName', APP_NAME)
@@ -125,7 +127,7 @@ def register(icons=None):
         prog_id = get_prog_id(ext)
         path = f'{CLASSES}\\{prog_id}'
         set_value(path, '', name)
-        set_value(f'{path}\\DefaultIcon', '', get_icon_value(ext, icons))
+        set_value(f'{path}\\DefaultIcon', '', get_icon_value(ext, icons, style))
         # Settings would call a source run Python
         set_value(f'{path}\\Application', 'ApplicationName', APP_NAME)
         set_value(f'{path}\\Application', 'ApplicationIcon', f'{get_app_icon()},0')

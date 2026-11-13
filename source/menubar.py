@@ -1794,9 +1794,21 @@ class PreferenceFileTypesPanel(DialogPanel):
         self.SetDoubleBuffered(True)
         self.SetBackgroundColour(macroboxstyle.current().UI.PANEL_BG)
         self.icons = GetPreference('file_icons') or {}
+        self.icon_style = GetPreference('file_icon_style') or ''
+
+        right = DIALOG_PAD + self.COLUMNS * self.CELL[0]
+        self.IconStyle = ComboBox(
+            self, choices=[name for _, name in fileassoc.ICON_STYLES], style=wx.CB_READONLY)
+        self.IconStyle.SetRect((right - 90, DIALOG_PAD - 3, 90, 24))
+        self.IconStyle.SetValue(dict(fileassoc.ICON_STYLES)[self.icon_style])
+        self.IconStyle.Bind(wx.EVT_COMBOBOX, self.OnIconStyle)
+        text = StaticText(self, label='Icon Style')
+        text.SetSize(text.GetBestSize())
+        x = right - 90 - DIALOG_GAP - text.GetSize().width
+        text.SetPosition((x, DIALOG_PAD))
         self.Status = StaticText(self, label='', pos=(DIALOG_PAD, DIALOG_PAD))
         self.Status.reserved = True
-        self.Status.SetInitialSize((self.COLUMNS * self.CELL[0], DIALOG_ROW))
+        self.Status.SetInitialSize((x - DIALOG_PAD - DIALOG_GAP, DIALOG_ROW))
 
         self.Icons = dict()
         self.States = dict()
@@ -1844,7 +1856,7 @@ class PreferenceFileTypesPanel(DialogPanel):
     def GetIconBitmap(self, ext):
         path = self.icons.get(ext)
         if path is None or os.path.exists(path) is False:
-            path = fileassoc.get_file_icon(ext)
+            path = fileassoc.get_file_icon(ext, self.icon_style)
         icon = wx.Icon(path, wx.BITMAP_TYPE_ICO, self.ICON, self.ICON)
         bitmap = wx.Bitmap(self.ICON, self.ICON, 32)
         if icon.IsOk():
@@ -1875,7 +1887,7 @@ class PreferenceFileTypesPanel(DialogPanel):
 
     def Register(self):
         try:
-            fileassoc.register(self.icons)
+            fileassoc.register(self.icons, self.icon_style)
         except OSError as error:
             self.Status.SetLabelText(f'Could not register: {error}')
             return False
@@ -1897,6 +1909,11 @@ class PreferenceFileTypesPanel(DialogPanel):
 
     def OnResetIcons(self, event):
         self.icons = {}
+        self.ApplyIcons()
+
+    def OnIconStyle(self, event):
+        self.icon_style = fileassoc.ICON_STYLES[self.IconStyle.GetSelection()][0]
+        SetPreference('file_icon_style', self.icon_style)
         self.ApplyIcons()
 
     def ApplyIcons(self):

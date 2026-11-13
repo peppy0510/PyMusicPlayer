@@ -7,16 +7,20 @@ email: peppy0510@hotmail.com
 '''
 
 
+import math
 import numpy
 import os
 import sys
 
 from PIL import Image
+from PIL import ImageChops
 from PIL import ImageDraw
 from PIL import ImageFont
 
 
 OUTPUT = os.path.join('assets', 'icon', 'filetypes')
+# each style's folder in OUTPUT
+STYLES = {'color': '', 'light': 'light'}
 SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 # small sizes drawn at this multiple, then reduced
 SCALE = 8
@@ -37,6 +41,11 @@ FAMILIES = {
     'm3u': SLATE,
 }
 
+# the light style's sheet top to bottom, its outline and its turned-over corner
+PAPER = ((255, 255, 255), (238, 240, 243))
+OUTLINE = (140, 146, 154)
+FLAP = (220, 224, 230)
+
 
 def get_gradient(size, stops):
     # across the page, as the app icon's
@@ -47,6 +56,13 @@ def get_gradient(size, stops):
     lower = low + (mid - low) * numpy.clip(share * 2.0, 0.0, 1.0)
     upper = mid + (high - mid) * numpy.clip(share * 2.0 - 1.0, 0.0, 1.0)
     rgb = numpy.where(share < 0.5, lower, upper).astype(numpy.uint8)
+    return Image.fromarray(rgb, 'RGB').convert('RGBA')
+
+
+def get_paper(size):
+    share = numpy.linspace(0.0, 1.0, size)[:, None, None]
+    top, bottom = (numpy.array(v, dtype=float) for v in PAPER)
+    rgb = numpy.broadcast_to(top + (bottom - top) * share, (size, size, 3)).astype(numpy.uint8)
     return Image.fromarray(rgb, 'RGB').convert('RGBA')
 
 
@@ -91,13 +107,8 @@ def draw_list(canvas, box, ink):
     draw_chevron(canvas, (left + row * 1.1, top + row * 0.5), row * 2.6, ink)
 
 
-def make_page(size, ext):
-    full = size * SCALE
-    left, top, right, bottom, fold = get_layout(size)
-    left, top, right, bottom = (int(v * full) for v in (left, top, right, bottom))
-    fold = int(fold * (right - left))
-    radius = max(int(full * 0.045), SCALE)
-
+def get_page_mask(full, box, fold, radius):
+    left, top, right, bottom = box
     mask = Image.new('L', (full, full), 0)
     draw = ImageDraw.Draw(mask)
     draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius, fill=255)
@@ -105,15 +116,54 @@ def make_page(size, ext):
     draw.polygon(((right - fold, top - 1), (right + 1, top - 1), (right + 1, top + fold)), fill=0)
     draw.rectangle((right - fold, top - 1, right + 1, top), fill=0)
     draw.polygon(((right - fold, top), (right, top + fold), (right - fold, top + fold)), fill=255)
+    return mask
+
+
+def make_page(size, ext):
+    full = size * SCALE
+    left, top, right, bottom, fold = get_layout(size)
+    left, top, right, bottom = (int(v * full) for v in (left, top, right, bottom))
+    fold = int(fold * (right - left))
+    radius = max(int(full * 0.045), SCALE)
 
     stops = FAMILIES[ext]
     canvas = get_gradient(full, stops)
-    canvas.putalpha(mask)
+    canvas.putalpha(get_page_mask(full, (left, top, right, bottom), fold, radius))
 
     # the turned-over flap
     flap = tuple(min(255, int(v + (255 - v) * 0.55)) for v in stops[2])
     ImageDraw.Draw(canvas).polygon(
         ((right - fold, top), (right, top + fold), (right - fold, top + fold)), fill=flap + (255,))
+    return canvas, (left, top, right, bottom, fold)
+
+
+def make_light_page(size, ext):
+    full = size * SCALE
+    left, top, right, bottom, fold = get_layout(size)
+    # on the icon's whole pixels, or the outline blurs
+    left, top, right, bottom = (round(v * size) * SCALE for v in (left, top, right, bottom))
+    fold = round(fold * (right - left) / SCALE) * SCALE
+    line = max(1, size // 128) * SCALE
+    radius = max(int(full * 0.045), SCALE)
+
+    outer = get_page_mask(full, (left, top, right, bottom), fold, radius)
+    canvas = Image.new('RGBA', (full, full), OUTLINE + (0,))
+    canvas.paste(OUTLINE + (255,), (0, 0, full, full), outer)
+    # the diagonal moves in by the line as the sides do
+    inner = get_page_mask(
+        full, (left + line, top + line, right - line, bottom - line),
+        fold - round(line * (2 - math.sqrt(2))), max(radius - line, 1))
+    canvas.paste(get_paper(full), (0, 0), inner)
+
+    x, y = right - fold, top + fold
+    flap = Image.new('L', (full, full), 0)
+    ImageDraw.Draw(flap).polygon(((x, top), (right, y), (x, y)), fill=255)
+    canvas.paste(FLAP + (255,), (0, 0, full, full), ImageChops.multiply(flap, inner))
+    edges = Image.new('L', (full, full), 0)
+    draw = ImageDraw.Draw(edges)
+    draw.rectangle((x, top, x + line - 1, y), fill=255)
+    draw.rectangle((x, y - line + 1, right, y), fill=255)
+    canvas.paste(OUTLINE + (255,), (0, 0, full, full), ImageChops.multiply(edges, outer))
     return canvas, (left, top, right, bottom, fold)
 
 
@@ -123,7 +173,7 @@ def draw_glyphs(canvas, size, ext, page):
     height = bottom - top
     centre = left + width / 2.0
     middle = top + height / 2.0
-    white = (255, 255, 255, 255)
+    white = 255
     label = ext.upper()
 
     # the ink is centred on the page: the fold is clear of it at every size
@@ -148,23 +198,32 @@ def draw_glyphs(canvas, size, ext, page):
         draw_chevron(canvas, (centre, glyph_y), glyph_height, white)
 
 
-def render(size, ext):
-    canvas, page = make_page(size, ext)
-    draw_glyphs(canvas, size, ext, page)
+def render(size, ext, style):
+    if style == 'light':
+        canvas, page = make_light_page(size, ext)
+        low, mid, high = FAMILIES[ext]
+        ink = get_gradient(canvas.width, (low, low, mid))
+    else:
+        canvas, page = make_page(size, ext)
+        ink = Image.new('RGBA', canvas.size, (255, 255, 255, 255))
+    mask = Image.new('L', canvas.size, 0)
+    draw_glyphs(mask, size, ext, page)
+    canvas.paste(ink, (0, 0), mask)
     return canvas.resize((size, size), Image.LANCZOS)
 
 
-def write_icon(ext):
-    images = [render(size, ext) for size in SIZES]
-    path = os.path.join(OUTPUT, f'{ext}.ico')
+def write_icon(ext, style):
+    images = [render(size, ext, style) for size in SIZES]
+    path = os.path.join(OUTPUT, STYLES[style], f'{ext}.ico')
     images[-1].save(path, format='ICO', sizes=[(v, v) for v in SIZES], append_images=images[:-1])
     return path
 
 
 def main():
-    os.makedirs(OUTPUT, exist_ok=True)
-    for ext in FAMILIES:
-        print(write_icon(ext))
+    for style, folder in STYLES.items():
+        os.makedirs(os.path.join(OUTPUT, folder), exist_ok=True)
+        for ext in FAMILIES:
+            print(write_icon(ext, style))
 
 
 if __name__ == '__main__':

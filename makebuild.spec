@@ -69,6 +69,7 @@ a = Analysis([os.path.join('source', 'main.pyw')],
 
 a.datas += grapdatas(path.assets, 'icon', 2, 'DATA', ['icon.ico'])
 a.datas += grapdatas(path.assets, os.path.join('icon', 'filetypes'), 3, 'DATA')
+a.datas += grapdatas(path.assets, os.path.join('icon', 'filetypes', 'light'), 4, 'DATA')
 a.datas += grapdatas(path.assets, 'fonts', 2, 'DATA', ['unifont.ttf'])
 a.datas += grapdatas(path.assets, 'dlls', 2, 'DATA', [
     'bass.dll', 'bass_fx.dll', 'bass_vst.dll', 'bassmidi.dll', 'bassmix.dll', 'basshls.dll',
