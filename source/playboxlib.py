@@ -884,6 +884,8 @@ class PlayBoxControl():
         self.cue.fffr_variable = 15.0
         self.cue.mdx = self.GetMDX(self.cue.path)
         self.cue.grid = None
+        # the chosen step before the analysis
+        self.SetBestFFFRVariableTime()
         self.cue.edit_skip = False
         self.pending.grid = 0.0
         self.pending.grid_since = time.time()
@@ -1930,7 +1932,7 @@ class PlayBoxControl():
         self.cue.fffr_static = static
 
     def GetFFFRVariableTime(self):
-        if self.IsHighlightOn():
+        if self.IsHighlightOn() and self.GetFFFRStep()[0] == 'auto':
             return self.cue.fffr_variable / 4
         return self.cue.fffr_variable
 
@@ -1951,6 +1953,42 @@ class PlayBoxControl():
         grid = self.GetGrid()
         if grid is not None:
             self.cue.fffr_variable = 60.0 / grid.bpm * 64
+        # the step chosen in Option > FF / FR Step; auto without a tempo
+        kind, amount = self.GetFFFRStep()
+        beat = self.GetFFFRBeatTime(tempo)
+        if kind == 'seconds':
+            self.cue.fffr_variable = float(amount)
+        elif kind == 'beats' and beat is not None:
+            self.cue.fffr_variable = beat * amount
+
+    def GetFFFRBeatTime(self, tempo):
+        # the grid's beat, else the analysis' as GetNearestBeatTime takes it
+        grid = self.GetGrid()
+        if grid is not None:
+            return 60.0 / grid.bpm
+        if isinstance(tempo, float) is False or tempo <= 0:
+            return None
+        return 60.0 / (tempo * 2.0 if tempo <= 95 else tempo)
+
+    # FF and FR steps: (kind, amount, label)
+    FFFR_STEPS = (('auto', 0, 'Auto (16 bars, 4 in a highlight)'),
+                  ('beats', 1, '1 beat'), ('beats', 4, '1 bar'), ('beats', 8, '2 bars'),
+                  ('beats', 16, '4 bars'), ('beats', 32, '8 bars'), ('beats', 64, '16 bars'),
+                  ('seconds', 5, '5 s'), ('seconds', 10, '10 s'), ('seconds', 15, '15 s'),
+                  ('seconds', 30, '30 s'))
+
+    def GetFFFRStep(self):
+        # cached: (kind, amount), auto at first
+        if getattr(self, 'fffr_step', None) is None:
+            step = GetPreference('fffr_step')
+            steps = [v[:2] for v in self.FFFR_STEPS]
+            self.fffr_step = step if step in steps else steps[0]
+        return self.fffr_step
+
+    def SetFFFRStep(self, step):
+        self.fffr_step = step
+        SetPreference('fffr_step', step)
+        self.SetBestFFFRVariableTime()
 
     def IsPlaying(self):
         return audio.is_playing(self.cue.hStream)

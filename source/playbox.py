@@ -14,7 +14,6 @@ import io
 import library
 import listimages
 import math
-import mutagen
 import os
 import radio
 import re
@@ -1335,22 +1334,24 @@ class PlayBoxApic(RectBox):
         return False
 
     def GetApic(self, path):
-        # access APIC frame and grab the image
-        # mutagen can automatically detect format and type of tags
-        # APIC:cover.jpg, APIC:Cover Image, APIC:desc, APIC:
+        # (image, path, size line) of the front cover in any format's tags
         if isinstance(path, tuple):
             # a station: its picture (radio.get_picture)
-            return self.GetApicImage(path[2]), path
+            return self.GetApicImage(path[2]), path, None
 
-        try:
-            file = mutagen.File(path)
-            key = [v for v in file.tags.keys() if 'APIC:' in v]
-            if key == []:
-                return None, path
-            artwork = file.tags[key[0]].data
-        except Exception:
-            return None, path
-        return self.GetApicImage(artwork), path
+        artwork = coverbox.read_cover_of(path)
+        image = self.GetApicImage(artwork)
+        return image, path, self.GetApicLabel(artwork, image)
+
+    def GetApicLabel(self, artwork, image):
+        # ('1200 x 1200 (1:1)', 'JPEG  312 KB') of the picture in the tags
+        if image is None:
+            return None
+        kind = Image.open(io.BytesIO(artwork)).format
+        size = coverbox.format_picture_size((image.GetWidth(), image.GetHeight()))
+        kb = len(artwork) / 1024.0
+        amount = f'{kb:.0f} KB' if kb < 1024 else f'{kb / 1024.0:.1f} MB'
+        return (size, f'{kind}  {amount}' if kind else amount)
 
     def GetApicImage(self, artwork):
         # the picture's bytes as an image at its own size, or None
@@ -1399,10 +1400,11 @@ class PlayBoxApic(RectBox):
         return image.Scale(w, h, quality=wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
 
     def GetApicThread(self):
-        image, path = self.GetApic(self.path)
+        image, path, label = self.GetApic(self.path)
         if path != self.path:
             return
         self.apic_image = image
+        self.apic_label = label
         self.apic = self.GetApicBitmap(image)
         self.reInitBuffer = True
         # self.DirectDraw()
@@ -1474,10 +1476,33 @@ class PlayBoxApic(RectBox):
     def OnPreviewPaint(self, event):
         dc = wx.PaintDC(self.preview)
         dc.DrawBitmap(self.preview.bitmap, 0, 0)
+        w, h = self.preview.GetClientSize()
+        self.DrawPreviewLabel(dc, w, h)
         dc.SetPen(wx.Pen(self.parent.st.RACK_EDGE_COLOR, 1))
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        w, h = self.preview.GetClientSize()
         dc.DrawRectangle(0, 0, w, h)
+
+    def DrawPreviewLabel(self, dc, w, h):
+        # its size in a band across its bottom, as the editor's cover note
+        label = getattr(self, 'apic_label', None)
+        if label is None:
+            return
+        gc = wx.GraphicsContext.Create(dc)
+        uikit.set_font(gc, uikit.get_font(uikit.LABEL), wx.WHITE)
+        lines = ['  '.join(label)]
+        if gc.GetTextExtent(lines[0])[0] > w - 16:
+            # too narrow for one line
+            lines = list(label)
+        heights = [gc.GetTextExtent(v)[1] for v in lines]
+        total = sum(heights) + 4 * (len(lines) - 1)
+        y = h - total - 10
+        gc.SetPen(wx.NullGraphicsPen)
+        gc.SetBrush(gc.CreateBrush(wx.Brush(wx.Colour(0, 0, 0, 170))))
+        gc.DrawRectangle(1, y - 6, w - 2, total + 12)
+        for line, lh in zip(lines, heights):
+            gc.DrawText(line, (w - gc.GetTextExtent(line)[0]) / 2.0, y)
+            y += lh + 4
+        del gc
 
     def HidePreview(self):
         self.previewing = False
@@ -1526,6 +1551,7 @@ class PlayBoxApic(RectBox):
             return
         self.apic = None
         self.apic_image = None
+        self.apic_label = None
         self.HidePreview()
         self.path = source
         if hasattr(self, 'Thread') and self.Thread.is_alive():

@@ -2630,6 +2630,18 @@ class MenuBar(wx.MenuBar):
         # checks synced to the mode key on open
         self.parent.Bind(wx.EVT_MENU_OPEN, self.OnPlayLengthOpen)
 
+        # how far FF and FR go: auto, beats or seconds
+        self.itemFFFRStepMenu = wx.Menu()
+        self.fffrStepItems = []
+        for i, (kind, amount, label) in enumerate(playbox.FFFR_STEPS):
+            if i > 0 and kind != playbox.FFFR_STEPS[i - 1][0]:
+                self.itemFFFRStepMenu.AppendSeparator()
+            item = self.itemFFFRStepMenu.AppendCheckItem(wx.ID_ANY, label)
+            self.fffrStepItems.append((item, (kind, amount)))
+            self.parent.Bind(wx.EVT_MENU, lambda e, step=(kind, amount):
+                             self.parent.MainPanel.PlayBox.SetFFFRStep(step), item)
+        self.menuOption.Append(wx.ID_ANY, u'FF / FR Step', self.itemFFFRStepMenu)
+
         self.itemSkipSilence = wx.MenuItem(
             self.menuOption, wx.ID_ANY, u'Skip Silence', wx.EmptyString, wx.ITEM_CHECK)
         self.menuOption.Append(self.itemSkipSilence)
@@ -2674,6 +2686,9 @@ class MenuBar(wx.MenuBar):
         for item, kind, length in self.playLengthItems:
             item.Check(button.IsLengthChecked(kind, length))
         self.itemMixSet.Check(button.kind == 'short' and button.parent.IsMixSet())
+        step = button.parent.GetFFFRStep()
+        for item, value in self.fffrStepItems:
+            item.Check(value == step)
 
     def InitMenuHelp(self):
         self.menuHelp = wx.Menu()
