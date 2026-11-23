@@ -2298,6 +2298,11 @@ class SearchComboFilter(NativeComboBox):
             found = [v for v in self.parent.browse_choices if v[0] == label]
             if found:
                 label, query = found[0]
+                # the category replaces a name searched
+                self.parent.browse_category = label
+                self.parent.searched = None
+                if len(self.parent.SearchText.GetValue().strip()) > 0:
+                    self.parent.SearchText.ChangeValue('')
                 radio.browse(self.parent.parent, label,
                              lambda: radio.get_stations(**query))
             return
@@ -2337,6 +2342,8 @@ class ListBoxSearch(RectBox):
         self.scope = GetPreference('search_scope') or 'list'
         self.browse_mode = False
         self.browse_choices = []
+        # the Browse tab's chosen list, back to it when the field empties
+        self.browse_category = 'Top voted'
         self.live_search = None
         self.searched = None
         # the playlist searched from, restored when the field empties
@@ -2373,6 +2380,8 @@ class ListBoxSearch(RectBox):
     LIVE_SEARCH_MS = 600
     LIBRARY_SEARCH_MS = 350
     LIVE_SEARCH_LEAST = 2
+    # a Browse name search's label; a category's otherwise
+    NAME_LABEL = 'Name: '
 
     def IsLibraryScope(self):
         return self.mode == 'playlist' and self.scope == 'library'
@@ -2431,7 +2440,12 @@ class ListBoxSearch(RectBox):
             text.ChangeValue('')
             self.parent.ListBox.SetFilterOffAll()
             self.SetHints('Station name, searched as you type', 'Station name')
-            combo.Set(['Top voted'])
+            # a category shown is the one chosen, kept after a restart
+            listbox = self.parent.ListBox
+            shown = getattr(listbox.innerList[listbox.selectedList], 'browseLabel', None)
+            if shown is not None and shown.startswith(self.NAME_LABEL) is False:
+                self.browse_category = shown
+            combo.Set([self.browse_category])
             combo.SetSelection(0)
             self.chooser_width = 190
 
@@ -2446,10 +2460,18 @@ class ListBoxSearch(RectBox):
                 if not self or self.browse_mode is False:
                     return
                 self.browse_choices = choices
-                combo.Set([label for label, _ in choices])
-                combo.SetSelection(0)
+                labels = [label for label, _ in choices]
+                if self.browse_category not in labels:
+                    self.browse_category = labels[0]
+                combo.Set(labels)
+                combo.SetStringSelection(self.browse_category)
+                # a genre or country's query known only now
+                if len(text.GetValue().strip()) == 0:
+                    self.LeaveDirectorySearch()
             self.browse_choices = [('Top voted', dict())]
             threading.Thread(target=run, daemon=True).start()
+            # the field emptied: the category's stations, not a name searched
+            self.LeaveDirectorySearch()
         elif mode == 'favorites':
             # recent stations too
             self.SetHints('Filter stations by name or tags', 'Filter stations')
@@ -2487,7 +2509,10 @@ class ListBoxSearch(RectBox):
             self.live_search.Stop()
             self.live_search = None
         if self.browse_mode:
-            self.live_search = wx.CallLater(self.LIVE_SEARCH_MS, self.SearchDirectory)
+            if len(self.SearchText.GetValue().strip()) > 0:
+                self.live_search = wx.CallLater(self.LIVE_SEARCH_MS, self.SearchDirectory)
+            else:
+                self.LeaveDirectorySearch()
         elif self.IsLibraryScope():
             if self.SearchText.GetValue().strip():
                 self.live_search = wx.CallLater(self.LIBRARY_SEARCH_MS, self.SearchLibrary)
@@ -2509,6 +2534,21 @@ class ListBoxSearch(RectBox):
                 listbox.reInitBuffer = True
                 return
 
+    def LeaveDirectorySearch(self):
+        # field emptied: back to the chosen category's stations
+        self.searched = None
+        listbox = self.parent.ListBox
+        inner = listbox.innerList[listbox.selectedList]
+        if inner.title != radio.BROWSE_TITLE:
+            return
+        # what the tab shows once the query on its way is answered
+        latest = radio.BROWSING
+        if latest is None:
+            latest = getattr(inner, 'browseLabel', None)
+        if latest == self.browse_category:
+            return
+        self.SearchComboFilter.Choose(self.browse_category)
+
     def SearchDirectory(self, text=None):
         self.live_search = None
         if not self or self.browse_mode is False:
@@ -2517,7 +2557,8 @@ class ListBoxSearch(RectBox):
         if len(text) < self.LIVE_SEARCH_LEAST or text == self.searched:
             return
         self.searched = text
-        radio.browse(self.parent, f'Name: {text}', lambda: radio.get_stations(name=text))
+        radio.browse(self.parent, f'{self.NAME_LABEL}{text}',
+                     lambda: radio.get_stations(name=text))
 
     def CATCH_EVT_GLOBAL(self, event):
         if self.parent.HasToSkipEvent():

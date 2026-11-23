@@ -378,6 +378,8 @@ def show_found(mainpanel, stations, label):
     inner = listbox.innerList[index]
     set_browse_columns(inner)
     inner.items = get_station_rows(inner, stations)
+    # kept with the tab: what its rows are
+    inner.browseLabel = label
     inner.filterCache = None
     inner.filterQuery = None
     inner.selectedItems = []
@@ -387,8 +389,14 @@ def show_found(mainpanel, stations, label):
     tell(mainpanel, f'{label}: {len(stations)} stations')
 
 
+# label of the Browse query on its way: only the latest one is shown
+BROWSING = None
+
+
 def browse(mainpanel, label, work):
     # query on a thread, show in the Browse tab
+    global BROWSING
+    BROWSING = label
     tell(mainpanel, f'Reading {label} ...')
 
     def run():
@@ -396,12 +404,21 @@ def browse(mainpanel, label, work):
             stations, error = work(), None
         except Exception as e:
             stations, error = None, str(e)
-        if error is not None:
-            wx.CallAfter(tell, mainpanel, f'The directory did not answer: {error}', True)
-        else:
-            wx.CallAfter(show_found, mainpanel, stations, label)
+        wx.CallAfter(browsed, mainpanel, label, stations, error)
 
     threading.Thread(target=run, daemon=True).start()
+
+
+def browsed(mainpanel, label, stations, error):
+    # an older query's answer dropped
+    global BROWSING
+    if label != BROWSING:
+        return
+    BROWSING = None
+    if error is not None:
+        tell(mainpanel, f'The directory did not answer: {error}', True)
+    else:
+        show_found(mainpanel, stations, label)
 
 
 def tell(mainpanel, text, warn=False):

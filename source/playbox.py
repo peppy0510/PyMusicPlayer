@@ -863,7 +863,11 @@ class PlayBoxTitle(RectBox):
         if path is None:
             return False
         if self.parent.IsStreamTrack():
-            return path in radio.get_favorite_urls(self.parent.parent.ListBox)
+            # drawn at start before the list box is made
+            listbox = getattr(self.parent.parent, 'ListBox', None)
+            if listbox is None:
+                return False
+            return path in radio.get_favorite_urls(listbox)
         return path in library.get_favorite_tracks()
 
     def GetStarTip(self):

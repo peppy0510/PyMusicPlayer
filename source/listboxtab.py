@@ -1488,8 +1488,10 @@ class ListBoxTabList(RectBox):
         elif row.kind == 'radio':
             index = radio.open_tab(listbox, row.title)
             listbox.SetSelectedList(index)
-            if row.title == radio.BROWSE_TITLE and not listbox.innerList[index].items:
-                radio.browse(mainpanel, 'Top voted', lambda: radio.get_stations())
+            # chosen again: back to the category; from another tab the search box does it
+            if row.title == radio.BROWSE_TITLE and mainpanel.ListSearch.browse_mode:
+                mainpanel.ListSearch.SearchText.ChangeValue('')
+                mainpanel.ListSearch.LeaveDirectorySearch()
         elif row.index is not None:
             listbox.SetSelectedList(row.index)
             self.parent.DirectDraw()
