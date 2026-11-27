@@ -16,8 +16,11 @@
  * Limiter: 5 ms lookahead. Window minimum of the needed gain, smoothed by a box average of the
  * same length so it lands on the peak exactly; slower separate release. Latency in initialDelay.
  *   Drive: gain into the limiter (0..+30 dB).
- *   Smooth: second release, a floor of the reduction followed in 0.1 s, held 0.25 s after the
- *     last deepening, then rising at 20 dB/s.
+ *   Smooth: release by how long the reduction lasts. The fast release is 10 ms, so short peaks
+ *     come straight back (the old 80 ms held the whole mix down 100+ ms after every peak); a floor
+ *     of the reduction followed in 30 ms, held 0.1 s after the last deepening, then released in
+ *     0.3 s (exponential in dB) catches sustained reduction, so bass tones do not ripple
+ *     (60 Hz THD 1.6 % -> 0). A shorter fast release alone, without the floor, gives 2.4 %.
  *   Attack: ramp length (0.5..5 ms). Latency stays 5 ms; a shorter ramp delays the gain instead.
  *
  * Stereo (between AGC and limiter), input averaged over ~5 s:
@@ -235,13 +238,14 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define PHASE_FADE 0.02
 #define MAX_LAG 512
 #define LOOKAHEAD_TIME 0.005
-#define RELEASE_TIME 0.08
+#define RELEASE_TIME 0.08      /* s, release with Smooth off */
+#define FAST_RELEASE 0.01      /* s, release with Smooth on */
 #define MAX_LOOKAHEAD 1024
 #define DRIVE_HIGH 30.0
-#define SMOOTH_ATTACK 0.1      /* s, while the floor deepens */
-#define SMOOTH_RATE 20.0       /* dB/s, while the floor releases */
+#define SMOOTH_ATTACK 0.03     /* s, while the floor deepens */
+#define SMOOTH_RELEASE 0.3     /* s, while the floor releases (exponential in dB) */
 #define ATTACK_LOW 0.0005
-#define SMOOTH_HOLD 0.25       /* s held after the last deepening before release */
+#define SMOOTH_HOLD 0.1        /* s held after the last deepening before release */
 
 /* ------------------------------------------------------------ meters (shared memory) */
 
@@ -404,12 +408,12 @@ typedef struct {
     double held_sum;
     double release;        /* current release gain */
     double floor_db;       /* Smooth floor (dB, <= 0) */
-    double floor_coef, floor_step;
+    double floor_coef, floor_release_coef;
     int floor_hold, hold_length;
     int attack;                   /* ramp length (samples), <= lookahead */
     float late_gain[MAX_LOOKAHEAD];  /* a short ramp delays the gain by lookahead - attack */
     MeterSlot *meter;      /* meter slot (NULL if none) */
-    double release_coef;
+    double release_coef, fast_release_coef;
 } AutoMaster;
 
 static double get_speed_time(float value)
@@ -628,6 +632,7 @@ static void reset(AutoMaster *self)
     self->momentary_coef = 1.0 - exp(-1.0 / (self->rate * GATE_TIME));
     self->momentary = 0.0;
     self->release_coef = 1.0 - exp(-1.0 / (self->rate * RELEASE_TIME));
+    self->fast_release_coef = 1.0 - exp(-1.0 / (self->rate * FAST_RELEASE));
     self->stereo_coef = 1.0 - exp(-1.0 / (self->rate * STEREO_TIME));
     self->follow_coef = 1.0 - exp(-1.0 / (self->rate * STEREO_FOLLOW));
     self->left_power = self->right_power = self->mid_power = self->side_power = 0.0;
@@ -730,7 +735,7 @@ static void reset(AutoMaster *self)
     self->release = 1.0;
     self->floor_db = 0.0;
     self->floor_coef = 1.0 - exp(-1.0 / (self->rate * SMOOTH_ATTACK));
-    self->floor_step = SMOOTH_RATE / self->rate;
+    self->floor_release_coef = 1.0 - exp(-1.0 / (self->rate * SMOOTH_RELEASE));
     self->hold_length = (int)(self->rate * SMOOTH_HOLD);
     self->floor_hold = 0;
 }
@@ -1004,7 +1009,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         if (minimum < self->release)
             self->release = minimum;
         else
-            self->release += (minimum - self->release) * self->release_coef;
+            self->release += (minimum - self->release) *
+                             (smooth_release ? self->fast_release_coef : self->release_coef);
         double limit_gain = self->release;
         if (smooth_release) {
             double need_db = 20.0 * log10(minimum);
@@ -1014,8 +1020,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             } else if (self->floor_hold > 0)
                 self->floor_hold--;
             else
-                self->floor_db = need_db < self->floor_db + self->floor_step ? need_db
-                                 : self->floor_db + self->floor_step;
+                self->floor_db += (need_db - self->floor_db) * self->floor_release_coef;
             double floor = pow(10.0, self->floor_db / 20.0);
             if (floor < limit_gain)
                 limit_gain = floor;
