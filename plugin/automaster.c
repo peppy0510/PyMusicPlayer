@@ -16,11 +16,8 @@
  * Limiter: 5 ms lookahead. Window minimum of the needed gain, smoothed by a box average of the
  * same length so it lands on the peak exactly; slower separate release. Latency in initialDelay.
  *   Drive: gain into the limiter (0..+30 dB).
- *   Smooth: release by how long the reduction lasts. The fast release is 10 ms, so short peaks
- *     come straight back (the old 80 ms held the whole mix down 100+ ms after every peak); a floor
- *     of the reduction followed in 30 ms, held 0.1 s after the last deepening, then released in
- *     0.3 s (exponential in dB) catches sustained reduction, so bass tones do not ripple
- *     (60 Hz THD 1.6 % -> 0). A shorter fast release alone, without the floor, gives 2.4 %.
+ *   Smooth: 10 ms release over a floor of the reduction followed in 30 ms, held 0.1 s after the
+ *     last deepening, then released in 0.3 s (in dB).
  *   Attack: ramp length (0.5..5 ms). Latency stays 5 ms; a shorter ramp delays the gain instead.
  *
  * Stereo (between AGC and limiter), input averaged over ~5 s:
@@ -238,12 +235,12 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define PHASE_FADE 0.02
 #define MAX_LAG 512
 #define LOOKAHEAD_TIME 0.005
-#define RELEASE_TIME 0.08      /* s, release with Smooth off */
-#define FAST_RELEASE 0.01      /* s, release with Smooth on */
+#define RELEASE_TIME 0.08      /* s, with Smooth off */
+#define FAST_RELEASE 0.01      /* s, with Smooth on */
 #define MAX_LOOKAHEAD 1024
 #define DRIVE_HIGH 30.0
 #define SMOOTH_ATTACK 0.03     /* s, while the floor deepens */
-#define SMOOTH_RELEASE 0.3     /* s, while the floor releases (exponential in dB) */
+#define SMOOTH_RELEASE 0.3     /* s, while the floor releases (in dB) */
 #define ATTACK_LOW 0.0005
 #define SMOOTH_HOLD 0.1        /* s held after the last deepening before release */
 
@@ -767,6 +764,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     double ceiling = pow(10.0, get_ceiling(self) / 20.0);
     double drive = limit ? pow(10.0, get_drive(self) / 20.0) : 1.0;
     int smooth_release = limit && is_on(self->params[P_SMOOTH]);
+    double release_coef = smooth_release ? self->fast_release_coef : self->release_coef;
     double time = get_speed_time(self->params[P_SPEED]);
     /* up at the set speed, down 3x faster */
     double up = 1.0 - exp(-1.0 / (self->rate * time));
@@ -1009,8 +1007,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         if (minimum < self->release)
             self->release = minimum;
         else
-            self->release += (minimum - self->release) *
-                             (smooth_release ? self->fast_release_coef : self->release_coef);
+            self->release += (minimum - self->release) * release_coef;
         double limit_gain = self->release;
         if (smooth_release) {
             double need_db = 20.0 * log10(minimum);
