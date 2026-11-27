@@ -2867,11 +2867,29 @@ def tags_written(path):
             conn.close()
     except sqlite3.Error:
         fresh = False
+    mode = lift_read_only(path)
     try:
         yield
     finally:
+        if mode is not None:
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
         if fresh:
             keep_file_stat(path)
+
+
+def lift_read_only(path):
+    '''make a read-only file writable, returning the mode to put back'''
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if st.st_mode & stat.S_IWRITE:
+        return None
+    os.chmod(path, st.st_mode | stat.S_IWRITE)
+    return stat.S_IMODE(st.st_mode)
 
 
 def keep_file_stat(path):
