@@ -2,7 +2,7 @@
  * author: Taehong Kim
  * email: peppy0510@hotmail.com
  *
- * Copied from PyWinAudio (plugin/automaster.c at 38b1f61) for LOUD.
+ * Copied from PyWinAudio (plugin/automaster.c at fe211ab) for LOUD.
  * Only METER_NAME differs: keep the rest in sync with PyWinAudio.
  *
  * PyWinAudio Auto Master: broadcast-style VST2 processor, hosted by Equalizer APO in audiodg.
